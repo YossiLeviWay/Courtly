@@ -4,11 +4,12 @@ import { useGame } from '../context/GameContext.jsx';
 import { useTheme } from '../context/ThemeContext.jsx';
 import { generateLeagues } from '../engine/teamGenerator.js';
 import { Sun, Moon, Eye, EyeOff } from 'lucide-react';
-import { apiLogin, apiRegister, apiGetWorld, apiInitWorld, setToken } from '../api.js';
+import { apiLogin, apiRegister, apiGetWorld, apiSeedWorld, setToken } from '../api.js';
+import { generateSeasonSchedule } from '../engine/gameScheduler.js';
 import ToastContainer from '../components/ui/ToastContainer.jsx';
 
 export default function Login() {
-  const { state, dispatch, addNotification } = useGame();
+  const { state, addNotification } = useGame();
   const { theme, toggleTheme } = useTheme();
   const navigate = useNavigate();
   const [mode, setMode] = useState('login');
@@ -49,55 +50,45 @@ export default function Login() {
         return;
       }
 
-      // Registration — use the shared world (same for every user)
-      const { token, userId } = await apiRegister(form.email, form.password, form.username);
-      setToken(token);
+      // Registration — get or seed the shared world, then register with chosen team
 
       // 1. Try to load the existing shared world from the DB
       let worldData = await apiGetWorld();
 
-      // 2. If no world exists yet (first ever user), generate one and persist it
+      // 2. If no world exists yet (first ever user), generate + seed it
       if (!worldData) {
-        const generated = { leagues: generateLeagues() };
+        const rawLeagues = generateLeagues();
+        // Attach season schedules
+        const leagues = rawLeagues.map((l, i) => ({
+          ...l,
+          schedule: generateSeasonSchedule(l.teams, i),
+        }));
         try {
-          worldData = await apiInitWorld(generated);
+          worldData = await apiSeedWorld(leagues);
         } catch {
-          // Fall back to the locally generated world if the DB call fails
-          worldData = generated;
+          worldData = { leagues };
         }
       }
 
-      const leagues = worldData.leagues;
+      const leagues = worldData.leagues || [];
       const allTeams = leagues.flatMap(l => l.teams || []);
+
+      // 3. Pick a team for the new user (random from first league)
       const league0Teams = leagues[0]?.teams || allTeams.slice(0, 10);
-      const userTeamIndex = Math.floor(Math.random() * league0Teams.length);
-      const baseTeam = league0Teams[userTeamIndex];
-      const userTeam = { ...baseTeam, isUserTeam: true, name: form.teamName || baseTeam.name, budget: 250, leagueId: leagues[0]?.id, leagueIndex: 0 };
+      const baseTeam = league0Teams[Math.floor(Math.random() * league0Teams.length)];
 
-      const updatedTeams = allTeams.map(t => t.id === baseTeam.id ? userTeam : t);
-      const updatedLeagues = leagues.map(l => ({
-        ...l,
-        teams: (l.teams || []).map(t => t.id === baseTeam.id ? userTeam : t),
-      }));
+      // 4. Register with teamId so the server creates user_team_state immediately
+      const { token } = await apiRegister(
+        form.email,
+        form.password,
+        form.username,
+        baseTeam.id,
+        { players: baseTeam.players || [] }
+      );
+      setToken(token);
 
-      const user = {
-        id: userId,
-        username: form.username,
-        email: form.email,
-        teamId: userTeam.id,
-        bio: '',
-        gender: '',
-        avatar: { type: 'initials', emoji: null },
-        settingsChangesToday: 0,
-        lastSettingsChange: null,
-        joinedAt: Date.now(),
-        records: { wins: 0, losses: 0, honors: [] },
-      };
-
-      const gameState = { user, userTeam, leagues: updatedLeagues, allTeams: updatedTeams, lastUpdated: Date.now() };
-      dispatch({ type: 'INIT_GAME', payload: gameState });
-      addNotification(`Welcome to Courtly, ${form.username}! Your club is ready.`, 'success');
-      navigate('/', { replace: true });
+      // 5. Reload page — GameContext will load all state fresh from DB
+      window.location.href = '/';
     } catch (err) {
       addNotification(err.message || 'Something went wrong.', 'error');
       setLoading(false);
