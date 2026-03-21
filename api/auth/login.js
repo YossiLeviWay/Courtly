@@ -1,8 +1,8 @@
-import { neon } from '@neondatabase/serverless';
-import bcrypt from 'bcryptjs';
-import jwt from 'jsonwebtoken';
+const { neon } = require('@neondatabase/serverless');
+const bcrypt = require('bcryptjs');
+const jwt = require('jsonwebtoken');
 
-export default async function handler(req, res) {
+module.exports = async function handler(req, res) {
   if (req.method !== 'POST') return res.status(405).end();
 
   const { email, password } = req.body || {};
@@ -45,4 +45,4 @@ export default async function handler(req, res) {
     console.error('Login error:', err);
     res.status(500).json({ error: 'Login failed' });
   }
-}
+};

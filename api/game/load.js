@@ -1,7 +1,7 @@
-import { neon } from '@neondatabase/serverless';
-import jwt from 'jsonwebtoken';
+const { neon } = require('@neondatabase/serverless');
+const jwt = require('jsonwebtoken');
 
-export default async function handler(req, res) {
+module.exports = async function handler(req, res) {
   if (req.method !== 'GET') return res.status(405).end();
 
   const token = req.headers.authorization?.split(' ')[1];
@@ -23,4 +23,4 @@ export default async function handler(req, res) {
     console.error('Load error:', err);
     res.status(500).json({ error: 'Load failed' });
   }
-}
+};

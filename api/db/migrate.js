@@ -1,8 +1,6 @@
-import { neon } from '@neondatabase/serverless';
+const { neon } = require('@neondatabase/serverless');
 
-// One-time migration endpoint. Protected by JWT_SECRET query param.
-// Call once: GET /api/db/migrate?secret=YOUR_JWT_SECRET
-export default async function handler(req, res) {
+module.exports = async function handler(req, res) {
   if (req.query.secret !== process.env.JWT_SECRET) {
     return res.status(403).json({ error: 'Forbidden' });
   }
@@ -33,4 +31,4 @@ export default async function handler(req, res) {
     console.error('Migration error:', err);
     res.status(500).json({ error: err.message });
   }
-}
+};
