@@ -3,6 +3,10 @@ const { neon } = require('@neondatabase/serverless');
 module.exports = async function handler(req, res) {
   if (req.method !== 'POST') return res.status(405).json({ error: 'Use POST' });
 
+  if (!process.env.POSTGRES_URL) {
+    return res.status(500).json({ error: 'POSTGRES_URL env var is not set' });
+  }
+
   try {
     const sql = neon(process.env.POSTGRES_URL);
 
