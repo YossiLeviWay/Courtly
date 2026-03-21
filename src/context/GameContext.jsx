@@ -2,15 +2,26 @@ import { createContext, useContext, useReducer, useEffect, useCallback, useRef }
 import { auth, db } from '../firebase.js';
 import { onAuthStateChanged, signOut } from 'firebase/auth';
 import { doc, setDoc, getDoc } from 'firebase/firestore';
-import { generateLeagues } from '../engine/teamGenerator.js';
+import { generateTeam, generateLeagues } from '../engine/teamGenerator.js';
 
 // ── Firestore serialization ────────────────────────────────────
-// Save only user + userTeam + league standings/schedule to stay under 1 MB.
-// Bot team rosters are regenerated from teamGenerator on load.
+// We save: user + userTeam (full) + botTeamShells (id/name/etc., no players)
+// + leaguesMeta (standings + schedule). Total ~40 KB, well under Firestore's 1 MB.
+// On load, bot players/staff are regenerated fresh but identity fields (id, name,
+// colors…) are restored from the shell — so schedule and standings IDs stay valid.
+
+const BOT_SHELL_FIELDS = ['id','name','nickname','city','country','region',
+  'stadiumName','founded','colors','league','leagueIndex','leagueId'];
+
 function serializeForFirestore(state) {
+  const botTeamShells = (state.allTeams || [])
+    .filter(t => !t.isUserTeam)
+    .map(t => Object.fromEntries(BOT_SHELL_FIELDS.map(k => [k, t[k]])));
+
   return {
     user: state.user,
     userTeam: state.userTeam,
+    botTeamShells,
     leaguesMeta: (state.leagues || []).map(l => ({
       id: l.id,
       name: l.name,
@@ -24,22 +35,37 @@ function serializeForFirestore(state) {
 }
 
 function deserializeFromFirestore(savedData) {
-  const { user, userTeam, leaguesMeta = [], lastUpdated } = savedData;
-  const freshLeagues = generateLeagues();
+  const { user, userTeam, botTeamShells = [], leaguesMeta = [], lastUpdated } = savedData;
+
+  // Rebuild each bot team: fresh players/staff + saved identity (preserves IDs)
+  const botTeams = botTeamShells.map(shell =>
+    Object.assign(generateTeam({ leagueIndex: shell.leagueIndex, isUserTeam: false }), shell)
+  );
+
   const userLeagueIndex = userTeam?.leagueIndex ?? 0;
 
-  const leagues = freshLeagues.map((league, i) => {
-    const meta = leaguesMeta.find(m => m.groupIndex === i) || {};
-    let teams = league.teams;
-    if (i === userLeagueIndex && userTeam) {
-      // Put the user's saved team at slot 0 in their league
-      teams = [userTeam, ...league.teams.slice(1)];
+  // If no shells saved yet (old save format), fall back to full regeneration
+  const useShells = botTeamShells.length > 0;
+
+  const freshLeagues = useShells ? null : generateLeagues();
+
+  const leagues = (leaguesMeta.length > 0 ? leaguesMeta : (freshLeagues || [])).map((meta, i) => {
+    const groupIndex = meta.groupIndex ?? i;
+    const leagueBotTeams = botTeams.filter(t => t.leagueIndex === groupIndex);
+    let teams = useShells ? leagueBotTeams : (freshLeagues[i]?.teams || []);
+
+    if (groupIndex === userLeagueIndex && userTeam) {
+      teams = [userTeam, ...teams.filter(t => t.id !== userTeam.id)];
     }
+
     return {
-      ...league,
+      id: meta.id || `liga-c-${groupIndex}`,
+      name: meta.name || `Liga C – Group ${groupIndex + 1}`,
+      tier: meta.tier || 'C',
+      groupIndex,
       teams,
-      standings: meta.standings?.length ? meta.standings : league.standings,
-      schedule: meta.schedule?.length ? meta.schedule : league.schedule,
+      standings: meta.standings?.length ? meta.standings : teams.map(t => ({ teamId: t.id, teamName: t.name, wins: 0, losses: 0, points: 0 })),
+      schedule: meta.schedule || [],
     };
   });
 

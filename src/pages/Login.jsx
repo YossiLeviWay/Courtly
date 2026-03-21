@@ -88,7 +88,12 @@ export default function Login() {
 
       const gameState = { user, userTeam, leagues: updatedLeagues, allTeams: updatedTeams, lastUpdated: Date.now() };
 
-      // Save lean format to Firestore (no full bot rosters — stays under 1 MB)
+      // Save lean format to Firestore (bot shells only — no player rosters, stays under 1 MB)
+      const BOT_SHELL_FIELDS = ['id','name','nickname','city','country','region',
+        'stadiumName','founded','colors','league','leagueIndex','leagueId'];
+      const botTeamShells = updatedTeams
+        .filter(t => !t.isUserTeam)
+        .map(t => Object.fromEntries(BOT_SHELL_FIELDS.map(k => [k, t[k]])));
       const leaguesMeta = updatedLeagues.map(l => ({
         id: l.id,
         name: l.name,
@@ -97,7 +102,7 @@ export default function Login() {
         standings: l.standings || [],
         schedule: l.schedule || [],
       }));
-      await setDoc(doc(db, 'gameStates', uid), { user, userTeam, leaguesMeta, lastUpdated: gameState.lastUpdated });
+      await setDoc(doc(db, 'gameStates', uid), { user, userTeam, botTeamShells, leaguesMeta, lastUpdated: gameState.lastUpdated });
 
       dispatch({ type: 'INIT_GAME', payload: gameState });
       addNotification(`Welcome to Courtly, ${form.username}! Your club is ready.`, 'success');
