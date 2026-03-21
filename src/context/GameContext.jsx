@@ -1,8 +1,6 @@
 import { createContext, useContext, useReducer, useEffect, useCallback, useRef } from 'react';
-import { auth, db } from '../firebase.js';
-import { onAuthStateChanged, signOut } from 'firebase/auth';
-import { doc, setDoc, getDoc } from 'firebase/firestore';
 import { generateTeam, generateLeagues } from '../engine/teamGenerator.js';
+import { getToken, clearToken, apiSaveGame, apiLoadGame } from '../api.js';
 
 // ── Firestore serialization ────────────────────────────────────
 // We save: user + userTeam (full) + botTeamShells (id/name/etc., no players)
@@ -150,60 +148,42 @@ export function GameProvider({ children }) {
   // Track whether state was loaded from Firestore vs. locally dispatched
   const justLoaded = useRef(false);
 
-  // Listen to Firebase auth state and load game state from Firestore
+  // On mount: check for saved JWT and load game state
   useEffect(() => {
-    const unsubscribe = onAuthStateChanged(auth, async (firebaseUser) => {
-      if (firebaseUser) {
-        try {
-          const snap = await getDoc(doc(db, 'gameStates', firebaseUser.uid));
-          if (snap.exists()) {
-            justLoaded.current = true;
-            const fullState = deserializeFromFirestore(snap.data());
-            dispatch({ type: 'INIT_GAME', payload: fullState });
-          } else {
-            // Check if this is a brand-new registration (< 30s) — if so, wait for
-            // Login.jsx to write the doc; don't sign out mid-registration.
-            const createdAt = new Date(firebaseUser.metadata.creationTime).getTime();
-            if (Date.now() - createdAt < 30000) {
-              // New account — Login.jsx will dispatch INIT_GAME after setDoc
-              dispatch({ type: 'INIT_GAME', payload: { ...initialState, initialized: true } });
-              return;
-            }
-            // Authenticated but no game data — sign out so user can re-register
-            await signOut(auth);
-            const note = { id: Date.now() + Math.random(), message: 'No account data found. Please register to create your club.', type: 'error', timestamp: Date.now() };
-            dispatch({ type: 'ADD_NOTIFICATION', payload: note });
-            setTimeout(() => dispatch({ type: 'CLEAR_NOTIFICATION', payload: note.id }), 6000);
-            dispatch({ type: 'INIT_GAME', payload: { ...initialState, initialized: true } });
-          }
-        } catch (err) {
-          console.error('Firestore load failed:', err.code, err.message);
+    const token = getToken();
+    if (!token) {
+      dispatch({ type: 'INIT_GAME', payload: { ...initialState, initialized: true } });
+      return;
+    }
+    apiLoadGame()
+      .then(savedData => {
+        if (savedData) {
+          justLoaded.current = true;
+          const fullState = deserializeFromFirestore(savedData);
+          dispatch({ type: 'INIT_GAME', payload: fullState });
+        } else {
+          // Token exists but no game data — clear and show login
+          clearToken();
           dispatch({ type: 'INIT_GAME', payload: { ...initialState, initialized: true } });
         }
-      } else {
+      })
+      .catch(() => {
+        clearToken();
         dispatch({ type: 'INIT_GAME', payload: { ...initialState, initialized: true } });
-      }
-    });
-    return unsubscribe;
+      });
   }, []);
 
-  // Save to Firestore whenever game state changes — skip the load-triggered save
+  // Auto-save to Postgres whenever game state changes — skip the load-triggered save
   useEffect(() => {
     if (!state.initialized || !state.user) return;
-    const uid = auth.currentUser?.uid;
-    if (!uid) return;
+    if (!getToken()) return;
 
-    // Skip the save immediately following a Firestore load (no changes were made)
     if (justLoaded.current) {
       justLoaded.current = false;
       return;
     }
 
-    const toSave = serializeForFirestore(state);
-
-    setDoc(doc(db, 'gameStates', uid), toSave).catch((err) => {
-      console.error('Firestore save failed:', err.code, err.message);
-    });
+    apiSaveGame(serializeForFirestore(state));
   }, [state.user, state.userTeam, state.leagues, state.allTeams, state.lastUpdated]);
 
   const addNotification = useCallback((msg, type = 'info') => {
@@ -212,7 +192,12 @@ export function GameProvider({ children }) {
     setTimeout(() => dispatch({ type: 'CLEAR_NOTIFICATION', payload: note.id }), 5000);
   }, []);
 
-  const value = { state, dispatch, addNotification };
+  const logout = useCallback(() => {
+    clearToken();
+    dispatch({ type: 'INIT_GAME', payload: { ...initialState, initialized: true } });
+  }, []);
+
+  const value = { state, dispatch, addNotification, logout };
 
   return <GameContext.Provider value={value}>{children}</GameContext.Provider>;
 }

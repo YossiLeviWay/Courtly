@@ -4,12 +4,7 @@ import { useGame } from '../context/GameContext.jsx';
 import { useTheme } from '../context/ThemeContext.jsx';
 import { generateLeagues } from '../engine/teamGenerator.js';
 import { Sun, Moon, Eye, EyeOff } from 'lucide-react';
-import { auth, db } from '../firebase.js';
-import {
-  createUserWithEmailAndPassword,
-  signInWithEmailAndPassword,
-} from 'firebase/auth';
-import { doc, setDoc } from 'firebase/firestore';
+import { apiLogin, apiRegister, setToken } from '../api.js';
 import ToastContainer from '../components/ui/ToastContainer.jsx';
 
 export default function Login() {
@@ -26,7 +21,6 @@ export default function Login() {
     if (state.user) navigate('/', { replace: true });
   }, [state.user, navigate]);
 
-  // Reset loading spinner if auth resolved but no game state found (e.g. no Firestore doc)
   useEffect(() => {
     if (state.initialized && !state.user) setLoading(false);
   }, [state.initialized, state.user]);
@@ -48,16 +42,16 @@ export default function Login() {
 
     try {
       if (mode === 'login') {
-        await signInWithEmailAndPassword(auth, form.email, form.password);
-        // onAuthStateChanged in GameContext loads game state from Firestore.
-        // The useEffect above navigates to '/' once state.user is populated.
-        // Keep loading=true while that happens; the component unmounts on navigate.
+        const { token } = await apiLogin(form.email, form.password);
+        setToken(token);
+        // Reload so GameContext re-runs its mount effect and loads game state from DB
+        window.location.href = '/';
         return;
       }
 
-      // Registration - generate full game world
-      const cred = await createUserWithEmailAndPassword(auth, form.email, form.password);
-      const uid = cred.user.uid;
+      // Registration — generate full game world
+      const { token, userId } = await apiRegister(form.email, form.password, form.username);
+      setToken(token);
 
       const leagues = generateLeagues();
       const allTeams = leagues.flatMap(l => l.teams || []);
@@ -69,11 +63,11 @@ export default function Login() {
       const updatedTeams = allTeams.map(t => t.id === baseTeam.id ? userTeam : t);
       const updatedLeagues = leagues.map(l => ({
         ...l,
-        teams: (l.teams || []).map(t => t.id === baseTeam.id ? userTeam : t)
+        teams: (l.teams || []).map(t => t.id === baseTeam.id ? userTeam : t),
       }));
 
       const user = {
-        id: uid,
+        id: userId,
         username: form.username,
         email: form.email,
         teamId: userTeam.id,
@@ -87,34 +81,11 @@ export default function Login() {
       };
 
       const gameState = { user, userTeam, leagues: updatedLeagues, allTeams: updatedTeams, lastUpdated: Date.now() };
-
-      // Save lean format to Firestore (bot shells only — no player rosters, stays under 1 MB)
-      const BOT_SHELL_FIELDS = ['id','name','nickname','city','country','region',
-        'stadiumName','founded','colors','league','leagueIndex','leagueId'];
-      const botTeamShells = updatedTeams
-        .filter(t => !t.isUserTeam)
-        .map(t => Object.fromEntries(BOT_SHELL_FIELDS.map(k => [k, t[k]])));
-      const leaguesMeta = updatedLeagues.map(l => ({
-        id: l.id,
-        name: l.name,
-        tier: l.tier,
-        groupIndex: l.groupIndex,
-        standings: l.standings || [],
-        schedule: l.schedule || [],
-      }));
-      await setDoc(doc(db, 'gameStates', uid), { user, userTeam, botTeamShells, leaguesMeta, lastUpdated: gameState.lastUpdated });
-
       dispatch({ type: 'INIT_GAME', payload: gameState });
       addNotification(`Welcome to Courtly, ${form.username}! Your club is ready.`, 'success');
       navigate('/', { replace: true });
     } catch (err) {
-      const msg =
-        err.code === 'auth/user-not-found' || err.code === 'auth/wrong-password' || err.code === 'auth/invalid-credential'
-          ? 'Invalid email or password.'
-          : err.code === 'auth/email-already-in-use'
-          ? 'Email already registered. Please sign in.'
-          : err.message;
-      addNotification(msg, 'error');
+      addNotification(err.message || 'Something went wrong.', 'error');
       setLoading(false);
     }
   };
