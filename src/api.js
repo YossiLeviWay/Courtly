@@ -62,3 +62,27 @@ export async function apiLoadGame() {
     return null;
   }
 }
+
+// ── Shared World ────────────────────────────────────────────────
+
+export async function apiGetWorld() {
+  try {
+    const res = await fetch('/api/world/get');
+    if (!res.ok) return null;
+    const { world } = await res.json();
+    return world; // { leagues: [...] } or null
+  } catch {
+    return null;
+  }
+}
+
+export async function apiInitWorld(world) {
+  const res = await fetch('/api/world/init', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ world }),
+  });
+  const data = await res.json();
+  if (!res.ok) throw new Error(data.error || 'Failed to initialise world');
+  return data.world; // canonical world stored in DB
+}

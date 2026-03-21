@@ -1,6 +1,6 @@
 import { createContext, useContext, useReducer, useEffect, useCallback, useRef } from 'react';
 import { generateTeam, generateLeagues } from '../engine/teamGenerator.js';
-import { getToken, clearToken, apiSaveGame, apiLoadGame } from '../api.js';
+import { getToken, clearToken, apiSaveGame, apiLoadGame, apiGetWorld } from '../api.js';
 
 // ── Firestore serialization ────────────────────────────────────
 // We save: user + userTeam (full) + botTeamShells (id/name/etc., no players)
@@ -32,18 +32,33 @@ function serializeForFirestore(state) {
   };
 }
 
-function deserializeFromFirestore(savedData) {
+// worldTeams: full bot teams from the shared world_data table (optional).
+// When provided, bot teams use those consistent names/players instead of
+// regenerating randomly — making every user see the same world.
+function deserializeFromFirestore(savedData, worldTeams = []) {
   const { user, userTeam, botTeamShells = [], leaguesMeta = [], lastUpdated } = savedData;
 
-  // Rebuild each bot team: fresh players/staff + saved identity (preserves IDs)
-  const botTeams = botTeamShells.map(shell =>
-    Object.assign(generateTeam({ leagueIndex: shell.leagueIndex, isUserTeam: false }), shell)
-  );
+  let botTeams;
+  if (worldTeams.length > 0) {
+    // Use the shared world: take bot teams from world_data and overlay any
+    // shell fields that may have changed (e.g. if the user renamed a rival team).
+    botTeams = worldTeams
+      .filter(t => t.id !== userTeam?.id)
+      .map(wt => {
+        const shell = botTeamShells.find(s => s.id === wt.id);
+        return shell ? { ...wt, ...shell } : wt;
+      });
+  } else {
+    // Legacy fallback: regenerate from shells (random each time)
+    botTeams = botTeamShells.map(shell =>
+      Object.assign(generateTeam({ leagueIndex: shell.leagueIndex, isUserTeam: false }), shell)
+    );
+  }
 
   const userLeagueIndex = userTeam?.leagueIndex ?? 0;
 
   // If no shells saved yet (old save format), fall back to full regeneration
-  const useShells = botTeamShells.length > 0;
+  const useShells = botTeamShells.length > 0 || worldTeams.length > 0;
 
   const freshLeagues = useShells ? null : generateLeagues();
 
@@ -148,18 +163,20 @@ export function GameProvider({ children }) {
   // Track whether state was loaded from Firestore vs. locally dispatched
   const justLoaded = useRef(false);
 
-  // On mount: check for saved JWT and load game state
+  // On mount: load saved game state AND the shared world in parallel.
+  // The world provides consistent bot team names/players for every user.
   useEffect(() => {
     const token = getToken();
     if (!token) {
       dispatch({ type: 'INIT_GAME', payload: { ...initialState, initialized: true } });
       return;
     }
-    apiLoadGame()
-      .then(savedData => {
+    Promise.all([apiLoadGame(), apiGetWorld()])
+      .then(([savedData, worldData]) => {
         if (savedData) {
           justLoaded.current = true;
-          const fullState = deserializeFromFirestore(savedData);
+          const worldTeams = worldData?.leagues?.flatMap(l => l.teams || []) ?? [];
+          const fullState = deserializeFromFirestore(savedData, worldTeams);
           dispatch({ type: 'INIT_GAME', payload: fullState });
         } else {
           // Token exists but no game data — clear and show login

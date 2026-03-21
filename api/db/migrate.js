@@ -28,6 +28,14 @@ module.exports = async function handler(req, res) {
       )
     `;
 
+    await sql`
+      CREATE TABLE IF NOT EXISTS world_data (
+        id INTEGER PRIMARY KEY DEFAULT 1,
+        data JSONB NOT NULL,
+        created_at BIGINT DEFAULT 0
+      )
+    `;
+
     res.json({ success: true, message: 'Tables created successfully' });
   } catch (err) {
     console.error('Migration error:', err);

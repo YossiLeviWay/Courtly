@@ -4,7 +4,7 @@ import { useGame } from '../context/GameContext.jsx';
 import { useTheme } from '../context/ThemeContext.jsx';
 import { generateLeagues } from '../engine/teamGenerator.js';
 import { Sun, Moon, Eye, EyeOff } from 'lucide-react';
-import { apiLogin, apiRegister, setToken } from '../api.js';
+import { apiLogin, apiRegister, apiGetWorld, apiInitWorld, setToken } from '../api.js';
 import ToastContainer from '../components/ui/ToastContainer.jsx';
 
 export default function Login() {
@@ -49,11 +49,25 @@ export default function Login() {
         return;
       }
 
-      // Registration — generate full game world
+      // Registration — use the shared world (same for every user)
       const { token, userId } = await apiRegister(form.email, form.password, form.username);
       setToken(token);
 
-      const leagues = generateLeagues();
+      // 1. Try to load the existing shared world from the DB
+      let worldData = await apiGetWorld();
+
+      // 2. If no world exists yet (first ever user), generate one and persist it
+      if (!worldData) {
+        const generated = { leagues: generateLeagues() };
+        try {
+          worldData = await apiInitWorld(generated);
+        } catch {
+          // Fall back to the locally generated world if the DB call fails
+          worldData = generated;
+        }
+      }
+
+      const leagues = worldData.leagues;
       const allTeams = leagues.flatMap(l => l.teams || []);
       const league0Teams = leagues[0]?.teams || allTeams.slice(0, 10);
       const userTeamIndex = Math.floor(Math.random() * league0Teams.length);
