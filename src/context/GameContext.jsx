@@ -107,7 +107,9 @@ export function GameProvider({ children }) {
       lastUpdated: state.lastUpdated,
     };
 
-    setDoc(doc(db, 'gameStates', uid), toSave).catch(() => {});
+    setDoc(doc(db, 'gameStates', uid), toSave).catch((err) => {
+      console.error('Firestore save failed:', err.code, err.message);
+    });
   }, [state.user, state.userTeam, state.leagues, state.allTeams, state.lastUpdated]);
 
   const addNotification = useCallback((msg, type = 'info') => {
