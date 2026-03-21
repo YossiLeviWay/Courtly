@@ -2,6 +2,55 @@ import { createContext, useContext, useReducer, useEffect, useCallback, useRef }
 import { auth, db } from '../firebase.js';
 import { onAuthStateChanged, signOut } from 'firebase/auth';
 import { doc, setDoc, getDoc } from 'firebase/firestore';
+import { generateLeagues } from '../engine/teamGenerator.js';
+
+// ── Firestore serialization ────────────────────────────────────
+// Save only user + userTeam + league standings/schedule to stay under 1 MB.
+// Bot team rosters are regenerated from teamGenerator on load.
+function serializeForFirestore(state) {
+  return {
+    user: state.user,
+    userTeam: state.userTeam,
+    leaguesMeta: (state.leagues || []).map(l => ({
+      id: l.id,
+      name: l.name,
+      tier: l.tier,
+      groupIndex: l.groupIndex,
+      standings: l.standings || [],
+      schedule: l.schedule || [],
+    })),
+    lastUpdated: state.lastUpdated,
+  };
+}
+
+function deserializeFromFirestore(savedData) {
+  const { user, userTeam, leaguesMeta = [], lastUpdated } = savedData;
+  const freshLeagues = generateLeagues();
+  const userLeagueIndex = userTeam?.leagueIndex ?? 0;
+
+  const leagues = freshLeagues.map((league, i) => {
+    const meta = leaguesMeta.find(m => m.groupIndex === i) || {};
+    let teams = league.teams;
+    if (i === userLeagueIndex && userTeam) {
+      // Put the user's saved team at slot 0 in their league
+      teams = [userTeam, ...league.teams.slice(1)];
+    }
+    return {
+      ...league,
+      teams,
+      standings: meta.standings?.length ? meta.standings : league.standings,
+      schedule: meta.schedule?.length ? meta.schedule : league.schedule,
+    };
+  });
+
+  return {
+    user,
+    userTeam,
+    leagues,
+    allTeams: leagues.flatMap(l => l.teams || []),
+    lastUpdated,
+  };
+}
 
 const GameContext = createContext(null);
 
@@ -83,8 +132,17 @@ export function GameProvider({ children }) {
           const snap = await getDoc(doc(db, 'gameStates', firebaseUser.uid));
           if (snap.exists()) {
             justLoaded.current = true;
-            dispatch({ type: 'INIT_GAME', payload: snap.data() });
+            const fullState = deserializeFromFirestore(snap.data());
+            dispatch({ type: 'INIT_GAME', payload: fullState });
           } else {
+            // Check if this is a brand-new registration (< 30s) — if so, wait for
+            // Login.jsx to write the doc; don't sign out mid-registration.
+            const createdAt = new Date(firebaseUser.metadata.creationTime).getTime();
+            if (Date.now() - createdAt < 30000) {
+              // New account — Login.jsx will dispatch INIT_GAME after setDoc
+              dispatch({ type: 'INIT_GAME', payload: { ...initialState, initialized: true } });
+              return;
+            }
             // Authenticated but no game data — sign out so user can re-register
             await signOut(auth);
             const note = { id: Date.now() + Math.random(), message: 'No account data found. Please register to create your club.', type: 'error', timestamp: Date.now() };
@@ -115,13 +173,7 @@ export function GameProvider({ children }) {
       return;
     }
 
-    const toSave = {
-      user: state.user,
-      userTeam: state.userTeam,
-      leagues: state.leagues,
-      allTeams: state.allTeams,
-      lastUpdated: state.lastUpdated,
-    };
+    const toSave = serializeForFirestore(state);
 
     setDoc(doc(db, 'gameStates', uid), toSave).catch((err) => {
       console.error('Firestore save failed:', err.code, err.message);

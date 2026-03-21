@@ -87,7 +87,17 @@ export default function Login() {
       };
 
       const gameState = { user, userTeam, leagues: updatedLeagues, allTeams: updatedTeams, lastUpdated: Date.now() };
-      await setDoc(doc(db, 'gameStates', uid), gameState);
+
+      // Save lean format to Firestore (no full bot rosters — stays under 1 MB)
+      const leaguesMeta = updatedLeagues.map(l => ({
+        id: l.id,
+        name: l.name,
+        tier: l.tier,
+        groupIndex: l.groupIndex,
+        standings: l.standings || [],
+        schedule: l.schedule || [],
+      }));
+      await setDoc(doc(db, 'gameStates', uid), { user, userTeam, leaguesMeta, lastUpdated: gameState.lastUpdated });
 
       dispatch({ type: 'INIT_GAME', payload: gameState });
       addNotification(`Welcome to Courtly, ${form.username}! Your club is ready.`, 'success');
