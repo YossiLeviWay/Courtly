@@ -193,8 +193,7 @@ export default function FinancialReport() {
 
   // ── Balance Sheet ──────────────────────────────────────────
 
-  // Cash (budget is in the game's unit — treat as $1 = $1000 for display)
-  const cashReserves = (team.budget ?? 200) * 1000;
+  const cashReserves = team.budget ?? 250;
 
   // Facility assets — sum of upgrade costs invested
   const facilityInvestment = Object.entries(facilities).reduce((sum, [, fac]) => {
@@ -203,12 +202,12 @@ export default function FinancialReport() {
       cost += Math.round(100 * Math.pow(1.5, lvl));
     }
     return sum + cost;
-  }, 0) * 1000;
+  }, 0);
 
-  // Squad value — market value formula
+  // Squad value — estimated market value per player
   const squadValue = players.reduce((sum, p) => {
     const ovr = calcPlayerOvr(p);
-    return sum + (500 + ovr * 100) * 1000;
+    return sum + (50 + ovr * 5);
   }, 0);
 
   const totalAssets = cashReserves + facilityInvestment + squadValue;
@@ -315,7 +314,7 @@ export default function FinancialReport() {
             </div>
 
             <SectionHeader label="Assets" />
-            <AssetRow label="Cash Reserves" value={cashReserves} sub={`Budget: $${team.budget?.toFixed(0) ?? 200} (in-game)`} />
+            <AssetRow label="Cash Reserves" value={cashReserves} sub="Current available balance" />
             <AssetRow label="Facility Assets" value={facilityInvestment} sub="Total upgrade investment" />
             <AssetRow label="Squad Assets" value={squadValue} sub={`${players.length} players at market value`} />
             <TotalRow label="Total Assets" value={totalAssets} />

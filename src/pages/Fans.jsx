@@ -203,7 +203,6 @@ export default function Fans() {
   const matchHistory = userTeam?.matchHistory ?? [];
 
   const [ticketPrice, setTicketPrice] = useState(userTeam?.ticketPrice ?? 20);
-  const [merchandisePrice, setMerchandisePrice] = useState(userTeam?.merchandisePrice ?? 30);
   const [seasonTicketSeats, setSeasonTicketSeats] = useState(userTeam?.seasonTicketSeats ?? 0);
   const [seasonTicketPrice, setSeasonTicketPrice] = useState(userTeam?.seasonTicketPrice ?? 15);
 
@@ -228,7 +227,6 @@ export default function Fans() {
 
   // Computed values
   const estimatedRevenuePerGame = Math.round(Math.min(regularSeats, fanCount) * ticketPrice * 0.3);
-  const weeklyMerchRevenue = Math.round((fanCount * merchandisePrice * 0.01) / 7 * 7);
   const enthusiasmPct = Math.min(100, Math.max(0, fanEnthusiasm));
   const weeklyNewFans = Math.round((enthusiasmPct / 100) * 50 + (enthusiasmPct > 50 ? 20 : 0));
 
@@ -306,7 +304,7 @@ export default function Fans() {
     if (!userTeam) return;
     dispatch({
       type: 'UPDATE_TEAM',
-      payload: { ...userTeam, ticketPrice, merchandisePrice, seasonTicketSeats, seasonTicketPrice },
+      payload: { ...userTeam, ticketPrice, seasonTicketSeats, seasonTicketPrice },
     });
     addNotification('Prices updated successfully!', 'success');
   }
@@ -576,74 +574,6 @@ export default function Fans() {
             </div>
           </div>
 
-          {/* Merchandise price */}
-          <div>
-            <div
-              style={{
-                display: 'flex',
-                justifyContent: 'space-between',
-                alignItems: 'center',
-                marginBottom: 'var(--space-3)',
-              }}
-            >
-              <label
-                style={{
-                  fontWeight: 700,
-                  fontSize: 'var(--font-size-sm)',
-                  display: 'flex',
-                  alignItems: 'center',
-                  gap: 'var(--space-2)',
-                }}
-              >
-                🛍️ Merchandise Price
-              </label>
-              <span
-                style={{
-                  fontWeight: 900,
-                  fontSize: 'var(--font-size-xl)',
-                  color: 'var(--color-primary)',
-                }}
-              >
-                ${merchandisePrice}
-              </span>
-            </div>
-            <input
-              type="range"
-              min={10}
-              max={300}
-              step={10}
-              value={merchandisePrice}
-              onChange={e => setMerchandisePrice(Number(e.target.value))}
-              style={{ width: '100%', accentColor: 'var(--color-primary)' }}
-            />
-            <div
-              style={{
-                display: 'flex',
-                justifyContent: 'space-between',
-                marginTop: 'var(--space-1)',
-              }}
-            >
-              <span style={{ fontSize: 'var(--font-size-xs)', color: 'var(--text-muted)' }}>
-                $10 (cheap)
-              </span>
-              <span style={{ fontSize: 'var(--font-size-xs)', color: 'var(--text-muted)' }}>
-                $300 (luxury)
-              </span>
-            </div>
-            <div
-              style={{
-                marginTop: 'var(--space-3)',
-                padding: 'var(--space-2) var(--space-3)',
-                background: 'var(--color-info-light)',
-                borderRadius: 'var(--radius-md)',
-                fontSize: 'var(--font-size-xs)',
-                color: 'var(--color-info)',
-                fontWeight: 600,
-              }}
-            >
-              Est. weekly merch revenue: {formatMoney(weeklyMerchRevenue)}
-            </div>
-          </div>
         </div>
 
         {/* Revenue estimate */}

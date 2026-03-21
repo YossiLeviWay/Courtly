@@ -208,8 +208,8 @@ export default function Dashboard() {
         />
         <StatCard
           icon={<DollarSign size={18} />}
-          label="Budget"
-          value={`$${budget}k`}
+          label="Balance"
+          value={`$${budget}`}
           sub="Available funds"
         />
         <StatCard

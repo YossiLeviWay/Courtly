@@ -26,6 +26,11 @@ export default function Login() {
     if (state.user) navigate('/', { replace: true });
   }, [state.user, navigate]);
 
+  // Reset loading spinner if auth resolved but no game state found (e.g. no Firestore doc)
+  useEffect(() => {
+    if (state.initialized && !state.user) setLoading(false);
+  }, [state.initialized, state.user]);
+
   const validate = () => {
     const e = {};
     if (mode === 'register' && !form.username.trim()) e.username = 'Username is required';
@@ -59,7 +64,7 @@ export default function Login() {
       const league0Teams = leagues[0]?.teams || allTeams.slice(0, 10);
       const userTeamIndex = Math.floor(Math.random() * league0Teams.length);
       const baseTeam = league0Teams[userTeamIndex];
-      const userTeam = { ...baseTeam, isUserTeam: true, name: form.teamName || baseTeam.name, leagueId: leagues[0]?.id, leagueIndex: 0 };
+      const userTeam = { ...baseTeam, isUserTeam: true, name: form.teamName || baseTeam.name, budget: 250, leagueId: leagues[0]?.id, leagueIndex: 0 };
 
       const updatedTeams = allTeams.map(t => t.id === baseTeam.id ? userTeam : t);
       const updatedLeagues = leagues.map(l => ({

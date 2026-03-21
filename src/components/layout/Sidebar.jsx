@@ -70,7 +70,7 @@ export default function Sidebar() {
         <div className="sidebar-team">
           <div className="sidebar-team-label">Your Club</div>
           <div className="sidebar-team-name">{team.name}</div>
-          <div className="sidebar-balance">${state.userTeam?.budget?.toFixed(2) || '200.00'}</div>
+          <div className="sidebar-balance">${state.userTeam?.budget ?? 250}</div>
         </div>
       )}
 

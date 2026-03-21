@@ -1,6 +1,6 @@
-import { createContext, useContext, useReducer, useEffect, useCallback } from 'react';
+import { createContext, useContext, useReducer, useEffect, useCallback, useRef } from 'react';
 import { auth, db } from '../firebase.js';
-import { onAuthStateChanged } from 'firebase/auth';
+import { onAuthStateChanged, signOut } from 'firebase/auth';
 import { doc, setDoc, getDoc } from 'firebase/firestore';
 
 const GameContext = createContext(null);
@@ -72,6 +72,8 @@ function gameReducer(state, action) {
 
 export function GameProvider({ children }) {
   const [state, dispatch] = useReducer(gameReducer, initialState);
+  // Track whether state was loaded from Firestore vs. locally dispatched
+  const justLoaded = useRef(false);
 
   // Listen to Firebase auth state and load game state from Firestore
   useEffect(() => {
@@ -80,12 +82,19 @@ export function GameProvider({ children }) {
         try {
           const snap = await getDoc(doc(db, 'gameStates', firebaseUser.uid));
           if (snap.exists()) {
+            justLoaded.current = true;
             dispatch({ type: 'INIT_GAME', payload: snap.data() });
           } else {
-            dispatch({ type: 'INIT_GAME', payload: { initialized: true } });
+            // Authenticated but no game data — sign out so user can re-register
+            await signOut(auth);
+            const note = { id: Date.now() + Math.random(), message: 'No account data found. Please register to create your club.', type: 'error', timestamp: Date.now() };
+            dispatch({ type: 'ADD_NOTIFICATION', payload: note });
+            setTimeout(() => dispatch({ type: 'CLEAR_NOTIFICATION', payload: note.id }), 6000);
+            dispatch({ type: 'INIT_GAME', payload: { ...initialState, initialized: true } });
           }
-        } catch {
-          dispatch({ type: 'INIT_GAME', payload: { initialized: true } });
+        } catch (err) {
+          console.error('Firestore load failed:', err.code, err.message);
+          dispatch({ type: 'INIT_GAME', payload: { ...initialState, initialized: true } });
         }
       } else {
         dispatch({ type: 'INIT_GAME', payload: { ...initialState, initialized: true } });
@@ -94,11 +103,17 @@ export function GameProvider({ children }) {
     return unsubscribe;
   }, []);
 
-  // Save to Firestore whenever game state changes
+  // Save to Firestore whenever game state changes — skip the load-triggered save
   useEffect(() => {
     if (!state.initialized || !state.user) return;
     const uid = auth.currentUser?.uid;
     if (!uid) return;
+
+    // Skip the save immediately following a Firestore load (no changes were made)
+    if (justLoaded.current) {
+      justLoaded.current = false;
+      return;
+    }
 
     const toSave = {
       user: state.user,
