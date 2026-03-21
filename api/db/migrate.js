@@ -1,9 +1,7 @@
 const { neon } = require('@neondatabase/serverless');
 
 module.exports = async function handler(req, res) {
-  if (req.query.secret !== process.env.JWT_SECRET) {
-    return res.status(403).json({ error: 'Forbidden' });
-  }
+  if (req.method !== 'POST') return res.status(405).json({ error: 'Use POST' });
 
   try {
     const sql = neon(process.env.POSTGRES_URL);
