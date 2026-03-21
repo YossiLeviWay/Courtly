@@ -17,6 +17,7 @@ import TeamInfo from './pages/TeamInfo.jsx';
 import Settings from './pages/Settings.jsx';
 import Profile from './pages/Profile.jsx';
 import LiveMatch from './pages/LiveMatch.jsx';
+import FinancialReport from './pages/FinancialReport.jsx';
 
 function ProtectedRoute({ children }) {
   const { state } = useGame();
@@ -59,6 +60,7 @@ export default function App() {
           <Route path="settings" element={<Settings />} />
           <Route path="profile" element={<Profile />} />
           <Route path="match/live" element={<LiveMatch />} />
+          <Route path="finances" element={<FinancialReport />} />
         </Route>
         <Route path="*" element={<Navigate to="/" replace />} />
       </Routes>

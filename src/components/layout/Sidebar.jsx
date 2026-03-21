@@ -3,7 +3,7 @@ import { useGame } from '../../context/GameContext.jsx';
 import {
   LayoutDashboard, Users, Target, UserCheck, Dumbbell,
   Building2, Heart, Calendar, Trophy, ArrowLeftRight,
-  BarChart2, Settings, User, LogOut, Zap
+  BarChart2, Settings, User, LogOut, Zap, TrendingUp
 } from 'lucide-react';
 
 const NAV_GROUPS = [
@@ -23,6 +23,7 @@ const NAV_GROUPS = [
       { to: '/training', icon: Dumbbell, label: 'Training' },
       { to: '/facilities', icon: Building2, label: 'Facilities' },
       { to: '/fans', icon: Heart, label: 'Fans' },
+      { to: '/finances', icon: TrendingUp, label: 'Finances' },
     ]
   },
   {
