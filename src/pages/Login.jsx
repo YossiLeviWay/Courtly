@@ -4,6 +4,12 @@ import { useGame } from '../context/GameContext.jsx';
 import { useTheme } from '../context/ThemeContext.jsx';
 import { generateLeagues } from '../engine/teamGenerator.js';
 import { Sun, Moon, Eye, EyeOff } from 'lucide-react';
+import { auth, db } from '../firebase.js';
+import {
+  createUserWithEmailAndPassword,
+  signInWithEmailAndPassword,
+} from 'firebase/auth';
+import { doc, setDoc, getDoc } from 'firebase/firestore';
 
 export default function Login() {
   const { state, dispatch, addNotification } = useGame();
@@ -21,12 +27,10 @@ export default function Login() {
 
   const validate = () => {
     const e = {};
-    if (!form.username.trim()) e.username = 'Username is required';
+    if (mode === 'register' && !form.username.trim()) e.username = 'Username is required';
+    if (!form.email.includes('@')) e.email = 'Valid email required';
     if (!form.password || form.password.length < 6) e.password = 'Password must be at least 6 characters';
-    if (mode === 'register') {
-      if (!form.email.includes('@')) e.email = 'Valid email required';
-      if (!form.teamName.trim()) e.teamName = 'Team name is required';
-    }
+    if (mode === 'register' && !form.teamName.trim()) e.teamName = 'Team name is required';
     setErrors(e);
     return Object.keys(e).length === 0;
   };
@@ -36,60 +40,64 @@ export default function Login() {
     if (!validate()) return;
     setLoading(true);
 
-    await new Promise(r => setTimeout(r, 800));
-
-    if (mode === 'login') {
-      const savedState = localStorage.getItem('courtly_gamestate');
-      if (savedState) {
-        const parsed = JSON.parse(savedState);
-        if (parsed.user?.username === form.username) {
-          dispatch({ type: 'INIT_GAME', payload: parsed });
-          navigate('/', { replace: true });
-          return;
+    try {
+      if (mode === 'login') {
+        const cred = await signInWithEmailAndPassword(auth, form.email, form.password);
+        const snap = await getDoc(doc(db, 'gameStates', cred.user.uid));
+        if (snap.exists()) {
+          dispatch({ type: 'INIT_GAME', payload: snap.data() });
         }
+        navigate('/', { replace: true });
+        return;
       }
-      addNotification('Invalid credentials. Please register first.', 'error');
+
+      // Registration - generate full game world
+      const cred = await createUserWithEmailAndPassword(auth, form.email, form.password);
+      const uid = cred.user.uid;
+
+      const leagues = generateLeagues();
+      const allTeams = leagues.flatMap(l => l.teams || []);
+      const league0Teams = leagues[0]?.teams || allTeams.slice(0, 10);
+      const userTeamIndex = Math.floor(Math.random() * league0Teams.length);
+      const baseTeam = league0Teams[userTeamIndex];
+      const userTeam = { ...baseTeam, isUserTeam: true, name: form.teamName || baseTeam.name, leagueId: leagues[0]?.id, leagueIndex: 0 };
+
+      const updatedTeams = allTeams.map(t => t.id === baseTeam.id ? userTeam : t);
+      const updatedLeagues = leagues.map(l => ({
+        ...l,
+        teams: (l.teams || []).map(t => t.id === baseTeam.id ? userTeam : t)
+      }));
+
+      const user = {
+        id: uid,
+        username: form.username,
+        email: form.email,
+        teamId: userTeam.id,
+        bio: '',
+        gender: '',
+        avatar: { type: 'initials', emoji: null },
+        settingsChangesToday: 0,
+        lastSettingsChange: null,
+        joinedAt: Date.now(),
+        records: { wins: 0, losses: 0, honors: [] },
+      };
+
+      const gameState = { user, userTeam, leagues: updatedLeagues, allTeams: updatedTeams, lastUpdated: Date.now() };
+      await setDoc(doc(db, 'gameStates', uid), gameState);
+
+      dispatch({ type: 'INIT_GAME', payload: gameState });
+      addNotification(`Welcome to Courtly, ${form.username}! Your club is ready.`, 'success');
+      navigate('/', { replace: true });
+    } catch (err) {
+      const msg =
+        err.code === 'auth/user-not-found' || err.code === 'auth/wrong-password' || err.code === 'auth/invalid-credential'
+          ? 'Invalid email or password.'
+          : err.code === 'auth/email-already-in-use'
+          ? 'Email already registered. Please sign in.'
+          : err.message;
+      addNotification(msg, 'error');
       setLoading(false);
-      return;
     }
-
-    // Registration - generate full game world
-    const leagues = generateLeagues();
-    // Flatten all teams from all leagues
-    const allTeams = leagues.flatMap(l => l.teams || []);
-    // Assign user to a random team in league 0
-    const league0Teams = leagues[0]?.teams || allTeams.slice(0, 10);
-    const userTeamIndex = Math.floor(Math.random() * league0Teams.length);
-    const baseTeam = league0Teams[userTeamIndex];
-    const userTeam = { ...baseTeam, isUserTeam: true, name: form.teamName || baseTeam.name, leagueId: leagues[0]?.id, leagueIndex: 0 };
-
-    const updatedTeams = allTeams.map(t => t.id === baseTeam.id ? userTeam : t);
-    const updatedLeagues = leagues.map(l => ({
-      ...l,
-      teams: (l.teams || []).map(t => t.id === baseTeam.id ? userTeam : t)
-    }));
-
-    const user = {
-      id: Date.now().toString(),
-      username: form.username,
-      email: form.email,
-      teamId: userTeam.id,
-      bio: '',
-      gender: '',
-      avatar: { type: 'initials', emoji: null },
-      settingsChangesToday: 0,
-      lastSettingsChange: null,
-      joinedAt: Date.now(),
-      records: { wins: 0, losses: 0, honors: [] },
-    };
-
-    dispatch({
-      type: 'INIT_GAME',
-      payload: { user, userTeam, leagues: updatedLeagues, allTeams: updatedTeams }
-    });
-
-    addNotification(`Welcome to Courtly, ${form.username}! Your club is ready.`, 'success');
-    navigate('/', { replace: true });
   };
 
   return (
@@ -288,32 +296,33 @@ export default function Login() {
           </div>
 
           <form onSubmit={handleSubmit}>
-            <div className="form-group">
-              <label className="form-label">Username</label>
-              <input
-                className="form-input"
-                type="text"
-                placeholder="Your GM name"
-                value={form.username}
-                onChange={e => setForm(p => ({ ...p, username: e.target.value }))}
-                autoComplete="username"
-              />
-              {errors.username && <span className="form-error">{errors.username}</span>}
-            </div>
-
             {mode === 'register' && (
               <div className="form-group">
-                <label className="form-label">Email</label>
+                <label className="form-label">Username</label>
                 <input
                   className="form-input"
-                  type="email"
-                  placeholder="your@email.com"
-                  value={form.email}
-                  onChange={e => setForm(p => ({ ...p, email: e.target.value }))}
+                  type="text"
+                  placeholder="Your GM name"
+                  value={form.username}
+                  onChange={e => setForm(p => ({ ...p, username: e.target.value }))}
+                  autoComplete="username"
                 />
-                {errors.email && <span className="form-error">{errors.email}</span>}
+                {errors.username && <span className="form-error">{errors.username}</span>}
               </div>
             )}
+
+            <div className="form-group">
+              <label className="form-label">Email</label>
+              <input
+                className="form-input"
+                type="email"
+                placeholder="your@email.com"
+                value={form.email}
+                onChange={e => setForm(p => ({ ...p, email: e.target.value }))}
+                autoComplete="email"
+              />
+              {errors.email && <span className="form-error">{errors.email}</span>}
+            </div>
 
             {mode === 'register' && (
               <div className="form-group">

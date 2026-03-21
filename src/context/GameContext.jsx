@@ -1,4 +1,7 @@
 import { createContext, useContext, useReducer, useEffect, useCallback } from 'react';
+import { auth, db } from '../firebase.js';
+import { onAuthStateChanged } from 'firebase/auth';
+import { doc, setDoc, getDoc } from 'firebase/firestore';
 
 const GameContext = createContext(null);
 
@@ -66,38 +69,45 @@ function gameReducer(state, action) {
   }
 }
 
-const STORAGE_KEY = 'courtly_gamestate';
-
 export function GameProvider({ children }) {
   const [state, dispatch] = useReducer(gameReducer, initialState);
 
-  // Load from localStorage
+  // Listen to Firebase auth state and load game state from Firestore
   useEffect(() => {
-    try {
-      const saved = localStorage.getItem(STORAGE_KEY);
-      if (saved) {
-        const parsed = JSON.parse(saved);
-        dispatch({ type: 'INIT_GAME', payload: parsed });
+    const unsubscribe = onAuthStateChanged(auth, async (firebaseUser) => {
+      if (firebaseUser) {
+        try {
+          const snap = await getDoc(doc(db, 'gameStates', firebaseUser.uid));
+          if (snap.exists()) {
+            dispatch({ type: 'INIT_GAME', payload: snap.data() });
+          } else {
+            dispatch({ type: 'INIT_GAME', payload: { initialized: true } });
+          }
+        } catch {
+          dispatch({ type: 'INIT_GAME', payload: { initialized: true } });
+        }
       } else {
-        dispatch({ type: 'INIT_GAME', payload: { initialized: true } });
+        dispatch({ type: 'INIT_GAME', payload: { ...initialState, initialized: true } });
       }
-    } catch (e) {
-      dispatch({ type: 'INIT_GAME', payload: { initialized: true } });
-    }
+    });
+    return unsubscribe;
   }, []);
 
-  // Save to localStorage on state change
+  // Save to Firestore whenever game state changes
   useEffect(() => {
-    if (state.initialized && state.user) {
-      const toSave = {
-        user: state.user,
-        userTeam: state.userTeam,
-        leagues: state.leagues,
-        allTeams: state.allTeams,
-        lastUpdated: state.lastUpdated,
-      };
-      localStorage.setItem(STORAGE_KEY, JSON.stringify(toSave));
-    }
+    if (!state.initialized || !state.user) return;
+    const uid = auth.currentUser?.uid;
+    if (!uid) return;
+
+    const toSave = {
+      user: state.user,
+      userTeam: state.userTeam,
+      leagues: state.leagues,
+      allTeams: state.allTeams,
+      lastUpdated: state.lastUpdated,
+    };
+
+    setDoc(doc(db, 'gameStates', uid), toSave).catch(() => {});
   }, [state.user, state.userTeam, state.leagues, state.allTeams, state.lastUpdated]);
 
   const addNotification = useCallback((msg, type = 'info') => {
