@@ -1,15 +1,326 @@
 import { useState, useMemo } from 'react';
 import { useGame } from '../context/GameContext.jsx';
-import { ArrowLeftRight, Search, Filter, Clock, DollarSign, X, Eye } from 'lucide-react';
+import { ArrowLeftRight, Search, Filter, Clock, X, Eye, ChevronDown, ChevronUp } from 'lucide-react';
 import PlayerAvatar from '../components/ui/PlayerAvatar.jsx';
+import { calcPlayerMonthlyWage, calcStaffMonthlyWage } from './FinancialReport.jsx';
+import { ATTRIBUTE_NAMES, STAFF_ROLES, STAFF_CHARACTERIZATIONS } from '../data/constants.js';
 
 const POSITIONS = ['PG', 'SG', 'SF', 'PF', 'C'];
 
 function formatPrice(n) { return `$${Number(n).toLocaleString()}`; }
+function fmtWage(n) {
+  if (n >= 1000) return `$${(n / 1000).toFixed(1)}k/mo`;
+  return `$${n}/mo`;
+}
+
+function calcOvr(player) {
+  const attrs = player.attributes || {};
+  const vals = Object.values(attrs);
+  if (vals.length === 0) return player.overallRating || 50;
+  return Math.round(vals.reduce((a, b) => a + b, 0) / vals.length);
+}
+
+// ── Attribute groups for filter ────────────────────────────────
+
+const ATTR_GROUPS = [
+  {
+    name: 'Shooting / Offense',
+    keys: ['threePtShooting', 'midRangeScoring', 'freeThrowShooting', 'finishingAtTheRim', 'postMoves', 'aggressivenessOffensive'],
+  },
+  {
+    name: 'Defense / Rebounding',
+    keys: ['perimeterDefense', 'interiorDefense', 'rebounding', 'helpDefense', 'onBallScreenNavigation', 'disciplineFouling'],
+  },
+  {
+    name: 'Playmaking / IQ',
+    keys: ['courtVision', 'ballHandlingDribbling', 'passingAccuracy', 'basketballIQ'],
+  },
+  {
+    name: 'Physical / Mental',
+    keys: ['staminaEndurance', 'conditioningFitness', 'agilityLateralSpeed', 'clutchPerformance', 'handlePressureMental', 'consistencyPerformance', 'leadershipCommunication', 'teamFirstAttitude', 'workEthicOutOfGame', 'patienceOffense', 'settingScreens', 'bodyControl', 'verticalLeapingAbility'],
+  },
+];
+
+const DEFAULT_PLAYER_FILTERS = {
+  minPrice: 0, maxPrice: 10000,
+  minWage: 0, maxWage: 15000,
+  positions: [],
+  nationality: '',
+  minOvr: 0, maxOvr: 100,
+  attributes: {},
+};
+
+const DEFAULT_STAFF_FILTERS = {
+  minPrice: 0, maxPrice: 10000,
+  minWage: 0, maxWage: 15000,
+  roles: [],
+  minAbility: 0, maxAbility: 100,
+  characterizations: [],
+};
+
+// ── Filter Modal ───────────────────────────────────────────────
+
+function FilterModal({ onClose, playerFilters, setPlayerFilters, staffFilters, setStaffFilters }) {
+  const [tab, setTab] = useState('players');
+  const [pf, setPf] = useState({ ...playerFilters });
+  const [sf, setSf] = useState({ ...staffFilters });
+  const [expandedGroup, setExpandedGroup] = useState(null);
+
+  function togglePos(pos) {
+    setPf(f => ({
+      ...f,
+      positions: f.positions.includes(pos) ? f.positions.filter(p => p !== pos) : [...f.positions, pos],
+    }));
+  }
+
+  function toggleRole(role) {
+    setSf(f => ({
+      ...f,
+      roles: f.roles.includes(role) ? f.roles.filter(r => r !== role) : [...f.roles, role],
+    }));
+  }
+
+  function toggleChar(char) {
+    setSf(f => ({
+      ...f,
+      characterizations: f.characterizations.includes(char)
+        ? f.characterizations.filter(c => c !== char)
+        : [...f.characterizations, char],
+    }));
+  }
+
+  function setAttrMin(key, val) {
+    setPf(f => ({
+      ...f,
+      attributes: val === '' || val === 0 ? (() => { const a = { ...f.attributes }; delete a[key]; return a; })() : { ...f.attributes, [key]: Number(val) },
+    }));
+  }
+
+  function applyAndClose() {
+    setPlayerFilters(pf);
+    setStaffFilters(sf);
+    onClose();
+  }
+
+  function resetAll() {
+    setPf({ ...DEFAULT_PLAYER_FILTERS });
+    setSf({ ...DEFAULT_STAFF_FILTERS });
+  }
+
+  const activePlayerCount = [
+    pf.minPrice > 0 || pf.maxPrice < 10000,
+    pf.minWage > 0 || pf.maxWage < 15000,
+    pf.positions.length > 0,
+    pf.nationality !== '',
+    pf.minOvr > 0 || pf.maxOvr < 100,
+    Object.keys(pf.attributes).length > 0,
+  ].filter(Boolean).length;
+
+  const activeStaffCount = [
+    sf.minPrice > 0 || sf.maxPrice < 10000,
+    sf.minWage > 0 || sf.maxWage < 15000,
+    sf.roles.length > 0,
+    sf.minAbility > 0 || sf.maxAbility < 100,
+    sf.characterizations.length > 0,
+  ].filter(Boolean).length;
+
+  return (
+    <div className="modal-overlay" onClick={onClose}>
+      <div className="modal" onClick={e => e.stopPropagation()} style={{ maxWidth: 560, maxHeight: '90vh', display: 'flex', flexDirection: 'column' }}>
+        <div className="modal-header">
+          <h3 className="card-title">Advanced Filters</h3>
+          <button className="btn btn-ghost btn-sm" onClick={onClose}><X size={16} /></button>
+        </div>
+
+        <div className="tabs" style={{ padding: '0 var(--space-4)', borderBottom: '1px solid var(--border-color)', flexShrink: 0 }}>
+          <button className={`tab${tab === 'players' ? ' active' : ''}`} onClick={() => setTab('players')}>
+            Players {activePlayerCount > 0 && <span className="badge badge-orange" style={{ marginLeft: 4, padding: '1px 5px', fontSize: '0.6rem' }}>{activePlayerCount}</span>}
+          </button>
+          <button className={`tab${tab === 'staff' ? ' active' : ''}`} onClick={() => setTab('staff')}>
+            Staff {activeStaffCount > 0 && <span className="badge badge-orange" style={{ marginLeft: 4, padding: '1px 5px', fontSize: '0.6rem' }}>{activeStaffCount}</span>}
+          </button>
+        </div>
+
+        <div className="modal-body" style={{ overflowY: 'auto', flex: 1, display: 'flex', flexDirection: 'column', gap: 'var(--space-5)' }}>
+          {tab === 'players' && (
+            <>
+              {/* Market */}
+              <div>
+                <div style={{ fontWeight: 700, fontSize: 'var(--font-size-sm)', marginBottom: 'var(--space-3)', color: 'var(--text-primary)' }}>Market</div>
+                <div className="grid-2" style={{ gap: 'var(--space-4)' }}>
+                  <div>
+                    <label className="form-label">Asking Price: ${pf.minPrice.toLocaleString()} – ${pf.maxPrice.toLocaleString()}</label>
+                    <div className="flex gap-2">
+                      <input type="range" min={0} max={10000} step={100} value={pf.minPrice} onChange={e => setPf(f => ({ ...f, minPrice: +e.target.value }))} style={{ flex: 1, accentColor: 'var(--color-primary)' }} />
+                      <input type="range" min={0} max={10000} step={100} value={pf.maxPrice} onChange={e => setPf(f => ({ ...f, maxPrice: +e.target.value }))} style={{ flex: 1, accentColor: 'var(--color-primary)' }} />
+                    </div>
+                  </div>
+                  <div>
+                    <label className="form-label">Monthly Wage: {fmtWage(pf.minWage)} – {fmtWage(pf.maxWage)}</label>
+                    <div className="flex gap-2">
+                      <input type="range" min={0} max={15000} step={250} value={pf.minWage} onChange={e => setPf(f => ({ ...f, minWage: +e.target.value }))} style={{ flex: 1, accentColor: 'var(--color-primary)' }} />
+                      <input type="range" min={0} max={15000} step={250} value={pf.maxWage} onChange={e => setPf(f => ({ ...f, maxWage: +e.target.value }))} style={{ flex: 1, accentColor: 'var(--color-primary)' }} />
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+              {/* Core */}
+              <div>
+                <div style={{ fontWeight: 700, fontSize: 'var(--font-size-sm)', marginBottom: 'var(--space-3)', color: 'var(--text-primary)' }}>Core</div>
+                <div style={{ marginBottom: 'var(--space-3)' }}>
+                  <label className="form-label">Position</label>
+                  <div className="flex gap-2" style={{ flexWrap: 'wrap' }}>
+                    {POSITIONS.map(pos => (
+                      <button key={pos}
+                        onClick={() => togglePos(pos)}
+                        className={`btn btn-sm ${pf.positions.includes(pos) ? 'btn-primary' : 'btn-ghost'}`}
+                        style={{ minWidth: 44 }}
+                      >{pos}</button>
+                    ))}
+                  </div>
+                </div>
+                <div className="grid-2" style={{ gap: 'var(--space-4)' }}>
+                  <div>
+                    <label className="form-label">Nationality (search)</label>
+                    <input className="form-input" placeholder="e.g. American" value={pf.nationality} onChange={e => setPf(f => ({ ...f, nationality: e.target.value }))} />
+                  </div>
+                  <div>
+                    <label className="form-label">Overall Rating: {pf.minOvr} – {pf.maxOvr}</label>
+                    <div className="flex gap-2">
+                      <input type="range" min={0} max={100} value={pf.minOvr} onChange={e => setPf(f => ({ ...f, minOvr: +e.target.value }))} style={{ flex: 1, accentColor: 'var(--color-primary)' }} />
+                      <input type="range" min={0} max={100} value={pf.maxOvr} onChange={e => setPf(f => ({ ...f, maxOvr: +e.target.value }))} style={{ flex: 1, accentColor: 'var(--color-primary)' }} />
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+              {/* Attribute filters */}
+              <div>
+                <div style={{ fontWeight: 700, fontSize: 'var(--font-size-sm)', marginBottom: 'var(--space-3)', color: 'var(--text-primary)' }}>
+                  Player Attributes <span style={{ color: 'var(--text-muted)', fontWeight: 400 }}>(set minimum value)</span>
+                </div>
+                {ATTR_GROUPS.map(group => (
+                  <div key={group.name} style={{ marginBottom: 'var(--space-2)', border: '1px solid var(--border-color)', borderRadius: 'var(--radius-md)', overflow: 'hidden' }}>
+                    <button
+                      onClick={() => setExpandedGroup(expandedGroup === group.name ? null : group.name)}
+                      style={{ width: '100%', padding: 'var(--space-2) var(--space-3)', display: 'flex', justifyContent: 'space-between', alignItems: 'center', fontWeight: 700, fontSize: 'var(--font-size-sm)', background: 'var(--bg-muted)', border: 'none', cursor: 'pointer', color: 'var(--text-primary)' }}
+                    >
+                      <span>{group.name}</span>
+                      <span style={{ display: 'flex', alignItems: 'center', gap: 'var(--space-2)' }}>
+                        {group.keys.filter(k => pf.attributes[k]).length > 0 && (
+                          <span className="badge badge-orange" style={{ padding: '1px 6px', fontSize: '0.65rem' }}>
+                            {group.keys.filter(k => pf.attributes[k]).length} active
+                          </span>
+                        )}
+                        {expandedGroup === group.name ? <ChevronUp size={14} /> : <ChevronDown size={14} />}
+                      </span>
+                    </button>
+                    {expandedGroup === group.name && (
+                      <div style={{ padding: 'var(--space-3)', display: 'flex', flexDirection: 'column', gap: 'var(--space-2)' }}>
+                        {group.keys.map(key => {
+                          const label = ATTRIBUTE_NAMES[key]?.label ?? key;
+                          const val = pf.attributes[key] ?? 0;
+                          return (
+                            <div key={key} style={{ display: 'flex', alignItems: 'center', gap: 'var(--space-3)' }}>
+                              <span style={{ fontSize: 'var(--font-size-xs)', color: 'var(--text-secondary)', flex: 1, minWidth: 150 }}>{label}</span>
+                              <input
+                                type="range" min={0} max={100} value={val}
+                                onChange={e => setAttrMin(key, +e.target.value)}
+                                style={{ flex: 1, accentColor: 'var(--color-primary)' }}
+                              />
+                              <span style={{ fontWeight: 700, fontSize: 'var(--font-size-xs)', color: val > 0 ? 'var(--color-primary)' : 'var(--text-muted)', minWidth: 24, textAlign: 'right' }}>
+                                {val > 0 ? `≥${val}` : 'Any'}
+                              </span>
+                            </div>
+                          );
+                        })}
+                      </div>
+                    )}
+                  </div>
+                ))}
+              </div>
+            </>
+          )}
+
+          {tab === 'staff' && (
+            <>
+              {/* Market */}
+              <div>
+                <div style={{ fontWeight: 700, fontSize: 'var(--font-size-sm)', marginBottom: 'var(--space-3)', color: 'var(--text-primary)' }}>Market</div>
+                <div className="grid-2" style={{ gap: 'var(--space-4)' }}>
+                  <div>
+                    <label className="form-label">Asking Price: ${sf.minPrice.toLocaleString()} – ${sf.maxPrice.toLocaleString()}</label>
+                    <div className="flex gap-2">
+                      <input type="range" min={0} max={10000} step={100} value={sf.minPrice} onChange={e => setSf(f => ({ ...f, minPrice: +e.target.value }))} style={{ flex: 1, accentColor: 'var(--color-primary)' }} />
+                      <input type="range" min={0} max={10000} step={100} value={sf.maxPrice} onChange={e => setSf(f => ({ ...f, maxPrice: +e.target.value }))} style={{ flex: 1, accentColor: 'var(--color-primary)' }} />
+                    </div>
+                  </div>
+                  <div>
+                    <label className="form-label">Monthly Wage: {fmtWage(sf.minWage)} – {fmtWage(sf.maxWage)}</label>
+                    <div className="flex gap-2">
+                      <input type="range" min={0} max={15000} step={250} value={sf.minWage} onChange={e => setSf(f => ({ ...f, minWage: +e.target.value }))} style={{ flex: 1, accentColor: 'var(--color-primary)' }} />
+                      <input type="range" min={0} max={15000} step={250} value={sf.maxWage} onChange={e => setSf(f => ({ ...f, maxWage: +e.target.value }))} style={{ flex: 1, accentColor: 'var(--color-primary)' }} />
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+              {/* Role */}
+              <div>
+                <div style={{ fontWeight: 700, fontSize: 'var(--font-size-sm)', marginBottom: 'var(--space-3)', color: 'var(--text-primary)' }}>Staff Role</div>
+                <div style={{ display: 'flex', flexWrap: 'wrap', gap: 'var(--space-2)' }}>
+                  {STAFF_ROLES.map(role => (
+                    <button key={role}
+                      onClick={() => toggleRole(role)}
+                      className={`btn btn-sm ${sf.roles.includes(role) ? 'btn-primary' : 'btn-ghost'}`}
+                      style={{ fontSize: 'var(--font-size-xs)' }}
+                    >{role}</button>
+                  ))}
+                </div>
+              </div>
+
+              {/* Ability */}
+              <div>
+                <label className="form-label">Specialized Ability Score: {sf.minAbility} – {sf.maxAbility}</label>
+                <div className="flex gap-2">
+                  <input type="range" min={0} max={100} value={sf.minAbility} onChange={e => setSf(f => ({ ...f, minAbility: +e.target.value }))} style={{ flex: 1, accentColor: 'var(--color-primary)' }} />
+                  <input type="range" min={0} max={100} value={sf.maxAbility} onChange={e => setSf(f => ({ ...f, maxAbility: +e.target.value }))} style={{ flex: 1, accentColor: 'var(--color-primary)' }} />
+                </div>
+              </div>
+
+              {/* Characterizations */}
+              <div>
+                <div style={{ fontWeight: 700, fontSize: 'var(--font-size-sm)', marginBottom: 'var(--space-3)', color: 'var(--text-primary)' }}>Characterizations</div>
+                <div style={{ display: 'flex', flexWrap: 'wrap', gap: 'var(--space-2)' }}>
+                  {STAFF_CHARACTERIZATIONS.map(c => (
+                    <button key={c}
+                      onClick={() => toggleChar(c)}
+                      className={`btn btn-sm ${sf.characterizations.includes(c) ? 'btn-primary' : 'btn-ghost'}`}
+                      style={{ fontSize: 'var(--font-size-xs)' }}
+                    >{c}</button>
+                  ))}
+                </div>
+              </div>
+            </>
+          )}
+        </div>
+
+        <div className="modal-footer">
+          <button className="btn btn-ghost" onClick={resetAll}>Reset All</button>
+          <button className="btn btn-primary" onClick={applyAndClose}>Apply Filters</button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ── Player Card ────────────────────────────────────────────────
 
 function PlayerCard({ player, team, onBuy, onView, timeLeft, userTeamId, onRemove }) {
   const isOwn = team?.id === userTeamId;
-  const overallRating = Math.round(Object.values(player.attributes || {}).reduce((a,b) => a+b, 0) / 30) || 50;
+  const ovr = calcOvr(player);
+  const wage = calcPlayerMonthlyWage(player);
   return (
     <div className="card" style={{ padding: '14px 16px' }}>
       <div className="flex items-center gap-3 mb-3">
@@ -27,9 +338,17 @@ function PlayerCard({ player, team, onBuy, onView, timeLeft, userTeamId, onRemov
         </div>
       </div>
       <div className="flex gap-2 text-xs" style={{ marginBottom: 8 }}>
-        <span className="badge badge-orange">OVR {overallRating}</span>
+        <span className="badge badge-orange">OVR {ovr}</span>
         <span className="badge badge-gray">{player.age}y</span>
         <span className="badge badge-blue">{player.height?.ft || '6\'5"'}</span>
+      </div>
+      {/* Monthly wage */}
+      <div style={{
+        padding: '4px 8px', background: 'var(--color-danger-light)', borderRadius: 'var(--radius-sm)',
+        fontSize: 'var(--font-size-xs)', color: 'var(--color-danger)', fontWeight: 700, marginBottom: 8,
+        display: 'inline-block',
+      }}>
+        {fmtWage(wage)}
       </div>
       {team && !isOwn && <div className="text-xs text-muted mb-2">🏀 {team.name}</div>}
       <div className="flex gap-2">
@@ -41,30 +360,30 @@ function PlayerCard({ player, team, onBuy, onView, timeLeft, userTeamId, onRemov
             <X size={12} /> Remove
           </button>
         ) : (
-          <button className="btn btn-primary btn-sm flex-1" onClick={() => onBuy(player, team)}>
-            Buy
-          </button>
+          <button className="btn btn-primary btn-sm flex-1" onClick={() => onBuy(player, team)}>Buy</button>
         )}
       </div>
     </div>
   );
 }
 
+// ── Main Page ──────────────────────────────────────────────────
+
 export default function Transfer() {
   const { state, dispatch, addNotification } = useGame();
   const [activeTab, setActiveTab] = useState('market');
   const [search, setSearch] = useState('');
-  const [posFilter, setPosFilter] = useState('');
-  const [maxPrice, setMaxPrice] = useState(1000);
+  const [showFilterModal, setShowFilterModal] = useState(false);
   const [showListModal, setShowListModal] = useState(false);
   const [listPlayer, setListPlayer] = useState(null);
   const [listPrice, setListPrice] = useState('');
   const [viewPlayer, setViewPlayer] = useState(null);
+  const [playerFilters, setPlayerFilters] = useState({ ...DEFAULT_PLAYER_FILTERS });
+  const [staffFilters, setStaffFilters] = useState({ ...DEFAULT_STAFF_FILTERS });
 
   const team = state.userTeam;
   const allTeams = state.allTeams || [];
 
-  // Players currently on market (from all teams except user)
   const marketPlayers = useMemo(() => {
     const result = [];
     allTeams.forEach(t => {
@@ -76,21 +395,42 @@ export default function Transfer() {
     return result;
   }, [allTeams, team]);
 
-  // User's listed players
   const myListings = useMemo(() =>
     (team?.players || []).filter(p => p.isOnTransferMarket),
     [team]
   );
 
-  // Filtered market
+  // Count active filters
+  const activeFilterCount = [
+    playerFilters.minPrice > 0 || playerFilters.maxPrice < 10000,
+    playerFilters.minWage > 0 || playerFilters.maxWage < 15000,
+    playerFilters.positions.length > 0,
+    playerFilters.nationality !== '',
+    playerFilters.minOvr > 0 || playerFilters.maxOvr < 100,
+    Object.keys(playerFilters.attributes).length > 0,
+    staffFilters.roles.length > 0,
+    staffFilters.characterizations.length > 0,
+    staffFilters.minAbility > 0 || staffFilters.maxAbility < 100,
+  ].filter(Boolean).length;
+
   const filtered = useMemo(() => {
-    return marketPlayers.filter(({ player, team: t }) => {
-      if (search && !player.name.toLowerCase().includes(search.toLowerCase()) && !t.name.toLowerCase().includes(search.toLowerCase())) return false;
-      if (posFilter && player.position !== posFilter) return false;
-      if ((player.transferPrice || 50) > maxPrice) return false;
+    const pf = playerFilters;
+    return marketPlayers.filter(({ player }) => {
+      const price = player.transferPrice || 50;
+      const ovr = calcOvr(player);
+      const wage = calcPlayerMonthlyWage(player);
+      if (search && !player.name.toLowerCase().includes(search.toLowerCase())) return false;
+      if (price < pf.minPrice || price > pf.maxPrice) return false;
+      if (wage < pf.minWage || wage > pf.maxWage) return false;
+      if (pf.positions.length > 0 && !pf.positions.includes(player.position)) return false;
+      if (pf.nationality && !player.nationality?.toLowerCase().includes(pf.nationality.toLowerCase())) return false;
+      if (ovr < pf.minOvr || ovr > pf.maxOvr) return false;
+      for (const [key, minVal] of Object.entries(pf.attributes)) {
+        if ((player.attributes?.[key] ?? 0) < minVal) return false;
+      }
       return true;
     });
-  }, [marketPlayers, search, posFilter, maxPrice]);
+  }, [marketPlayers, search, playerFilters]);
 
   const handleList = () => {
     if (!listPlayer || !listPrice || isNaN(listPrice)) return;
@@ -115,16 +455,10 @@ export default function Transfer() {
 
   const handleBuy = (player, fromTeam) => {
     const price = player.transferPrice || 50;
-    if ((team?.budget || 0) < price) {
-      addNotification('Insufficient funds!', 'error');
-      return;
-    }
-    // Remove from selling team
+    if ((team?.budget || 0) < price) { addNotification('Insufficient funds!', 'error'); return; }
     const updatedSeller = { ...fromTeam, players: fromTeam.players.map(p => p.id === player.id ? null : p).filter(Boolean) };
-    // Add to user team
     const boughtPlayer = { ...player, isOnTransferMarket: false, transferPrice: null };
     const updatedBuyer = { ...team, budget: (team.budget || 0) - price, players: [...team.players, boughtPlayer] };
-
     const updatedTeams = allTeams.map(t => {
       if (t.id === fromTeam.id) return updatedSeller;
       if (t.id === team.id) return updatedBuyer;
@@ -153,43 +487,52 @@ export default function Transfer() {
       </div>
 
       <div className="tabs mb-4">
-        <button className={`tab${activeTab==='market'?' active':''}`} onClick={() => setActiveTab('market')}>
+        <button className={`tab${activeTab === 'market' ? ' active' : ''}`} onClick={() => setActiveTab('market')}>
           Market ({marketPlayers.length})
         </button>
-        <button className={`tab${activeTab==='mylistings'?' active':''}`} onClick={() => setActiveTab('mylistings')}>
+        <button className={`tab${activeTab === 'mylistings' ? ' active' : ''}`} onClick={() => setActiveTab('mylistings')}>
           My Listings ({myListings.length})
         </button>
-        <button className={`tab${activeTab==='history'?' active':''}`} onClick={() => setActiveTab('history')}>
+        <button className={`tab${activeTab === 'history' ? ' active' : ''}`} onClick={() => setActiveTab('history')}>
           History
         </button>
       </div>
 
       {activeTab === 'market' && (
         <div>
-          {/* Filters */}
+          {/* Search + Filter bar */}
           <div className="card mb-4" style={{ padding: '12px 16px' }}>
             <div className="flex items-center gap-3" style={{ flexWrap: 'wrap' }}>
               <div style={{ flex: 1, minWidth: 200, position: 'relative' }}>
                 <Search size={16} style={{ position: 'absolute', left: 12, top: '50%', transform: 'translateY(-50%)', color: 'var(--text-muted)' }} />
-                <input className="form-input" style={{ paddingLeft: 36 }} placeholder="Search player or team..." value={search} onChange={e => setSearch(e.target.value)} />
+                <input className="form-input" style={{ paddingLeft: 36 }} placeholder="Search player name..." value={search} onChange={e => setSearch(e.target.value)} />
               </div>
-              <select className="form-select" style={{ width: 120 }} value={posFilter} onChange={e => setPosFilter(e.target.value)}>
-                <option value="">All Positions</option>
-                {POSITIONS.map(p => <option key={p} value={p}>{p}</option>)}
-              </select>
-              <div className="flex items-center gap-2" style={{ minWidth: 200 }}>
-                <span className="text-xs text-muted">Max:</span>
-                <input type="range" min={0} max={1000} step={50} value={maxPrice} onChange={e => setMaxPrice(+e.target.value)} style={{ flex: 1 }} />
-                <span className="text-xs font-bold" style={{ color: 'var(--color-primary)' }}>${maxPrice}</span>
-              </div>
+              <button
+                className={`btn btn-sm ${activeFilterCount > 0 ? 'btn-primary' : 'btn-ghost'}`}
+                onClick={() => setShowFilterModal(true)}
+                style={{ display: 'flex', alignItems: 'center', gap: 6 }}
+              >
+                <Filter size={14} />
+                Filters
+                {activeFilterCount > 0 && (
+                  <span style={{ background: 'white', color: 'var(--color-primary)', borderRadius: '50%', width: 18, height: 18, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '0.65rem', fontWeight: 900 }}>
+                    {activeFilterCount}
+                  </span>
+                )}
+              </button>
+              {activeFilterCount > 0 && (
+                <button className="btn btn-sm btn-ghost" onClick={() => { setPlayerFilters({ ...DEFAULT_PLAYER_FILTERS }); setStaffFilters({ ...DEFAULT_STAFF_FILTERS }); }}>
+                  <X size={12} /> Clear
+                </button>
+              )}
             </div>
           </div>
 
           {filtered.length === 0 ? (
             <div className="empty-state">
               <div className="empty-state-icon"><ArrowLeftRight size={40} /></div>
-              <div className="empty-state-title">No players available</div>
-              <div className="empty-state-desc">The market is empty. Other GMs will list players here as the season progresses.</div>
+              <div className="empty-state-title">No players match your filters</div>
+              <div className="empty-state-desc">Try adjusting filters or wait for other GMs to list players.</div>
             </div>
           ) : (
             <div className="grid-auto">
@@ -205,9 +548,7 @@ export default function Transfer() {
         <div>
           <div className="flex justify-between items-center mb-4">
             <div className="text-sm text-muted">Budget: <strong style={{ color: 'var(--color-success)' }}>${team?.budget?.toFixed(2)}</strong></div>
-            <button className="btn btn-primary btn-sm" onClick={() => setShowListModal(true)}>
-              + List Player
-            </button>
+            <button className="btn btn-primary btn-sm" onClick={() => setShowListModal(true)}>+ List Player</button>
           </div>
           {myListings.length === 0 ? (
             <div className="empty-state">
@@ -239,9 +580,7 @@ export default function Transfer() {
               <tbody>
                 {(team.transferHistory || []).map((h, i) => (
                   <tr key={i}>
-                    <td>{h.playerName}</td>
-                    <td>{h.from}</td>
-                    <td>{h.to}</td>
+                    <td>{h.playerName}</td><td>{h.from}</td><td>{h.to}</td>
                     <td style={{ color: 'var(--color-primary)', fontWeight: 700 }}>{formatPrice(h.fee)}</td>
                     <td className="text-muted">{new Date(h.date).toLocaleDateString()}</td>
                   </tr>
@@ -250,6 +589,15 @@ export default function Transfer() {
             </table>
           )}
         </div>
+      )}
+
+      {/* Filter Modal */}
+      {showFilterModal && (
+        <FilterModal
+          onClose={() => setShowFilterModal(false)}
+          playerFilters={playerFilters} setPlayerFilters={setPlayerFilters}
+          staffFilters={staffFilters} setStaffFilters={setStaffFilters}
+        />
       )}
 
       {/* List Player Modal */}
@@ -266,14 +614,19 @@ export default function Transfer() {
                 <select className="form-select" value={listPlayer?.id || ''} onChange={e => setListPlayer(availableToList.find(p => p.id === e.target.value))}>
                   <option value="">Choose a player...</option>
                   {availableToList.map(p => (
-                    <option key={p.id} value={p.id}>{p.name} ({p.position})</option>
+                    <option key={p.id} value={p.id}>{p.name} ({p.position}) — OVR {calcOvr(p)}</option>
                   ))}
                 </select>
               </div>
+              {listPlayer && (
+                <div style={{ padding: 'var(--space-2) var(--space-3)', background: 'var(--color-danger-light)', borderRadius: 'var(--radius-sm)', marginBottom: 'var(--space-3)', fontSize: 'var(--font-size-xs)', color: 'var(--color-danger)', fontWeight: 700 }}>
+                  Monthly wage: {fmtWage(calcPlayerMonthlyWage(listPlayer))}
+                </div>
+              )}
               <div className="form-group">
                 <label className="form-label">Asking Price ($)</label>
                 <input className="form-input" type="number" min={10} max={5000} placeholder="e.g. 150" value={listPrice} onChange={e => setListPrice(e.target.value)} />
-                <span className="text-xs text-muted">Market is peer-to-peer. Listing expires after 72 hours.</span>
+                <span className="text-xs text-muted">Listing expires after 72 hours.</span>
               </div>
             </div>
             <div className="modal-footer">
@@ -301,16 +654,24 @@ export default function Transfer() {
                   <div className="text-sm text-muted">{viewPlayer.height?.ft} · {viewPlayer.weight?.lbs}lbs</div>
                 </div>
               </div>
+              {/* Wage + asking price highlight */}
+              <div className="grid-2" style={{ gap: 'var(--space-3)', marginBottom: 16 }}>
+                <div style={{ padding: 'var(--space-3)', background: 'var(--color-primary-100)', borderRadius: 'var(--radius-md)', textAlign: 'center' }}>
+                  <div style={{ fontSize: 'var(--font-size-xs)', color: 'var(--text-muted)', marginBottom: 2 }}>Asking Price</div>
+                  <div style={{ fontWeight: 900, color: 'var(--color-primary)', fontSize: 'var(--font-size-lg)' }}>{formatPrice(viewPlayer.transferPrice || viewPlayer.salary || 50)}</div>
+                </div>
+                <div style={{ padding: 'var(--space-3)', background: 'var(--color-danger-light)', borderRadius: 'var(--radius-md)', textAlign: 'center' }}>
+                  <div style={{ fontSize: 'var(--font-size-xs)', color: 'var(--text-muted)', marginBottom: 2 }}>Monthly Wage</div>
+                  <div style={{ fontWeight: 900, color: 'var(--color-danger)', fontSize: 'var(--font-size-lg)' }}>{fmtWage(calcPlayerMonthlyWage(viewPlayer))}</div>
+                </div>
+              </div>
               <div className="grid-3" style={{ gap: 8, marginBottom: 16 }}>
-                {Object.entries(viewPlayer.attributes || {}).slice(0, 6).map(([k, v]) => (
+                {Object.entries(viewPlayer.attributes || {}).slice(0, 9).map(([k, v]) => (
                   <div key={k} className="stat-card" style={{ padding: 8, textAlign: 'center' }}>
                     <div className="stat-value" style={{ fontSize: 'var(--font-size-lg)' }}>{v}</div>
-                    <div className="stat-label" style={{ fontSize: '0.6rem' }}>{k.replace(/([A-Z])/g,' $1').trim()}</div>
+                    <div className="stat-label" style={{ fontSize: '0.6rem' }}>{ATTRIBUTE_NAMES[k]?.label ?? k}</div>
                   </div>
                 ))}
-              </div>
-              <div className="badge badge-orange" style={{ fontSize: 'var(--font-size-xs)' }}>
-                ⭐ Special: {viewPlayer.specialAbility?.replace(/([A-Z])/g,' $1').trim()}
               </div>
             </div>
           </div>

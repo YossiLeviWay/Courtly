@@ -9,7 +9,8 @@ import {
   createUserWithEmailAndPassword,
   signInWithEmailAndPassword,
 } from 'firebase/auth';
-import { doc, setDoc, getDoc } from 'firebase/firestore';
+import { doc, setDoc } from 'firebase/firestore';
+import ToastContainer from '../components/ui/ToastContainer.jsx';
 
 export default function Login() {
   const { state, dispatch, addNotification } = useGame();
@@ -42,12 +43,10 @@ export default function Login() {
 
     try {
       if (mode === 'login') {
-        const cred = await signInWithEmailAndPassword(auth, form.email, form.password);
-        const snap = await getDoc(doc(db, 'gameStates', cred.user.uid));
-        if (snap.exists()) {
-          dispatch({ type: 'INIT_GAME', payload: snap.data() });
-        }
-        navigate('/', { replace: true });
+        await signInWithEmailAndPassword(auth, form.email, form.password);
+        // onAuthStateChanged in GameContext loads game state from Firestore.
+        // The useEffect above navigates to '/' once state.user is populated.
+        // Keep loading=true while that happens; the component unmounts on navigate.
         return;
       }
 
@@ -108,6 +107,7 @@ export default function Login() {
       position: 'relative',
       overflow: 'hidden'
     }}>
+      <ToastContainer notifications={state.notifications} />
       {/* Background decorative elements */}
       <div style={{
         position: 'absolute', inset: 0, overflow: 'hidden', pointerEvents: 'none'

@@ -204,6 +204,8 @@ export default function Fans() {
 
   const [ticketPrice, setTicketPrice] = useState(userTeam?.ticketPrice ?? 20);
   const [merchandisePrice, setMerchandisePrice] = useState(userTeam?.merchandisePrice ?? 30);
+  const [seasonTicketSeats, setSeasonTicketSeats] = useState(userTeam?.seasonTicketSeats ?? 0);
+  const [seasonTicketPrice, setSeasonTicketPrice] = useState(userTeam?.seasonTicketPrice ?? 15);
 
   if (!userTeam) {
     return (
@@ -217,8 +219,15 @@ export default function Fans() {
     );
   }
 
+  // Arena capacity from Basketball Hall level
+  const basketballHallLevel = userTeam?.facilities?.basketballHall?.level ?? 0;
+  const arenaCapacity = 600 + basketballHallLevel * 200;
+  const HOME_GAMES_PER_SEASON = 9;
+  const seasonTicketRevenue = seasonTicketSeats * seasonTicketPrice * HOME_GAMES_PER_SEASON;
+  const regularSeats = arenaCapacity - seasonTicketSeats;
+
   // Computed values
-  const estimatedRevenuePerGame = Math.round(fanCount * ticketPrice * 0.3);
+  const estimatedRevenuePerGame = Math.round(Math.min(regularSeats, fanCount) * ticketPrice * 0.3);
   const weeklyMerchRevenue = Math.round((fanCount * merchandisePrice * 0.01) / 7 * 7);
   const enthusiasmPct = Math.min(100, Math.max(0, fanEnthusiasm));
   const weeklyNewFans = Math.round((enthusiasmPct / 100) * 50 + (enthusiasmPct > 50 ? 20 : 0));
@@ -297,7 +306,7 @@ export default function Fans() {
     if (!userTeam) return;
     dispatch({
       type: 'UPDATE_TEAM',
-      payload: { ...userTeam, ticketPrice, merchandisePrice },
+      payload: { ...userTeam, ticketPrice, merchandisePrice, seasonTicketSeats, seasonTicketPrice },
     });
     addNotification('Prices updated successfully!', 'success');
   }
@@ -684,6 +693,108 @@ export default function Fans() {
             }}
           >
             {fanCount.toLocaleString()} fans × ${ticketPrice} ticket × 30% gate share
+          </div>
+        </div>
+      </div>
+
+      {/* ── Section 2b: Season Tickets ── */}
+      <div className="card mb-6">
+        <div className="card-header">
+          <span className="card-title" style={{ display: 'flex', alignItems: 'center', gap: 'var(--space-2)' }}>
+            🎫 Season Tickets
+          </span>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 'var(--space-2)' }}>
+            <span style={{ fontSize: 'var(--font-size-xs)', color: 'var(--text-muted)' }}>
+              Arena: {arenaCapacity.toLocaleString()} seats
+            </span>
+          </div>
+        </div>
+
+        <div className="grid-2" style={{ gap: 'var(--space-6)' }}>
+          {/* Season ticket allocation */}
+          <div>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 'var(--space-3)' }}>
+              <label style={{ fontWeight: 700, fontSize: 'var(--font-size-sm)' }}>
+                Seats Allocated
+              </label>
+              <span style={{ fontWeight: 900, fontSize: 'var(--font-size-xl)', color: 'var(--color-primary)' }}>
+                {seasonTicketSeats.toLocaleString()}
+              </span>
+            </div>
+            <input
+              type="range"
+              min={0}
+              max={Math.floor(arenaCapacity * 0.8)}
+              step={10}
+              value={seasonTicketSeats}
+              onChange={e => setSeasonTicketSeats(Number(e.target.value))}
+              style={{ width: '100%', accentColor: 'var(--color-primary)' }}
+            />
+            <div style={{ display: 'flex', justifyContent: 'space-between', marginTop: 'var(--space-1)' }}>
+              <span style={{ fontSize: 'var(--font-size-xs)', color: 'var(--text-muted)' }}>0 seats</span>
+              <span style={{ fontSize: 'var(--font-size-xs)', color: 'var(--text-muted)' }}>
+                {Math.floor(arenaCapacity * 0.8).toLocaleString()} max (80%)
+              </span>
+            </div>
+            <div style={{
+              marginTop: 'var(--space-3)', padding: 'var(--space-2) var(--space-3)',
+              background: 'var(--bg-muted)', borderRadius: 'var(--radius-md)',
+              fontSize: 'var(--font-size-xs)', color: 'var(--text-secondary)', fontWeight: 600,
+            }}>
+              {regularSeats.toLocaleString()} regular seats remaining for game-day sales
+            </div>
+          </div>
+
+          {/* Season ticket price */}
+          <div>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 'var(--space-3)' }}>
+              <label style={{ fontWeight: 700, fontSize: 'var(--font-size-sm)' }}>
+                Price per Game
+              </label>
+              <span style={{ fontWeight: 900, fontSize: 'var(--font-size-xl)', color: 'var(--color-primary)' }}>
+                ${seasonTicketPrice}
+              </span>
+            </div>
+            <input
+              type="range"
+              min={5}
+              max={150}
+              step={5}
+              value={seasonTicketPrice}
+              onChange={e => setSeasonTicketPrice(Number(e.target.value))}
+              style={{ width: '100%', accentColor: 'var(--color-primary)' }}
+            />
+            <div style={{ display: 'flex', justifyContent: 'space-between', marginTop: 'var(--space-1)' }}>
+              <span style={{ fontSize: 'var(--font-size-xs)', color: 'var(--text-muted)' }}>$5</span>
+              <span style={{ fontSize: 'var(--font-size-xs)', color: 'var(--text-muted)' }}>$150</span>
+            </div>
+            <div style={{
+              marginTop: 'var(--space-3)', padding: 'var(--space-2) var(--space-3)',
+              background: 'var(--color-success-light)', borderRadius: 'var(--radius-md)',
+              fontSize: 'var(--font-size-xs)', color: 'var(--color-success)', fontWeight: 600,
+            }}>
+              Season revenue: {formatMoney(seasonTicketRevenue)} ({HOME_GAMES_PER_SEASON} home games)
+            </div>
+          </div>
+        </div>
+
+        {/* Season ticket summary */}
+        <div style={{
+          marginTop: 'var(--space-5)', padding: 'var(--space-4)',
+          background: 'linear-gradient(135deg, rgba(46,125,50,0.08), var(--bg-card))',
+          borderRadius: 'var(--radius-md)', border: '1px solid var(--color-success-light)',
+          display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: 'var(--space-3)',
+        }}>
+          <div>
+            <div style={{ fontSize: 'var(--font-size-xs)', color: 'var(--text-muted)', fontWeight: 600, textTransform: 'uppercase', letterSpacing: 0.5, marginBottom: 'var(--space-1)' }}>
+              Guaranteed Season Revenue
+            </div>
+            <div style={{ fontSize: 'var(--font-size-3xl)', fontWeight: 900, color: 'var(--color-success)' }}>
+              {formatMoney(seasonTicketRevenue)}
+            </div>
+          </div>
+          <div style={{ fontSize: 'var(--font-size-xs)', color: 'var(--text-secondary)', lineHeight: 1.6, maxWidth: 240 }}>
+            {seasonTicketSeats.toLocaleString()} seats × ${seasonTicketPrice}/game × {HOME_GAMES_PER_SEASON} home games. Collected at season start — guaranteed income regardless of attendance.
           </div>
         </div>
       </div>
