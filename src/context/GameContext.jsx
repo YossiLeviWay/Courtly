@@ -1,0 +1,118 @@
+import { createContext, useContext, useReducer, useEffect, useCallback } from 'react';
+
+const GameContext = createContext(null);
+
+const initialState = {
+  user: null,
+  userTeam: null,
+  leagues: null,
+  allTeams: [],
+  currentMatch: null,
+  isMatchLive: false,
+  notifications: [],
+  lastUpdated: null,
+  initialized: false,
+};
+
+function gameReducer(state, action) {
+  switch (action.type) {
+    case 'INIT_GAME':
+      return { ...state, ...action.payload, initialized: true, lastUpdated: Date.now() };
+    case 'SET_USER':
+      return { ...state, user: action.payload };
+    case 'UPDATE_TEAM':
+      return {
+        ...state,
+        userTeam: action.payload,
+        allTeams: state.allTeams.map(t => t.id === action.payload.id ? action.payload : t),
+        lastUpdated: Date.now(),
+      };
+    case 'UPDATE_PLAYER': {
+      const updatedPlayers = state.userTeam.players.map(p =>
+        p.id === action.payload.id ? action.payload : p
+      );
+      const updatedTeam = { ...state.userTeam, players: updatedPlayers };
+      return {
+        ...state,
+        userTeam: updatedTeam,
+        allTeams: state.allTeams.map(t => t.id === updatedTeam.id ? updatedTeam : t),
+      };
+    }
+    case 'UPDATE_ALL_TEAMS':
+      return {
+        ...state,
+        allTeams: action.payload,
+        userTeam: action.payload.find(t => t.isUserTeam) || state.userTeam,
+        lastUpdated: Date.now(),
+      };
+    case 'SET_MATCH_LIVE':
+      return { ...state, currentMatch: action.payload, isMatchLive: true };
+    case 'END_MATCH':
+      return { ...state, currentMatch: null, isMatchLive: false };
+    case 'ADD_NOTIFICATION':
+      return {
+        ...state,
+        notifications: [action.payload, ...state.notifications].slice(0, 50),
+      };
+    case 'CLEAR_NOTIFICATION':
+      return {
+        ...state,
+        notifications: state.notifications.filter(n => n.id !== action.payload),
+      };
+    case 'UPDATE_LEAGUES':
+      return { ...state, leagues: action.payload };
+    default:
+      return state;
+  }
+}
+
+const STORAGE_KEY = 'courtly_gamestate';
+
+export function GameProvider({ children }) {
+  const [state, dispatch] = useReducer(gameReducer, initialState);
+
+  // Load from localStorage
+  useEffect(() => {
+    try {
+      const saved = localStorage.getItem(STORAGE_KEY);
+      if (saved) {
+        const parsed = JSON.parse(saved);
+        dispatch({ type: 'INIT_GAME', payload: parsed });
+      } else {
+        dispatch({ type: 'INIT_GAME', payload: { initialized: true } });
+      }
+    } catch (e) {
+      dispatch({ type: 'INIT_GAME', payload: { initialized: true } });
+    }
+  }, []);
+
+  // Save to localStorage on state change
+  useEffect(() => {
+    if (state.initialized && state.user) {
+      const toSave = {
+        user: state.user,
+        userTeam: state.userTeam,
+        leagues: state.leagues,
+        allTeams: state.allTeams,
+        lastUpdated: state.lastUpdated,
+      };
+      localStorage.setItem(STORAGE_KEY, JSON.stringify(toSave));
+    }
+  }, [state.user, state.userTeam, state.leagues, state.allTeams, state.lastUpdated]);
+
+  const addNotification = useCallback((msg, type = 'info') => {
+    const note = { id: Date.now() + Math.random(), message: msg, type, timestamp: Date.now() };
+    dispatch({ type: 'ADD_NOTIFICATION', payload: note });
+    setTimeout(() => dispatch({ type: 'CLEAR_NOTIFICATION', payload: note.id }), 5000);
+  }, []);
+
+  const value = { state, dispatch, addNotification };
+
+  return <GameContext.Provider value={value}>{children}</GameContext.Provider>;
+}
+
+export function useGame() {
+  const ctx = useContext(GameContext);
+  if (!ctx) throw new Error('useGame must be used within GameProvider');
+  return ctx;
+}

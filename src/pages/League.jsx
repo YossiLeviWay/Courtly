@@ -1,0 +1,237 @@
+import { useState, useMemo } from 'react';
+import { useGame } from '../context/GameContext.jsx';
+import { Trophy, TrendingUp, TrendingDown, ChevronUp, ChevronDown, Info } from 'lucide-react';
+
+const REPUTATION_LEVELS = [
+  [0,20,'Local Hopeful'],
+  [21,40,'Regional Contender'],
+  [41,60,'National Contender'],
+  [61,80,'National Powerhouse'],
+  [81,100,'Basketball Dynasty'],
+];
+function getRepLevel(rep) {
+  return REPUTATION_LEVELS.find(([min,max]) => rep >= min && rep <= max)?.[2] || 'Local Hopeful';
+}
+
+export default function League() {
+  const { state } = useGame();
+  const [activeLeague, setActiveLeague] = useState('C-0');
+  const [sortCol, setSortCol] = useState('points');
+  const [sortDir, setSortDir] = useState('desc');
+  const [selectedTeam, setSelectedTeam] = useState(null);
+
+  const leagues = state.leagues || [];
+  const allTeams = state.allTeams || [];
+  const userTeam = state.userTeam;
+
+  // Get teams for the selected league
+  const leagueTeams = useMemo(() => {
+    if (activeLeague.startsWith('C-')) {
+      const idx = parseInt(activeLeague.split('-')[1]);
+      const league = leagues[idx];
+      if (!league) return [];
+      return league.teams || allTeams.slice(idx * 10, idx * 10 + 10);
+    }
+    return []; // Liga A and B are empty initially
+  }, [activeLeague, leagues, allTeams]);
+
+  // Add stats to teams
+  const teamsWithStats = useMemo(() => leagueTeams.map(t => {
+    const full = allTeams.find(a => a.id === t.id) || t;
+    const wins = full.seasonRecord?.wins || 0;
+    const losses = full.seasonRecord?.losses || 0;
+    const played = wins + losses;
+    const points = wins * 2 + losses;
+    const history = full.matchHistory || [];
+    const gf = history.reduce((sum, m) => sum + (m.userScore || 0), 0);
+    const ga = history.reduce((sum, m) => sum + (m.oppScore || 0), 0);
+    return { ...full, wins, losses, played, points, gf, ga, gd: gf - ga, rep: full.reputation || 10 };
+  }), [leagueTeams, allTeams]);
+
+  const sorted = useMemo(() => {
+    return [...teamsWithStats].sort((a, b) => {
+      let av = a[sortCol], bv = b[sortCol];
+      if (sortCol === 'name') return sortDir === 'asc' ? av.localeCompare(bv) : bv.localeCompare(av);
+      return sortDir === 'asc' ? av - bv : bv - av;
+    });
+  }, [teamsWithStats, sortCol, sortDir]);
+
+  const handleSort = (col) => {
+    if (sortCol === col) setSortDir(d => d === 'asc' ? 'desc' : 'asc');
+    else { setSortCol(col); setSortDir('desc'); }
+  };
+
+  const SortIcon = ({ col }) => {
+    if (sortCol !== col) return null;
+    return sortDir === 'asc' ? <ChevronUp size={12} /> : <ChevronDown size={12} />;
+  };
+
+  const leagueTabs = [
+    { id: 'A', label: 'Liga A', empty: true },
+    { id: 'B', label: 'Liga B', empty: true },
+    ...leagues.map((_, i) => ({ id: `C-${i}`, label: `Liga C-${i+1}`, empty: false })),
+  ];
+
+  if (!leagueTabs.find(t => t.id === 'C-0')) {
+    leagueTabs.push({ id: 'C-0', label: 'Liga C-1', empty: false });
+  }
+
+  return (
+    <div className="animate-fade-in">
+      <div className="page-header">
+        <h1>League Table</h1>
+        <p>Season standings, stats, and promotion/relegation zones</p>
+      </div>
+
+      {/* League tier selector */}
+      <div className="flex gap-2 mb-5" style={{ flexWrap: 'wrap' }}>
+        {leagueTabs.map(tab => (
+          <button
+            key={tab.id}
+            onClick={() => setActiveLeague(tab.id)}
+            className={`btn ${activeLeague === tab.id ? 'btn-primary' : 'btn-ghost'} btn-sm`}
+          >
+            <Trophy size={14} /> {tab.label}
+          </button>
+        ))}
+      </div>
+
+      {/* Rules */}
+      <div className="card mb-4" style={{ background: 'var(--color-info-light)', border: '1px solid rgba(21,101,192,0.2)', padding: '12px 16px' }}>
+        <div className="flex items-center gap-2 text-sm">
+          <Info size={16} color="var(--color-info)" />
+          <span style={{ color: 'var(--color-info)' }}>
+            <strong>Scoring:</strong> Win = 2pts, Loss = 1pt &nbsp;|&nbsp;
+            <strong>Promotion:</strong> Top 2 → next tier &nbsp;|&nbsp;
+            <strong>Relegation:</strong> Bottom 2 replaced by new BOT teams &nbsp;|&nbsp;
+            <strong>Tiebreaker:</strong> Goal Differential → Points Scored
+          </span>
+        </div>
+      </div>
+
+      {activeLeague === 'A' || activeLeague === 'B' ? (
+        <div className="card">
+          <div className="empty-state">
+            <div className="empty-state-icon"><Trophy size={48} /></div>
+            <div className="empty-state-title">{activeLeague === 'A' ? 'Liga A' : 'Liga B'} - Coming Soon</div>
+            <div className="empty-state-desc">
+              These tiers are populated by teams promoted from lower leagues. Win Liga C to compete here!
+            </div>
+          </div>
+        </div>
+      ) : (
+        <div className="table-container">
+          <table>
+            <thead>
+              <tr>
+                <th style={{ width: 40 }}>#</th>
+                <th style={{ cursor: 'pointer', minWidth: 160 }} onClick={() => handleSort('name')}>
+                  Team <SortIcon col="name" />
+                </th>
+                <th style={{ cursor: 'pointer' }} onClick={() => handleSort('points')}>PTS <SortIcon col="points" /></th>
+                <th style={{ cursor: 'pointer' }} onClick={() => handleSort('played')}>P <SortIcon col="played" /></th>
+                <th style={{ cursor: 'pointer' }} onClick={() => handleSort('wins')}>W <SortIcon col="wins" /></th>
+                <th style={{ cursor: 'pointer' }} onClick={() => handleSort('losses')}>L <SortIcon col="losses" /></th>
+                <th style={{ cursor: 'pointer' }} onClick={() => handleSort('gf')}>GF <SortIcon col="gf" /></th>
+                <th style={{ cursor: 'pointer' }} onClick={() => handleSort('ga')}>GA <SortIcon col="ga" /></th>
+                <th style={{ cursor: 'pointer' }} onClick={() => handleSort('gd')}>GD <SortIcon col="gd" /></th>
+                <th style={{ cursor: 'pointer' }} onClick={() => handleSort('rep')}>REP <SortIcon col="rep" /></th>
+              </tr>
+            </thead>
+            <tbody>
+              {sorted.map((team, idx) => {
+                const rank = idx + 1;
+                const isPromo = rank <= 2;
+                const isRel = rank >= sorted.length - 1 && sorted.length >= 4;
+                const isUser = team.id === userTeam?.id;
+
+                return (
+                  <tr
+                    key={team.id}
+                    onClick={() => setSelectedTeam(team)}
+                    style={{
+                      cursor: 'pointer',
+                      background: isUser ? 'rgba(232,98,26,0.08)' : undefined,
+                    }}
+                  >
+                    <td>
+                      <div className="flex items-center gap-1">
+                        {isPromo && <TrendingUp size={12} color="var(--color-success)" />}
+                        {isRel && <TrendingDown size={12} color="var(--color-danger)" />}
+                        <span style={{
+                          fontWeight: 700,
+                          color: isPromo ? 'var(--color-success)' : isRel ? 'var(--color-danger)' : 'var(--text-muted)'
+                        }}>{rank}</span>
+                      </div>
+                    </td>
+                    <td>
+                      <div className="flex items-center gap-2">
+                        <div className="avatar avatar-sm" style={{ background: isUser ? 'var(--color-primary-100)' : 'var(--bg-muted)' }}>
+                          {team.name?.charAt(0)}
+                        </div>
+                        <div>
+                          <div className="font-semibold" style={{ color: isUser ? 'var(--color-primary)' : 'var(--text-primary)' }}>
+                            {team.name} {isUser && '⭐'}
+                          </div>
+                          <div className="text-xs text-muted">{team.city || team.country}</div>
+                        </div>
+                      </div>
+                    </td>
+                    <td><strong style={{ color: 'var(--color-primary)' }}>{team.points}</strong></td>
+                    <td>{team.played}</td>
+                    <td>{team.wins}</td>
+                    <td>{team.losses}</td>
+                    <td>{team.gf}</td>
+                    <td>{team.ga}</td>
+                    <td style={{ color: team.gd > 0 ? 'var(--color-success)' : team.gd < 0 ? 'var(--color-danger)' : 'var(--text-muted)', fontWeight: 600 }}>
+                      {team.gd > 0 ? '+' : ''}{team.gd}
+                    </td>
+                    <td>
+                      <div className="flex items-center gap-1">
+                        <span className="text-xs font-bold" style={{ color: 'var(--color-primary)' }}>{team.rep}</span>
+                        <span className="text-xs text-muted">/100</span>
+                      </div>
+                    </td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        </div>
+      )}
+
+      {/* Legend */}
+      <div className="flex gap-4 mt-4" style={{ fontSize: 'var(--font-size-xs)' }}>
+        <div className="flex items-center gap-1"><TrendingUp size={12} color="var(--color-success)" /><span className="text-muted">Promotion Zone (Top 2)</span></div>
+        <div className="flex items-center gap-1"><TrendingDown size={12} color="var(--color-danger)" /><span className="text-muted">Relegation Zone (Bottom 2)</span></div>
+        <div className="flex items-center gap-1"><span>⭐</span><span className="text-muted">Your Team</span></div>
+      </div>
+
+      {/* Team Detail Modal */}
+      {selectedTeam && (
+        <div className="modal-overlay" onClick={() => setSelectedTeam(null)}>
+          <div className="modal" onClick={e => e.stopPropagation()} style={{ maxWidth: 400 }}>
+            <div className="modal-header">
+              <h3>{selectedTeam.name}</h3>
+              <button className="btn btn-ghost btn-sm" onClick={() => setSelectedTeam(null)}>✕</button>
+            </div>
+            <div className="modal-body">
+              <div className="stats-grid" style={{ gridTemplateColumns: 'repeat(3,1fr)', marginBottom: 16 }}>
+                <div className="stat-card"><div className="stat-value">{selectedTeam.wins}</div><div className="stat-label">Wins</div></div>
+                <div className="stat-card"><div className="stat-value">{selectedTeam.losses}</div><div className="stat-label">Losses</div></div>
+                <div className="stat-card"><div className="stat-value">{selectedTeam.points}</div><div className="stat-label">Points</div></div>
+              </div>
+              <div className="text-sm text-muted">{selectedTeam.city || selectedTeam.country} · Stadium: {selectedTeam.stadiumName}</div>
+              <div className="text-sm mt-2">
+                <span className="badge badge-orange">Reputation: {selectedTeam.rep}/100</span>
+                {' '}
+                <span className="text-muted">{getRepLevel(selectedTeam.rep)}</span>
+              </div>
+              <div className="text-sm mt-3 font-semibold">Players: {selectedTeam.players?.length || 0}</div>
+            </div>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
