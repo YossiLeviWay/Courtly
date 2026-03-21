@@ -39,6 +39,7 @@ function gameReducer(state, action) {
         ...state,
         userTeam: updatedTeam,
         allTeams: state.allTeams.map(t => t.id === updatedTeam.id ? updatedTeam : t),
+        lastUpdated: Date.now(),
       };
     }
     case 'UPDATE_ALL_TEAMS':
@@ -63,7 +64,7 @@ function gameReducer(state, action) {
         notifications: state.notifications.filter(n => n.id !== action.payload),
       };
     case 'UPDATE_LEAGUES':
-      return { ...state, leagues: action.payload };
+      return { ...state, leagues: action.payload, lastUpdated: Date.now() };
     default:
       return state;
   }
