@@ -32,6 +32,6 @@ module.exports = async function handler(req, res) {
       return res.status(409).json({ error: 'Email already registered. Please sign in.' });
     }
     console.error('Register error:', err);
-    res.status(500).json({ error: 'Registration failed' });
+    res.status(500).json({ error: err.message || 'Registration failed' });
   }
 };
