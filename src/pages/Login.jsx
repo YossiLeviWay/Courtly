@@ -2,10 +2,8 @@ import { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useGame } from '../context/GameContext.jsx';
 import { useTheme } from '../context/ThemeContext.jsx';
-import { generateLeagues } from '../engine/teamGenerator.js';
 import { Sun, Moon, Eye, EyeOff } from 'lucide-react';
-import { apiLogin, apiRegister, apiGetWorld, apiSeedWorld, setToken } from '../api.js';
-import { generateSeasonSchedule } from '../engine/gameScheduler.js';
+import { apiLogin, apiRegister, apiGetWorld, setToken } from '../api.js';
 import ToastContainer from '../components/ui/ToastContainer.jsx';
 
 export default function Login() {
@@ -50,30 +48,18 @@ export default function Login() {
         return;
       }
 
-      // Registration — get or seed the shared world, then register with chosen team
+      // Registration — read shared world, then assign a team
 
-      // 1. Try to load the existing shared world from the DB
-      let worldData = await apiGetWorld();
-
-      // 2. If no world exists yet (first ever user), generate + seed it
+      // 1. Load the shared world from DB (must be pre-seeded by admin)
+      const worldData = await apiGetWorld();
       if (!worldData) {
-        const rawLeagues = generateLeagues();
-        // Attach season schedules
-        const leagues = rawLeagues.map((l, i) => ({
-          ...l,
-          schedule: generateSeasonSchedule(l.teams, i),
-        }));
-        try {
-          worldData = await apiSeedWorld(leagues);
-        } catch {
-          worldData = { leagues };
-        }
+        throw new Error('Game world is not ready yet. Please contact the administrator.');
       }
 
       const leagues = worldData.leagues || [];
       const allTeams = leagues.flatMap(l => l.teams || []);
 
-      // 3. Pick a team for the new user (random from first league)
+      // 2. Pick a random team from the world for the new user
       const league0Teams = leagues[0]?.teams || allTeams.slice(0, 10);
       const baseTeam = league0Teams[Math.floor(Math.random() * league0Teams.length)];
 

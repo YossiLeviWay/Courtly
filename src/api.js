@@ -78,9 +78,21 @@ export async function apiSeedWorld(leagues) {
   return data.world; // { leagues }
 }
 
-// Kept for backward compat (used by old path in GameContext)
+// Kept for backward compat
 export async function apiInitWorld(world) {
   return apiSeedWorld(world.leagues);
+}
+
+// Admin: generate + seed world server-side (deterministic, one-time)
+export async function apiAdminSeed(secret, reset = false) {
+  const res = await fetch('/api/db/admin-seed', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ secret, reset }),
+  });
+  const data = await res.json();
+  if (!res.ok) throw new Error(data.error || 'Admin seed failed');
+  return data;
 }
 
 // ── Matches (shared, all users see same results) ────────────────
