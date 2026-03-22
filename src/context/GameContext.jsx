@@ -199,6 +199,17 @@ export function GameProvider({ children }) {
       apiGetUserState(),    // { state, user } (per-user)
     ]).then(([world, dbMatches, dbStandings, userStateRes]) => {
       if (!world || !userStateRes?.state) {
+        if (!world) {
+          dispatch({
+            type: 'ADD_NOTIFICATION',
+            payload: {
+              id: Date.now(),
+              message: 'Game world not initialized yet. Ask the admin to seed the world.',
+              type: 'error',
+              timestamp: Date.now(),
+            },
+          });
+        }
         clearToken();
         dispatch({ type: 'INIT_GAME', payload: { ...initialState, initialized: true } });
         return;

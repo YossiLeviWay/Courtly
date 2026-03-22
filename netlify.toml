@@ -11,8 +11,6 @@
   from = "/*"
   to = "/index.html"
   status = 200
-  conditions = {Role = ["*"]}
-
 # NOTE: Netlify Functions v2 path configs (inside each .js file) take
 # priority over redirects, so /api/* routes are handled by the functions
 # without needing explicit redirect rules here.

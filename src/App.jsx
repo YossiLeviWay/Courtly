@@ -22,16 +22,23 @@ import SearchPage from './pages/Search.jsx';
 
 function ProtectedRoute({ children }) {
   const { state } = useGame();
+
   if (!state.initialized) return (
-    <div className="loading-screen">
-      <svg className="loading-ball" viewBox="0 0 64 64" width="64" height="64">
+    <div style={{
+      display: 'flex', flexDirection: 'column', alignItems: 'center',
+      justifyContent: 'center', minHeight: '100vh',
+      background: 'var(--bg-app, #fff)', gap: 16,
+    }}>
+      <svg viewBox="0 0 64 64" width="64" height="64" style={{ animation: 'spin 1s linear infinite' }}>
         <circle cx="32" cy="32" r="30" fill="#E8621A"/>
         <path d="M32 2 Q50 18 32 32 Q14 46 32 62" stroke="#C04E10" strokeWidth="2.5" fill="none"/>
         <path d="M2 32 Q18 14 32 32 Q46 50 62 32" stroke="#C04E10" strokeWidth="2.5" fill="none"/>
       </svg>
-      <p style={{color:'var(--text-muted)', fontWeight:600}}>Loading Courtly...</p>
+      <p style={{ color: '#888', fontWeight: 600, margin: 0 }}>Loading Courtly...</p>
+      <style>{`@keyframes spin { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }`}</style>
     </div>
   );
+
   if (!state.user) return <Navigate to="/login" replace />;
   return children;
 }
