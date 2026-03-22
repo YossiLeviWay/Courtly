@@ -291,7 +291,8 @@ export default async (req) => {
   if (req.method !== 'POST') return json({ error: 'Use POST' }, 405);
 
   const { secret, reset = false } = await req.json();
-  const adminSecret = process.env.ADMIN_SECRET || 'courtly-admin-2024';
+  const adminSecret = process.env.ADMIN_SECRET;
+  if (!adminSecret) return json({ error: 'ADMIN_SECRET environment variable is not set' }, 500);
   if (secret !== adminSecret) return json({ error: 'Invalid admin secret' }, 401);
 
   try {
