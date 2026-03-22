@@ -1,4 +1,4 @@
-import { neon } from '@netlify/neon';
+import { neon } from '@neondatabase/serverless';
 
 const json = (data, status = 200) =>
   new Response(JSON.stringify(data), { status, headers: { 'Content-Type': 'application/json' } });
@@ -7,7 +7,7 @@ export default async (req) => {
   if (req.method !== 'POST') return json({ error: 'Use POST' }, 405);
 
   try {
-    const sql = neon();
+    const sql = neon(process.env.NETLIFY_DATABASE_URL);
 
     await sql`
       CREATE TABLE IF NOT EXISTS users (

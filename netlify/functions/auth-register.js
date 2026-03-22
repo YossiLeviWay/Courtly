@@ -1,4 +1,4 @@
-import { neon } from '@netlify/neon';
+import { neon } from '@neondatabase/serverless';
 import bcrypt from 'bcryptjs';
 import jwt from 'jsonwebtoken';
 
@@ -14,7 +14,7 @@ export default async (req) => {
   }
 
   try {
-    const sql = neon();
+    const sql = neon(process.env.NETLIFY_DATABASE_URL);
     const hash = await bcrypt.hash(password, 10);
 
     const [user] = await sql`

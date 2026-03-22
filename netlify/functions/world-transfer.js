@@ -1,4 +1,4 @@
-import { neon } from '@netlify/neon';
+import { neon } from '@neondatabase/serverless';
 import jwt from 'jsonwebtoken';
 
 const json = (data, status = 200) =>
@@ -11,7 +11,7 @@ function verifyToken(req) {
 }
 
 export default async (req) => {
-  const sql = neon();
+  const sql = neon(process.env.NETLIFY_DATABASE_URL);
 
   if (req.method === 'GET') {
     const rows = await sql`SELECT * FROM transfer_market ORDER BY listed_at DESC`;
