@@ -69,7 +69,8 @@ export default function Login() {
         form.password,
         form.username,
         baseTeam.id,
-        { players: baseTeam.players || [] }
+        { players: baseTeam.players || [] },
+        form.teamName  // user's chosen team name — stored in profile_data and propagated to world tables
       );
       setToken(token);
 

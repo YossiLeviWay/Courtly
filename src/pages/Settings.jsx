@@ -1,12 +1,12 @@
-import { useState, useMemo } from 'react';
+import { useState } from 'react';
 import { useGame } from '../context/GameContext.jsx';
-import { useNavigate } from 'react-router-dom';
-import { Save, Lock, User, AlertCircle, CheckCircle } from 'lucide-react';
+import { Save, Lock, CheckCircle, AlertCircle } from 'lucide-react';
+import { apiUpdateProfile, apiChangePassword } from '../api.js';
 
 const AVATARS = {
-  'Animals': ['🦁','🐯','🦅','🐺','🦊','🐻','🦋','🦈','🐬','🦏','🐘','🦒','🦓','🦌','🐆'],
+  'Animals':   ['🦁','🐯','🦅','🐺','🦊','🐻','🦋','🦈','🐬','🦏','🐘','🦒','🦓','🦌','🐆'],
   'Monuments': ['🗽','🗼','🏰','🕌','🛕','⛩️','🏯','🗿','🕍','🏛️','🏟️','🗺️','🌍','🌐','🏔️'],
-  'Sports': ['🏀','⚡','🔥','💎','👑','🏆','🎯','💪','🌟','🚀','⚡','🥇','🎖️','🏅','🎪'],
+  'Sports':    ['🏀','⚡','🔥','💎','👑','🏆','🎯','💪','🌟','🚀','⚡','🥇','🎖️','🏅','🎪'],
 };
 
 export default function Settings() {
@@ -18,55 +18,85 @@ export default function Settings() {
 
   // Profile form
   const [profile, setProfile] = useState({
-    username: user?.username || '',
-    teamName: team?.name || '',
+    username:    user?.username    || '',
+    teamName:    team?.name        || '',
     stadiumName: team?.stadiumName || '',
-    email: user?.email || '',
-    bio: user?.bio || '',
-    gender: user?.gender || '',
+    email:       user?.email       || '',
+    bio:         user?.bio         || '',
+    gender:      user?.gender      || '',
   });
+  const [savingProfile, setSavingProfile] = useState(false);
 
   // Password form
   const [passwords, setPasswords] = useState({ current: '', newPass: '', confirm: '' });
   const [passError, setPassError] = useState('');
+  const [savingPass, setSavingPass] = useState(false);
 
   // Avatar
   const [selectedAvatar, setSelectedAvatar] = useState(user?.avatar?.emoji || '🏀');
+  const [savingAvatar, setSavingAvatar] = useState(false);
 
-  // Changes limit: 2 per day
+  // Changes limit: 2 per day (profile tab only)
   const today = new Date().toDateString();
   const changesUsed = user?.lastSettingsChange === today ? (user?.settingsChangesToday || 0) : 0;
   const changesLeft = 2 - changesUsed;
 
-  const handleSaveProfile = () => {
+  const handleSaveProfile = async () => {
     if (changesLeft <= 0) {
-      addNotification('You have reached the maximum 2 settings changes for today.', 'error');
+      addNotification('You have reached the maximum 2 profile changes for today.', 'error');
       return;
     }
-    const updatedUser = {
-      ...user,
-      username: profile.username,
-      email: profile.email,
-      bio: profile.bio,
-      gender: profile.gender,
-      settingsChangesToday: changesUsed + 1,
-      lastSettingsChange: today,
-    };
-    const updatedTeam = { ...team, name: profile.teamName, stadiumName: profile.stadiumName };
-    dispatch({ type: 'SET_USER', payload: updatedUser });
-    dispatch({ type: 'UPDATE_TEAM', payload: updatedTeam });
-    addNotification('Profile updated successfully!', 'success');
+    setSavingProfile(true);
+    try {
+      const newChangesUsed = changesUsed + 1;
+      await apiUpdateProfile({
+        username:             profile.username,
+        email:                profile.email,
+        teamName:             profile.teamName,
+        stadiumName:          profile.stadiumName,
+        bio:                  profile.bio,
+        gender:               profile.gender,
+        settingsChangesToday: newChangesUsed,
+        lastSettingsChange:   today,
+      });
+
+      const updatedUser = {
+        ...user,
+        username:             profile.username,
+        email:                profile.email,
+        bio:                  profile.bio,
+        gender:               profile.gender,
+        settingsChangesToday: newChangesUsed,
+        lastSettingsChange:   today,
+      };
+      const updatedTeam = { ...team, name: profile.teamName, stadiumName: profile.stadiumName };
+      dispatch({ type: 'SET_USER',    payload: updatedUser });
+      dispatch({ type: 'UPDATE_TEAM', payload: updatedTeam });
+      addNotification('Profile updated successfully!', 'success');
+    } catch (err) {
+      addNotification(err.message || 'Failed to save profile.', 'error');
+    } finally {
+      setSavingProfile(false);
+    }
   };
 
-  const handleSaveAvatar = () => {
-    const updatedUser = { ...user, avatar: { type: 'emoji', emoji: selectedAvatar } };
-    dispatch({ type: 'SET_USER', payload: updatedUser });
-    addNotification('Avatar updated!', 'success');
+  const handleSaveAvatar = async () => {
+    setSavingAvatar(true);
+    try {
+      const avatar = { type: 'emoji', emoji: selectedAvatar };
+      await apiUpdateProfile({ avatar });
+      dispatch({ type: 'SET_USER', payload: { ...user, avatar } });
+      addNotification('Avatar updated!', 'success');
+    } catch (err) {
+      addNotification(err.message || 'Failed to save avatar.', 'error');
+    } finally {
+      setSavingAvatar(false);
+    }
   };
 
-  const handleChangePassword = () => {
+  const handleChangePassword = async () => {
     if (!passwords.newPass || passwords.newPass.length < 6) {
-      setPassError('Password must be at least 6 characters');
+      setPassError('New password must be at least 6 characters');
       return;
     }
     if (passwords.newPass !== passwords.confirm) {
@@ -74,8 +104,16 @@ export default function Settings() {
       return;
     }
     setPassError('');
-    setPasswords({ current: '', newPass: '', confirm: '' });
-    addNotification('Password changed successfully!', 'success');
+    setSavingPass(true);
+    try {
+      await apiChangePassword(passwords.current, passwords.newPass);
+      setPasswords({ current: '', newPass: '', confirm: '' });
+      addNotification('Password changed successfully!', 'success');
+    } catch (err) {
+      setPassError(err.message || 'Failed to change password.');
+    } finally {
+      setSavingPass(false);
+    }
   };
 
   return (
@@ -136,8 +174,8 @@ export default function Settings() {
               <option value="other">Other</option>
             </select>
           </div>
-          <button className="btn btn-primary" onClick={handleSaveProfile} disabled={changesLeft <= 0}>
-            <Save size={16} /> Save Profile
+          <button className="btn btn-primary" onClick={handleSaveProfile} disabled={changesLeft <= 0 || savingProfile}>
+            <Save size={16} /> {savingProfile ? 'Saving…' : 'Save Profile'}
           </button>
           <p className="text-xs text-muted mt-3">
             ⚠️ Profile and team details can only be changed twice per day.
@@ -182,8 +220,8 @@ export default function Settings() {
               </div>
             </div>
           ))}
-          <button className="btn btn-primary" onClick={handleSaveAvatar}>
-            <CheckCircle size={16} /> Save Avatar
+          <button className="btn btn-primary" onClick={handleSaveAvatar} disabled={savingAvatar}>
+            <CheckCircle size={16} /> {savingAvatar ? 'Saving…' : 'Save Avatar'}
           </button>
         </div>
       )}
@@ -204,8 +242,8 @@ export default function Settings() {
             <input className="form-input" type="password" value={passwords.confirm} onChange={e => setPasswords(p => ({...p, confirm: e.target.value}))} />
           </div>
           {passError && <div className="form-error mb-3">{passError}</div>}
-          <button className="btn btn-primary" onClick={handleChangePassword}>
-            <Lock size={16} /> Change Password
+          <button className="btn btn-primary" onClick={handleChangePassword} disabled={savingPass}>
+            <Lock size={16} /> {savingPass ? 'Changing…' : 'Change Password'}
           </button>
         </div>
       )}
@@ -214,11 +252,11 @@ export default function Settings() {
         <div className="card" style={{ maxWidth: 400 }}>
           <div className="card-title mb-4">Notification Preferences</div>
           {[
-            { label: 'Match Results', desc: 'Get notified when a match finishes' },
-            { label: 'Injury Alerts', desc: 'Alerts when players get injured' },
-            { label: 'Transfer Activity', desc: 'Notifications for market activity' },
-            { label: 'League Updates', desc: 'League table changes and promotions' },
-            { label: 'Weekly Fan News', desc: 'Weekly fan report updates' },
+            { label: 'Match Results',    desc: 'Get notified when a match finishes' },
+            { label: 'Injury Alerts',    desc: 'Alerts when players get injured' },
+            { label: 'Transfer Activity',desc: 'Notifications for market activity' },
+            { label: 'League Updates',   desc: 'League table changes and promotions' },
+            { label: 'Weekly Fan News',  desc: 'Weekly fan report updates' },
           ].map(({ label, desc }) => (
             <div key={label} className="flex items-center justify-between" style={{ padding: '12px 0', borderBottom: '1px solid var(--border-color)' }}>
               <div>

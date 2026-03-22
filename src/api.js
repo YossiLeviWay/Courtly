@@ -9,11 +9,11 @@ function authHeaders() {
   return t ? { Authorization: `Bearer ${t}` } : {};
 }
 
-export async function apiRegister(email, password, username, teamId, teamData) {
+export async function apiRegister(email, password, username, teamId, teamData, teamName) {
   const res = await fetch('/api/auth/register', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ email, password, username, teamId, teamData }),
+    body: JSON.stringify({ email, password, username, teamId, teamData, teamName }),
   });
   const data = await res.json();
   if (!res.ok) throw Object.assign(new Error(data.error || 'Registration failed'), { status: res.status });
@@ -163,6 +163,30 @@ export async function apiDelistPlayer(listingId) {
   } catch (err) {
     console.error('Delist error:', err);
   }
+}
+
+// ── User profile (team name, avatar, bio, etc.) ─────────────────
+
+export async function apiUpdateProfile(fields) {
+  const res = await fetch('/api/user/profile', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...authHeaders() },
+    body: JSON.stringify(fields),
+  });
+  const data = await res.json();
+  if (!res.ok) throw new Error(data.error || 'Profile update failed');
+  return data;
+}
+
+export async function apiChangePassword(currentPassword, newPassword) {
+  const res = await fetch('/api/auth/change-password', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...authHeaders() },
+    body: JSON.stringify({ currentPassword, newPassword }),
+  });
+  const data = await res.json();
+  if (!res.ok) throw new Error(data.error || 'Password change failed');
+  return data;
 }
 
 // ── Per-user team state ─────────────────────────────────────────
