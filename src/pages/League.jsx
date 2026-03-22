@@ -35,23 +35,26 @@ export default function League() {
     return []; // Liga A and B are empty initially
   }, [activeLeague, leagues, allTeams]);
 
-  // Add stats to teams
-  const teamsWithStats = useMemo(() => leagueTeams.map(t => {
-    const full = allTeams.find(a => a.id === t.id) || t;
+  // Add stats to teams — filter nulls to guard against malformed world data
+  const teamsWithStats = useMemo(() => leagueTeams.filter(Boolean).map(t => {
+    const full = allTeams.find(a => a?.id === t.id) || t;
     const wins = full.seasonRecord?.wins || 0;
     const losses = full.seasonRecord?.losses || 0;
     const played = wins + losses;
     const points = wins * 2 + losses;
     const history = full.matchHistory || [];
-    const gf = history.reduce((sum, m) => sum + (m.userScore || 0), 0);
-    const ga = history.reduce((sum, m) => sum + (m.oppScore || 0), 0);
+    const gf = history.reduce((sum, m) => sum + (m?.userScore || 0), 0);
+    const ga = history.reduce((sum, m) => sum + (m?.oppScore || 0), 0);
     return { ...full, wins, losses, played, points, gf, ga, gd: gf - ga, rep: full.reputation || 10 };
   }), [leagueTeams, allTeams]);
 
   const sorted = useMemo(() => {
-    return [...teamsWithStats].sort((a, b) => {
-      let av = a[sortCol], bv = b[sortCol];
-      if (sortCol === 'name') return sortDir === 'asc' ? av.localeCompare(bv) : bv.localeCompare(av);
+    return [...teamsWithStats].filter(Boolean).sort((a, b) => {
+      const av = a[sortCol] ?? 0;
+      const bv = b[sortCol] ?? 0;
+      if (sortCol === 'name') return sortDir === 'asc'
+        ? String(av).localeCompare(String(bv))
+        : String(bv).localeCompare(String(av));
       return sortDir === 'asc' ? av - bv : bv - av;
     });
   }, [teamsWithStats, sortCol, sortDir]);
@@ -74,6 +77,26 @@ export default function League() {
 
   if (!leagueTabs.find(t => t.id === 'C-0')) {
     leagueTabs.push({ id: 'C-0', label: 'Liga C-1', empty: false });
+  }
+
+  if (leagues.length === 0) {
+    return (
+      <div className="animate-fade-in">
+        <div className="page-header">
+          <h1>League Table</h1>
+          <p>Season standings, stats, and promotion/relegation zones</p>
+        </div>
+        <div className="card">
+          <div className="empty-state">
+            <div className="empty-state-icon"><Trophy size={48} /></div>
+            <div className="empty-state-title">World Not Initialized</div>
+            <div className="empty-state-desc">
+              The game world hasn't been seeded yet. Ask your admin to run the world seed.
+            </div>
+          </div>
+        </div>
+      </div>
+    );
   }
 
   return (
@@ -139,6 +162,9 @@ export default function League() {
               </tr>
             </thead>
             <tbody>
+              {sorted.length === 0 && (
+                <tr><td colSpan={10} style={{ textAlign: 'center', padding: 32, color: 'var(--text-muted)' }}>No standings data available yet.</td></tr>
+              )}
               {sorted.map((team, idx) => {
                 const rank = idx + 1;
                 const isPromo = rank <= 2;

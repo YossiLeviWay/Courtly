@@ -20,7 +20,7 @@ const formatDate = (date) =>
   new Date(date).toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
 
 function getPlayerStats(player) {
-  const s = player.seasonStats;
+  const s = player.seasonStats || {};
   const gp = s.gamesPlayed || 1;
   return {
     pts: (s.points / gp).toFixed(1),
@@ -145,14 +145,15 @@ export default function Dashboard() {
 
   // ── Top players ───────────────────────────────────────────
   const activePlayers = players || [];
-  const topScorer = [...activePlayers].sort(
-    (a, b) => b.seasonStats.points / (b.seasonStats.gamesPlayed || 1) - a.seasonStats.points / (a.seasonStats.gamesPlayed || 1)
+  const statPlayers = activePlayers.filter(p => p?.seasonStats);
+  const topScorer = [...statPlayers].sort(
+    (a, b) => (b.seasonStats.points ?? 0) / (b.seasonStats.gamesPlayed || 1) - (a.seasonStats.points ?? 0) / (a.seasonStats.gamesPlayed || 1)
   )[0];
-  const topRebounder = [...activePlayers].sort(
-    (a, b) => b.seasonStats.rebounds / (b.seasonStats.gamesPlayed || 1) - a.seasonStats.rebounds / (a.seasonStats.gamesPlayed || 1)
+  const topRebounder = [...statPlayers].sort(
+    (a, b) => (b.seasonStats.rebounds ?? 0) / (b.seasonStats.gamesPlayed || 1) - (a.seasonStats.rebounds ?? 0) / (a.seasonStats.gamesPlayed || 1)
   )[0];
-  const topAssister = [...activePlayers].sort(
-    (a, b) => b.seasonStats.assists / (b.seasonStats.gamesPlayed || 1) - a.seasonStats.assists / (a.seasonStats.gamesPlayed || 1)
+  const topAssister = [...statPlayers].sort(
+    (a, b) => (b.seasonStats.assists ?? 0) / (b.seasonStats.gamesPlayed || 1) - (a.seasonStats.assists ?? 0) / (a.seasonStats.gamesPlayed || 1)
   )[0];
 
   // ── Injuries / squad news ─────────────────────────────────

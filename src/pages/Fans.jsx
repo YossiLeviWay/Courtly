@@ -238,10 +238,11 @@ export default function Fans() {
 
   // Generate news items based on team state
   const players = userTeam.players ?? [];
-  const topScorer = [...players].sort(
+  const statPlayers = players.filter(p => p?.seasonStats);
+  const topScorer = [...statPlayers].sort(
     (a, b) =>
-      b.seasonStats.points / (b.seasonStats.gamesPlayed || 1) -
-      a.seasonStats.points / (a.seasonStats.gamesPlayed || 1)
+      (b.seasonStats.points ?? 0) / (b.seasonStats.gamesPlayed || 1) -
+      (a.seasonStats.points ?? 0) / (a.seasonStats.gamesPlayed || 1)
   )[0];
   const mostFatigued = [...players].sort((a, b) => (b.fatigue || 0) - (a.fatigue || 0))[0];
   const injured = players.filter(p => p.injuryStatus !== 'healthy');
