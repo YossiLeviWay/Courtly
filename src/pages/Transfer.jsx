@@ -699,7 +699,7 @@ export default function Transfer() {
           ) : (
             <div className="grid-auto">
               {filtered.map(({ player, team: t }) => (
-                <PlayerCard key={player.id} player={player} team={t} onBuy={handleBuy} onView={setViewPlayer} timeLeft={getTimeLeft(player.listedAt)} userTeamId={team?.id} onRemove={handleRemoveListing} />
+                <PlayerCard key={player.id} player={player} team={t} onBuy={handleBuy} onView={setViewPlayer} timeLeft={getTimeLeft(player.listedAt)} userTeamId={team?.id} onRemove={handleRemoveListing} onCompare={setCompareTarget} />
               ))}
             </div>
           )}
@@ -751,6 +751,15 @@ export default function Transfer() {
             </table>
           )}
         </div>
+      )}
+
+      {/* Transfer Compare Modal */}
+      {compareTarget && (
+        <TransferCompareModal
+          target={compareTarget}
+          mySquad={team?.players || []}
+          onClose={() => setCompareTarget(null)}
+        />
       )}
 
       {/* Filter Modal */}
