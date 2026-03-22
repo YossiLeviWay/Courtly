@@ -1,4 +1,4 @@
-import { neon } from '@netlify/neon';
+import { neon } from '@neondatabase/serverless';
 import bcrypt from 'bcryptjs';
 import jwt from 'jsonwebtoken';
 
@@ -12,7 +12,7 @@ export default async (req) => {
   if (!email || !password) return json({ error: 'Missing required fields' }, 400);
 
   try {
-    const sql = neon();
+    const sql = neon(process.env.NETLIFY_DATABASE_URL);
     const rows = await sql`
       SELECT u.id, u.username, u.email, u.password_hash
       FROM users u

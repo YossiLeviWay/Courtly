@@ -1,4 +1,4 @@
-import { neon } from '@netlify/neon';
+import { neon } from '@neondatabase/serverless';
 import jwt from 'jsonwebtoken';
 
 const json = (data, status = 200) =>
@@ -15,7 +15,7 @@ export default async (req) => {
     const { state } = await req.json();
     if (!state) return json({ error: 'No state provided' }, 400);
 
-    const sql = neon();
+    const sql = neon(process.env.NETLIFY_DATABASE_URL);
     await sql`
       INSERT INTO game_states (user_id, state, updated_at)
       VALUES (${userId}, ${JSON.stringify(state)}, ${Date.now()})

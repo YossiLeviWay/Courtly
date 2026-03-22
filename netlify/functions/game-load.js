@@ -1,4 +1,4 @@
-import { neon } from '@netlify/neon';
+import { neon } from '@neondatabase/serverless';
 import jwt from 'jsonwebtoken';
 
 const json = (data, status = 200) =>
@@ -12,7 +12,7 @@ export default async (req) => {
 
   try {
     const { userId } = jwt.verify(token, process.env.JWT_SECRET);
-    const sql = neon();
+    const sql = neon(process.env.NETLIFY_DATABASE_URL);
     const rows = await sql`SELECT state FROM game_states WHERE user_id = ${userId}`;
     return json({ state: rows[0]?.state || null });
   } catch (err) {

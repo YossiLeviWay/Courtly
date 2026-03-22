@@ -9,7 +9,7 @@
 //
 // Set ADMIN_SECRET in Netlify environment variables.
 
-import { neon } from '@netlify/neon';
+import { neon } from '@neondatabase/serverless';
 
 const json = (data, status = 200) =>
   new Response(JSON.stringify(data), { status, headers: { 'Content-Type': 'application/json' } });
@@ -295,7 +295,7 @@ export default async (req) => {
   if (secret !== adminSecret) return json({ error: 'Invalid admin secret' }, 401);
 
   try {
-    const sql = neon();
+    const sql = neon(process.env.NETLIFY_DATABASE_URL);
 
     if (!reset) {
       const [{ count }] = await sql`SELECT COUNT(*)::int AS count FROM world_data`;

@@ -10,7 +10,7 @@
     "preview": "vite preview"
   },
   "dependencies": {
-    "@netlify/neon": "^0.1.2",
+    "@neondatabase/serverless": "^1.0.2",
     "bcryptjs": "^3.0.3",
     "jsonwebtoken": "^9.0.3",
     "lucide-react": "^0.577.0",

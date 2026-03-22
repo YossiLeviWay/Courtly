@@ -1,11 +1,11 @@
-import { neon } from '@netlify/neon';
+import { neon } from '@neondatabase/serverless';
 import jwt from 'jsonwebtoken';
 
 const json = (data, status = 200) =>
   new Response(JSON.stringify(data), { status, headers: { 'Content-Type': 'application/json' } });
 
 export default async (req) => {
-  const sql = neon();
+  const sql = neon(process.env.NETLIFY_DATABASE_URL);
 
   if (req.method === 'GET') {
     const rows = await sql`SELECT * FROM world_matches ORDER BY scheduled_date ASC`;

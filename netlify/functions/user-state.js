@@ -1,4 +1,4 @@
-import { neon } from '@netlify/neon';
+import { neon } from '@neondatabase/serverless';
 import jwt from 'jsonwebtoken';
 
 const json = (data, status = 200) =>
@@ -14,7 +14,7 @@ export default async (req) => {
   let userId;
   try { userId = getUserId(req); } catch { return json({ error: 'Unauthorised' }, 401); }
 
-  const sql = neon();
+  const sql = neon(process.env.NETLIFY_DATABASE_URL);
 
   if (req.method === 'GET') {
     const [userRow] = await sql`SELECT username, email, created_at FROM users WHERE id = ${userId}`;
