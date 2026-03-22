@@ -232,7 +232,7 @@ export default function Dashboard() {
         <StatCard
           icon={<DollarSign size={18} />}
           label="Balance"
-          value={`$${budget}`}
+          value={`$${budget?.toLocaleString?.() ?? budget}`}
           sub="Available funds"
         />
         <StatCard
@@ -242,6 +242,49 @@ export default function Dashboard() {
           sub="Season followers"
         />
       </div>
+
+      {/* Debt alert */}
+      {budget < 0 && (() => {
+        const debtAmount = Math.abs(budget);
+        const monthlyInterest = Math.round(debtAmount * 0.04);
+        return (
+          <div style={{
+            background: 'rgba(239,68,68,0.10)',
+            border: '1.5px solid rgba(239,68,68,0.45)',
+            borderRadius: 'var(--radius-lg)',
+            padding: '18px 20px',
+            marginBottom: 'var(--space-5)',
+          }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 10 }}>
+              <AlertCircle size={20} color="#ef4444" />
+              <span style={{ fontWeight: 800, color: '#ef4444', fontSize: 'var(--font-size-base)' }}>
+                ⚠️ Team in Debt
+              </span>
+            </div>
+            <div style={{ display: 'flex', flexWrap: 'wrap', gap: 'var(--space-5)', marginBottom: 10 }}>
+              <div>
+                <div style={{ fontSize: 'var(--font-size-xs)', color: 'var(--text-muted)', marginBottom: 2, textTransform: 'uppercase', letterSpacing: 0.5, fontWeight: 700 }}>
+                  Current Debt
+                </div>
+                <div style={{ fontWeight: 900, fontSize: 'var(--font-size-xl)', color: '#ef4444' }}>
+                  ${debtAmount.toLocaleString()}
+                </div>
+              </div>
+              <div>
+                <div style={{ fontSize: 'var(--font-size-xs)', color: 'var(--text-muted)', marginBottom: 2, textTransform: 'uppercase', letterSpacing: 0.5, fontWeight: 700 }}>
+                  Monthly Interest (4%)
+                </div>
+                <div style={{ fontWeight: 900, fontSize: 'var(--font-size-xl)', color: '#ef4444' }}>
+                  ${monthlyInterest.toLocaleString()}
+                </div>
+              </div>
+            </div>
+            <div style={{ fontSize: 'var(--font-size-sm)', color: '#b91c1c', fontWeight: 600 }}>
+              Debt grows 4% monthly until resolved. Reduce expenses or increase revenue to clear the deficit.
+            </div>
+          </div>
+        );
+      })()}
 
       {/* Team gauges + Next match */}
       <div className="grid-2 mb-6">

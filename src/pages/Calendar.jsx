@@ -245,6 +245,49 @@ export default function Calendar() {
             </div>
           </div>
 
+          {/* Season Summary */}
+          <div className="card mb-4">
+            <div className="card-title mb-3">Season Record</div>
+            <div style={{ display: 'flex', gap: 12, marginBottom: 12 }}>
+              <div style={{ flex: 1, textAlign: 'center', padding: '10px 8px', borderRadius: 'var(--radius-md)', background: 'rgba(46,125,50,0.08)' }}>
+                <div style={{ fontSize: 'var(--font-size-2xl)', fontWeight: 900, color: 'var(--color-success)' }}>{team?.wins ?? 0}</div>
+                <div style={{ fontSize: 'var(--font-size-xs)', color: 'var(--text-muted)', fontWeight: 700 }}>WINS</div>
+              </div>
+              <div style={{ flex: 1, textAlign: 'center', padding: '10px 8px', borderRadius: 'var(--radius-md)', background: 'rgba(198,40,40,0.08)' }}>
+                <div style={{ fontSize: 'var(--font-size-2xl)', fontWeight: 900, color: 'var(--color-danger)' }}>{team?.losses ?? 0}</div>
+                <div style={{ fontSize: 'var(--font-size-xs)', color: 'var(--text-muted)', fontWeight: 700 }}>LOSSES</div>
+              </div>
+              <div style={{ flex: 1, textAlign: 'center', padding: '10px 8px', borderRadius: 'var(--radius-md)', background: 'var(--bg-muted)' }}>
+                <div style={{ fontSize: 'var(--font-size-2xl)', fontWeight: 900, color: 'var(--text-primary)' }}>
+                  {(team?.wins ?? 0) + (team?.losses ?? 0)}
+                </div>
+                <div style={{ fontSize: 'var(--font-size-xs)', color: 'var(--text-muted)', fontWeight: 700 }}>PLAYED</div>
+              </div>
+            </div>
+            {/* Form (last 5) */}
+            {pastMatches.length > 0 && (
+              <div>
+                <div style={{ fontSize: 'var(--font-size-xs)', color: 'var(--text-muted)', fontWeight: 700, marginBottom: 6, textTransform: 'uppercase', letterSpacing: 1 }}>Form (last 5)</div>
+                <div style={{ display: 'flex', gap: 4 }}>
+                  {pastMatches.slice(0, 5).map((m, i) => {
+                    const isHome = m.homeTeamId === team?.id;
+                    const us = isHome ? m.result?.homeScore : m.result?.awayScore;
+                    const them = isHome ? m.result?.awayScore : m.result?.homeScore;
+                    const won = us > them;
+                    return (
+                      <div key={i} style={{
+                        width: 28, height: 28, borderRadius: 'var(--radius-sm)',
+                        background: won ? 'var(--color-success)' : 'var(--color-danger)',
+                        color: 'white', fontWeight: 800, fontSize: 'var(--font-size-xs)',
+                        display: 'flex', alignItems: 'center', justifyContent: 'center',
+                      }}>{won ? 'W' : 'L'}</div>
+                    );
+                  })}
+                </div>
+              </div>
+            )}
+          </div>
+
           {/* Key Deadlines */}
           <div className="card">
             <div className="card-title mb-3">Key Deadlines</div>

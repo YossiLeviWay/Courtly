@@ -769,6 +769,48 @@ export default function Training() {
         )}
       </div>
 
+      {/* ── 3b. Weekly Training Review ───────────────────────── */}
+      <div className="card mb-6">
+        <SectionHeader
+          icon={<CheckCircle size={18} />}
+          title="Weekly Training Review"
+          subtitle="Expected attribute improvements based on your current training allocation"
+        />
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(200px, 1fr))', gap: 12 }}>
+          {TRAINING_AREAS.map(area => {
+            const points = training[area.id] ?? 0;
+            const intensity = points >= 30 ? 'High' : points >= 15 ? 'Medium' : 'Low';
+            const gain = points >= 30 ? '+2 to +3 per player' : points >= 15 ? '+1 to +2 per player' : points > 0 ? '+0 to +1 per player' : 'No development';
+            const color = points >= 30 ? 'var(--color-success)' : points >= 15 ? 'var(--color-warning)' : points > 0 ? 'var(--color-primary)' : 'var(--text-muted)';
+            const staffInfo = getStaffAbility(staffObj, area.staffInfluenceRole, area.staffAbilityKey);
+            const staffBonus = staffInfo?.value >= 70 ? ' (+staff bonus)' : '';
+            return (
+              <div key={area.id} style={{
+                padding: '12px 14px', borderRadius: 'var(--radius-md)',
+                background: points > 0 ? 'var(--bg-muted)' : 'transparent',
+                border: '1px solid var(--border-color)',
+                opacity: points === 0 ? 0.5 : 1,
+              }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 6 }}>
+                  <span style={{ fontSize: '1rem' }}>{area.icon}</span>
+                  <span style={{ fontSize: 'var(--font-size-xs)', fontWeight: 700, color, background: `${color}20`, padding: '2px 7px', borderRadius: 20 }}>{intensity}</span>
+                </div>
+                <div style={{ fontSize: 'var(--font-size-xs)', fontWeight: 700, marginBottom: 4 }}>{area.label}</div>
+                <div style={{ fontSize: 'var(--font-size-xs)', color: 'var(--text-muted)', marginBottom: 4 }}>{area.impactsLabel}</div>
+                <div style={{ fontSize: 'var(--font-size-xs)', fontWeight: 700, color }}>{gain}{staffBonus}</div>
+                <div style={{ marginTop: 6, height: 4, background: 'var(--bg-card)', borderRadius: 'var(--radius-full)', overflow: 'hidden' }}>
+                  <div style={{ width: `${Math.min(100, (points / 40) * 100)}%`, height: '100%', background: color, borderRadius: 'var(--radius-full)' }} />
+                </div>
+              </div>
+            );
+          })}
+        </div>
+        <div style={{ marginTop: 12, padding: '10px 14px', borderRadius: 'var(--radius-md)', background: 'var(--bg-muted)', fontSize: 'var(--font-size-xs)', color: 'var(--text-muted)' }}>
+          💡 Attribute gains apply weekly to all active (non-injured) players. Focus players receive 2× gains.
+          {focusPlayers.length > 0 && <> <strong style={{ color: 'var(--color-primary)' }}>{focusPlayers.length} focus player{focusPlayers.length > 1 ? 's' : ''}</strong> will receive double development this week.</>}
+        </div>
+      </div>
+
       {/* ── 4. Team Chemistry Gauge ───────────────────────────── */}
       <div className="card mb-6">
         <SectionHeader
