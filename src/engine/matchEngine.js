@@ -724,9 +724,12 @@ export function updateTeamAfterMatch(team, matchResult, isHome) {
   const fanDelta = won ? randomInt(2, 6) : randomInt(-4, -1);
   team.fanEnthusiasm = clamp((team.fanEnthusiasm ?? 20) + fanDelta, 0, 100);
 
-  // Fan count grows slowly on wins
+  // Fan count grows on wins; Media Center teamExposure multiplies the growth
   if (won) {
-    team.fanCount = (team.fanCount ?? 250) + randomInt(5, 20);
+    const exposure = team.teamExposure ?? 0; // 0-10 based on media center level
+    const exposureMultiplier = 1 + exposure * 0.1; // +10% per media level
+    const baseGrowth = randomInt(5, 20);
+    team.fanCount = (team.fanCount ?? 250) + Math.round(baseGrowth * exposureMultiplier);
   }
 
   // Reputation change

@@ -2,18 +2,12 @@ import { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useGame } from '../context/GameContext.jsx';
 import { useTheme } from '../context/ThemeContext.jsx';
-import { generateLeagues } from '../engine/teamGenerator.js';
 import { Sun, Moon, Eye, EyeOff } from 'lucide-react';
-import { auth, db } from '../firebase.js';
-import {
-  createUserWithEmailAndPassword,
-  signInWithEmailAndPassword,
-} from 'firebase/auth';
-import { doc, setDoc } from 'firebase/firestore';
+import { apiLogin, apiRegister, apiGetWorld, setToken } from '../api.js';
 import ToastContainer from '../components/ui/ToastContainer.jsx';
 
 export default function Login() {
-  const { state, dispatch, addNotification } = useGame();
+  const { state, addNotification } = useGame();
   const { theme, toggleTheme } = useTheme();
   const navigate = useNavigate();
   const [mode, setMode] = useState('login');
@@ -26,7 +20,6 @@ export default function Login() {
     if (state.user) navigate('/', { replace: true });
   }, [state.user, navigate]);
 
-  // Reset loading spinner if auth resolved but no game state found (e.g. no Firestore doc)
   useEffect(() => {
     if (state.initialized && !state.user) setLoading(false);
   }, [state.initialized, state.user]);
@@ -48,73 +41,42 @@ export default function Login() {
 
     try {
       if (mode === 'login') {
-        await signInWithEmailAndPassword(auth, form.email, form.password);
-        // onAuthStateChanged in GameContext loads game state from Firestore.
-        // The useEffect above navigates to '/' once state.user is populated.
-        // Keep loading=true while that happens; the component unmounts on navigate.
+        const { token } = await apiLogin(form.email, form.password);
+        setToken(token);
+        // Reload so GameContext re-runs its mount effect and loads game state from DB
+        window.location.href = '/';
         return;
       }
 
-      // Registration - generate full game world
-      const cred = await createUserWithEmailAndPassword(auth, form.email, form.password);
-      const uid = cred.user.uid;
+      // Registration — read shared world, then assign a team
 
-      const leagues = generateLeagues();
+      // 1. Load the shared world from DB (must be pre-seeded by admin)
+      const worldData = await apiGetWorld();
+      if (!worldData) {
+        throw new Error('Game world is not ready yet. Please contact the administrator.');
+      }
+
+      const leagues = worldData.leagues || [];
       const allTeams = leagues.flatMap(l => l.teams || []);
+
+      // 2. Pick a random team from the world for the new user
       const league0Teams = leagues[0]?.teams || allTeams.slice(0, 10);
-      const userTeamIndex = Math.floor(Math.random() * league0Teams.length);
-      const baseTeam = league0Teams[userTeamIndex];
-      const userTeam = { ...baseTeam, isUserTeam: true, name: form.teamName || baseTeam.name, budget: 250, leagueId: leagues[0]?.id, leagueIndex: 0 };
+      const baseTeam = league0Teams[Math.floor(Math.random() * league0Teams.length)];
 
-      const updatedTeams = allTeams.map(t => t.id === baseTeam.id ? userTeam : t);
-      const updatedLeagues = leagues.map(l => ({
-        ...l,
-        teams: (l.teams || []).map(t => t.id === baseTeam.id ? userTeam : t)
-      }));
+      // 4. Register with teamId so the server creates user_team_state immediately
+      const { token } = await apiRegister(
+        form.email,
+        form.password,
+        form.username,
+        baseTeam.id,
+        { players: baseTeam.players || [] }
+      );
+      setToken(token);
 
-      const user = {
-        id: uid,
-        username: form.username,
-        email: form.email,
-        teamId: userTeam.id,
-        bio: '',
-        gender: '',
-        avatar: { type: 'initials', emoji: null },
-        settingsChangesToday: 0,
-        lastSettingsChange: null,
-        joinedAt: Date.now(),
-        records: { wins: 0, losses: 0, honors: [] },
-      };
-
-      const gameState = { user, userTeam, leagues: updatedLeagues, allTeams: updatedTeams, lastUpdated: Date.now() };
-
-      // Save lean format to Firestore (bot shells only — no player rosters, stays under 1 MB)
-      const BOT_SHELL_FIELDS = ['id','name','nickname','city','country','region',
-        'stadiumName','founded','colors','league','leagueIndex','leagueId'];
-      const botTeamShells = updatedTeams
-        .filter(t => !t.isUserTeam)
-        .map(t => Object.fromEntries(BOT_SHELL_FIELDS.map(k => [k, t[k]])));
-      const leaguesMeta = updatedLeagues.map(l => ({
-        id: l.id,
-        name: l.name,
-        tier: l.tier,
-        groupIndex: l.groupIndex,
-        standings: l.standings || [],
-        schedule: l.schedule || [],
-      }));
-      await setDoc(doc(db, 'gameStates', uid), { user, userTeam, botTeamShells, leaguesMeta, lastUpdated: gameState.lastUpdated });
-
-      dispatch({ type: 'INIT_GAME', payload: gameState });
-      addNotification(`Welcome to Courtly, ${form.username}! Your club is ready.`, 'success');
-      navigate('/', { replace: true });
+      // 5. Reload page — GameContext will load all state fresh from DB
+      window.location.href = '/';
     } catch (err) {
-      const msg =
-        err.code === 'auth/user-not-found' || err.code === 'auth/wrong-password' || err.code === 'auth/invalid-credential'
-          ? 'Invalid email or password.'
-          : err.code === 'auth/email-already-in-use'
-          ? 'Email already registered. Please sign in.'
-          : err.message;
-      addNotification(msg, 'error');
+      addNotification(err.message || 'Something went wrong.', 'error');
       setLoading(false);
     }
   };

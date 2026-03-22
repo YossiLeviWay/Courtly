@@ -1,8 +1,14 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" width="64" height="64">
-  <circle cx="32" cy="32" r="30" fill="#E8621A"/>
-  <path d="M 32 2 Q 50 18 32 32 Q 14 46 32 62" stroke="#C04E10" stroke-width="2.5" fill="none"/>
-  <path d="M 2 32 Q 18 14 32 32 Q 46 50 62 32" stroke="#C04E10" stroke-width="2.5" fill="none"/>
-  <path d="M 8 16 Q 26 24 26 32 Q 26 40 8 48" stroke="#C04E10" stroke-width="1.5" fill="none"/>
-  <path d="M 56 16 Q 38 24 38 32 Q 38 40 56 48" stroke="#C04E10" stroke-width="1.5" fill="none"/>
-  <text x="32" y="41" font-family="Arial Black, Arial" font-weight="900" font-size="26" fill="white" text-anchor="middle" opacity="0.95">C</text>
+  <!-- Background circle -->
+  <circle cx="32" cy="32" r="31" fill="#E8621A"/>
+  <!-- Basketball seam lines -->
+  <circle cx="32" cy="32" r="31" fill="none" stroke="#C04E10" stroke-width="1.5"/>
+  <!-- Main vertical seam -->
+  <path d="M 32 1 Q 50 17 50 32 Q 50 47 32 63" stroke="#C04E10" stroke-width="2.5" fill="none"/>
+  <path d="M 32 1 Q 14 17 14 32 Q 14 47 32 63" stroke="#C04E10" stroke-width="2.5" fill="none"/>
+  <!-- Main horizontal seam -->
+  <path d="M 1 32 Q 13 20 32 20 Q 51 20 63 32" stroke="#C04E10" stroke-width="2.5" fill="none"/>
+  <path d="M 1 32 Q 13 44 32 44 Q 51 44 63 32" stroke="#C04E10" stroke-width="2.5" fill="none"/>
+  <!-- Letter C -->
+  <text x="32" y="41" font-family="Arial Black, Arial" font-weight="900" font-size="24" fill="white" text-anchor="middle" opacity="0.96">C</text>
 </svg>

@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useRef, useEffect } from 'react';
 import { useGame } from '../context/GameContext.jsx';
 import {
   Building2,
@@ -9,6 +9,7 @@ import {
   Lock,
   Zap,
   AlertCircle,
+  Radio,
 } from 'lucide-react';
 
 // ── Constants ──────────────────────────────────────────────────
@@ -39,8 +40,8 @@ const FACILITY_DEFS = [
     key: 'media',
     name: 'Media Center',
     icon: '📺',
-    primary: 'Team motivation & fan engagement',
-    secondary: 'Boosts fan enthusiasm and press coverage',
+    primary: 'Team exposure & fan growth acceleration',
+    secondary: 'Each level adds +10% fan growth/week & boosts press coverage',
   },
   {
     key: 'merchandise',
@@ -60,6 +61,113 @@ const FACILITY_DEFS = [
 
 const BASE_COST = 100;
 const BASE_TIME = 10; // hours
+
+// ── Per-facility upgrade benefit descriptions ───────────────────
+
+function getUpgradeBenefits(key, nextLevel) {
+  const lv = nextLevel;
+  const map = {
+    trainingCourt: [
+      { icon: '📈', text: `Training efficiency +${lv * 10}%` },
+      { icon: '⭐', text: `Skill gain rate ×${(1 + lv * 0.12).toFixed(2)}` },
+      { icon: '🎯', text: `Unlocks harder drills at Lv ${lv >= 5 ? '5+' : lv}` },
+      { icon: '🕐', text: `Session recovery time −${lv}h` },
+    ],
+    gym: [
+      { icon: '💪', text: `Stamina cap +${lv * 4} pts` },
+      { icon: '⚡', text: `Fatigue recovery ×${(1 + lv * 0.1).toFixed(1)}` },
+      { icon: '🏃', text: `Speed & athleticism boost` },
+      { icon: '🩺', text: `Injury risk −${lv * 2}%` },
+    ],
+    youthAcademy: [
+      { icon: '🌟', text: `Youth prospect quality +${lv * 8} OVR avg` },
+      { icon: '🎓', text: `Potential ceiling ×${(1 + lv * 0.08).toFixed(2)}` },
+      { icon: '📅', text: `New prospect every ${Math.max(1, 4 - Math.floor(lv / 3))} months` },
+      { icon: '🔍', text: `Scouting radius ×${lv}` },
+    ],
+    media: [
+      { icon: '📡', text: `Team exposure +${lv * 10}% fan growth/week` },
+      { icon: '👥', text: `Fan growth multiplier ×${(1 + lv * 0.1).toFixed(1)}` },
+      { icon: '📰', text: `Press coverage score ${lv * 10}/100` },
+      { icon: '💬', text: `Social engagement +${lv * 15}%` },
+    ],
+    merchandise: [
+      { icon: '💵', text: `Merch income $${50 + lv * 30}/week` },
+      { icon: '🛒', text: `Item variety tier ${Math.min(lv, 5)}` },
+      { icon: '📊', text: `Revenue share +${lv * 5}%` },
+      { icon: '🎽', text: `Exclusive drops at Lv ${lv >= 7 ? lv : '7+'}` },
+    ],
+    basketballHall: [
+      { icon: '🏟️', text: `Capacity +${lv * 200} seats (total ${600 + lv * 200})` },
+      { icon: '🏠', text: `Home advantage +${lv * 3}%` },
+      { icon: '🎤', text: `Crowd intimidation ×${(1 + lv * 0.05).toFixed(2)}` },
+      { icon: '💰', text: `Gate revenue +${lv * 10}%` },
+    ],
+  };
+  return map[key] ?? [];
+}
+
+// ── Upgrade Benefit Tooltip ─────────────────────────────────────
+
+function UpgradeTooltip({ facilityKey, nextLevel, visible, anchorRef }) {
+  const benefits = getUpgradeBenefits(facilityKey, nextLevel);
+  const [pos, setPos] = useState({ top: 0, left: 0 });
+
+  useEffect(() => {
+    if (visible && anchorRef.current) {
+      const rect = anchorRef.current.getBoundingClientRect();
+      setPos({
+        top: rect.top + window.scrollY - 8,
+        left: rect.left + rect.width / 2,
+      });
+    }
+  }, [visible, anchorRef]);
+
+  if (!visible) return null;
+
+  return (
+    <div
+      style={{
+        position: 'absolute',
+        top: pos.top,
+        left: pos.left,
+        transform: 'translate(-50%, -100%)',
+        zIndex: 999,
+        background: 'var(--bg-card)',
+        border: '1.5px solid var(--color-primary)',
+        borderRadius: 'var(--radius-lg)',
+        padding: 'var(--space-3) var(--space-4)',
+        boxShadow: '0 8px 24px rgba(0,0,0,0.18)',
+        minWidth: 220,
+        pointerEvents: 'none',
+      }}
+    >
+      <div style={{ fontWeight: 800, fontSize: 'var(--font-size-xs)', color: 'var(--color-primary)', marginBottom: 'var(--space-2)', textTransform: 'uppercase', letterSpacing: 0.5 }}>
+        Level {nextLevel} Benefits
+      </div>
+      {benefits.map((b, i) => (
+        <div key={i} style={{ display: 'flex', alignItems: 'center', gap: 'var(--space-2)', marginBottom: 'var(--space-1)' }}>
+          <span style={{ fontSize: '0.85rem', lineHeight: 1 }}>{b.icon}</span>
+          <span style={{ fontSize: 'var(--font-size-xs)', color: 'var(--text-secondary)', fontWeight: 500 }}>{b.text}</span>
+        </div>
+      ))}
+      {/* Arrow */}
+      <div style={{
+        position: 'absolute',
+        bottom: -7,
+        left: '50%',
+        transform: 'translateX(-50%)',
+        width: 12,
+        height: 12,
+        background: 'var(--bg-card)',
+        border: '1.5px solid var(--color-primary)',
+        borderTop: 'none',
+        borderLeft: 'none',
+        transform: 'translateX(-50%) rotate(45deg)',
+      }} />
+    </div>
+  );
+}
 
 function getUpgradeCost(level) {
   return Math.round(BASE_COST * Math.pow(1.5, level));
@@ -101,6 +209,8 @@ function FacilityCard({ def, level, budget, upgrading, onUpgrade }) {
   const cost = getUpgradeCost(level);
   const hours = getUpgradeTime(level);
   const canAfford = budget >= cost;
+  const [showTooltip, setShowTooltip] = useState(false);
+  const btnRef = useRef(null);
 
   return (
     <div
@@ -228,25 +338,36 @@ function FacilityCard({ def, level, budget, upgrading, onUpgrade }) {
                   <span style={{ fontSize: 'var(--font-size-xs)', color: 'var(--text-muted)' }}>{hours}h</span>
                 </div>
               </div>
-              <button
-                className={`btn btn-sm ${canAfford ? 'btn-primary' : 'btn-ghost'}`}
-                style={{ width: '100%' }}
-                disabled={!canAfford}
-                onClick={() => onUpgrade(def.key, cost)}
-                title={!canAfford ? `Need ${formatCost(cost)} to upgrade` : `Upgrade to level ${level + 1}`}
-              >
-                {canAfford ? (
-                  <>
-                    <TrendingUp size={13} />
-                    Upgrade
-                  </>
-                ) : (
-                  <>
-                    <Lock size={13} />
-                    Insufficient funds
-                  </>
-                )}
-              </button>
+              <div style={{ position: 'relative' }}>
+                <button
+                  ref={btnRef}
+                  className={`btn btn-sm ${canAfford ? 'btn-primary' : 'btn-ghost'}`}
+                  style={{ width: '100%' }}
+                  disabled={!canAfford}
+                  onClick={() => onUpgrade(def.key, cost)}
+                  onMouseEnter={() => setShowTooltip(true)}
+                  onMouseLeave={() => setShowTooltip(false)}
+                  title={!canAfford ? `Need ${formatCost(cost)} to upgrade` : `Upgrade to level ${level + 1}`}
+                >
+                  {canAfford ? (
+                    <>
+                      <TrendingUp size={13} />
+                      Upgrade
+                    </>
+                  ) : (
+                    <>
+                      <Lock size={13} />
+                      Insufficient funds
+                    </>
+                  )}
+                </button>
+                <UpgradeTooltip
+                  facilityKey={def.key}
+                  nextLevel={level + 1}
+                  visible={showTooltip}
+                  anchorRef={btnRef}
+                />
+              </div>
             </>
           )}
         </div>
@@ -327,6 +448,8 @@ export default function Facilities() {
       ...userTeam,
       budget: budget - cost,
       facilities: updatedFacilities,
+      // Media Center upgrades increase teamExposure, which accelerates weekly fan growth
+      ...(key === 'media' ? { teamExposure: currentLevel + 1 } : {}),
     };
 
     dispatch({ type: 'UPDATE_TEAM', payload: updatedTeam });

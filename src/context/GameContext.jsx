@@ -1,82 +1,114 @@
 import { createContext, useContext, useReducer, useEffect, useCallback, useRef } from 'react';
-import { auth, db } from '../firebase.js';
-import { onAuthStateChanged, signOut } from 'firebase/auth';
-import { doc, setDoc, getDoc } from 'firebase/firestore';
-import { generateTeam, generateLeagues } from '../engine/teamGenerator.js';
+import {
+  getToken, clearToken,
+  apiGetWorld, apiGetMatches, apiGetStandings, apiGetUserState,
+  apiSaveUserState,
+} from '../api.js';
 
-// ── Firestore serialization ────────────────────────────────────
-// We save: user + userTeam (full) + botTeamShells (id/name/etc., no players)
-// + leaguesMeta (standings + schedule). Total ~40 KB, well under Firestore's 1 MB.
-// On load, bot players/staff are regenerated fresh but identity fields (id, name,
-// colors…) are restored from the shell — so schedule and standings IDs stay valid.
+// ── Build game state from structured DB rows ───────────────────
 
-const BOT_SHELL_FIELDS = ['id','name','nickname','city','country','region',
-  'stadiumName','founded','colors','league','leagueIndex','leagueId'];
+function buildLeagues(worldLeagues, dbMatches, dbStandings) {
+  return worldLeagues.map(league => {
+    const schedule = dbMatches
+      .filter(m => m.league_id === league.id)
+      .map(m => ({
+        id: m.id,
+        homeTeamId: m.home_team_id,
+        awayTeamId: m.away_team_id,
+        homeTeamName: m.home_team_name,
+        awayTeamName: m.away_team_name,
+        scheduledDate: Number(m.scheduled_date),
+        played: m.played,
+        result: m.played ? { homeScore: m.home_score, awayScore: m.away_score } : null,
+        log: m.log || [],
+      }));
 
-function serializeForFirestore(state) {
-  const botTeamShells = (state.allTeams || [])
-    .filter(t => !t.isUserTeam)
-    .map(t => Object.fromEntries(BOT_SHELL_FIELDS.map(k => [k, t[k]])));
+    const standings = dbStandings
+      .filter(s => s.league_id === league.id)
+      .map(s => ({ teamId: s.team_id, teamName: s.team_name, wins: Number(s.wins), losses: Number(s.losses), points: Number(s.points) }));
 
-  return {
-    user: state.user,
-    userTeam: state.userTeam,
-    botTeamShells,
-    leaguesMeta: (state.leagues || []).map(l => ({
-      id: l.id,
-      name: l.name,
-      tier: l.tier,
-      groupIndex: l.groupIndex,
-      standings: l.standings || [],
-      schedule: l.schedule || [],
-    })),
-    lastUpdated: state.lastUpdated,
-  };
-}
+    const finalStandings = standings.length > 0
+      ? standings
+      : (league.teams || []).map(t => ({ teamId: t.id, teamName: t.name, wins: 0, losses: 0, points: 0 }));
 
-function deserializeFromFirestore(savedData) {
-  const { user, userTeam, botTeamShells = [], leaguesMeta = [], lastUpdated } = savedData;
-
-  // Rebuild each bot team: fresh players/staff + saved identity (preserves IDs)
-  const botTeams = botTeamShells.map(shell =>
-    Object.assign(generateTeam({ leagueIndex: shell.leagueIndex, isUserTeam: false }), shell)
-  );
-
-  const userLeagueIndex = userTeam?.leagueIndex ?? 0;
-
-  // If no shells saved yet (old save format), fall back to full regeneration
-  const useShells = botTeamShells.length > 0;
-
-  const freshLeagues = useShells ? null : generateLeagues();
-
-  const leagues = (leaguesMeta.length > 0 ? leaguesMeta : (freshLeagues || [])).map((meta, i) => {
-    const groupIndex = meta.groupIndex ?? i;
-    const leagueBotTeams = botTeams.filter(t => t.leagueIndex === groupIndex);
-    let teams = useShells ? leagueBotTeams : (freshLeagues[i]?.teams || []);
-
-    if (groupIndex === userLeagueIndex && userTeam) {
-      teams = [userTeam, ...teams.filter(t => t.id !== userTeam.id)];
-    }
-
-    return {
-      id: meta.id || `liga-c-${groupIndex}`,
-      name: meta.name || `Liga C – Group ${groupIndex + 1}`,
-      tier: meta.tier || 'C',
-      groupIndex,
-      teams,
-      standings: meta.standings?.length ? meta.standings : teams.map(t => ({ teamId: t.id, teamName: t.name, wins: 0, losses: 0, points: 0 })),
-      schedule: meta.schedule || [],
-    };
+    return { ...league, schedule, standings: finalStandings };
   });
+}
+
+function buildUserTeam(worldLeagues, userState) {
+  const allWorldTeams = worldLeagues.flatMap(l => l.teams || []);
+  const baseTeam = allWorldTeams.find(t => t.id === userState.team_id);
+  if (!baseTeam) return null;
+
+  const evolvedPlayers = Array.isArray(userState.players_state) && userState.players_state.length > 0
+    ? userState.players_state
+    : (baseTeam.players || []);
 
   return {
-    user,
-    userTeam,
-    leagues,
-    allTeams: leagues.flatMap(l => l.teams || []),
-    lastUpdated,
+    ...baseTeam,
+    isUserTeam: true,
+    players: evolvedPlayers,
+    budget: userState.budget ?? 250,
+    facilities: userState.facilities ?? {},
+    tactics: userState.tactics ?? {},
+    fanCount: userState.fan_count ?? 250,
+    fanEnthusiasm: userState.fan_enthusiasm ?? 20,
+    ticketPrice: userState.ticket_price ?? 20,
+    teamExposure: userState.team_exposure ?? 0,
+    chemistryGauge: userState.chemistry_gauge ?? 50,
+    momentumBar: userState.momentum_bar ?? 65,
+    reputation: userState.reputation ?? 10,
+    matchHistory: userState.match_history ?? [],
+    wins: userState.season_record?.wins ?? 0,
+    losses: userState.season_record?.losses ?? 0,
   };
 }
+
+function buildUserProfile(dbUser, profileData) {
+  return {
+    id: dbUser?.id,
+    username: dbUser?.username || '',
+    email: dbUser?.email || '',
+    bio: profileData?.bio || '',
+    gender: profileData?.gender || '',
+    avatar: profileData?.avatar || { type: 'initials', emoji: null },
+    settingsChangesToday: profileData?.settingsChangesToday || 0,
+    lastSettingsChange: profileData?.lastSettingsChange || null,
+    joinedAt: dbUser?.created_at || Date.now(),
+    records: profileData?.records || { wins: 0, losses: 0, honors: [] },
+  };
+}
+
+function extractUserState(state) {
+  const t = state.userTeam;
+  if (!t) return null;
+  return {
+    teamId: t.id,
+    budget: t.budget ?? 250,
+    facilities: t.facilities ?? {},
+    tactics: t.tactics ?? {},
+    playersState: t.players ?? [],
+    fanCount: t.fanCount ?? 250,
+    fanEnthusiasm: t.fanEnthusiasm ?? 20,
+    ticketPrice: t.ticketPrice ?? 20,
+    teamExposure: t.teamExposure ?? 0,
+    chemistryGauge: t.chemistryGauge ?? 50,
+    momentumBar: t.momentumBar ?? 65,
+    reputation: t.reputation ?? 10,
+    matchHistory: t.matchHistory ?? [],
+    seasonRecord: { wins: t.wins ?? 0, losses: t.losses ?? 0 },
+    profileData: {
+      bio: state.user?.bio || '',
+      gender: state.user?.gender || '',
+      avatar: state.user?.avatar || { type: 'initials', emoji: null },
+      settingsChangesToday: state.user?.settingsChangesToday || 0,
+      lastSettingsChange: state.user?.lastSettingsChange || null,
+      records: state.user?.records || { wins: 0, losses: 0, honors: [] },
+    },
+  };
+}
+
+// ── Context setup ──────────────────────────────────────────────
 
 const GameContext = createContext(null);
 
@@ -85,6 +117,7 @@ const initialState = {
   userTeam: null,
   leagues: null,
   allTeams: [],
+  transferMarket: [],
   currentMatch: null,
   isMatchLive: false,
   notifications: [],
@@ -98,13 +131,19 @@ function gameReducer(state, action) {
       return { ...state, ...action.payload, initialized: true, lastUpdated: Date.now() };
     case 'SET_USER':
       return { ...state, user: action.payload };
-    case 'UPDATE_TEAM':
+    case 'UPDATE_TEAM': {
+      const updated = action.payload;
       return {
         ...state,
-        userTeam: action.payload,
-        allTeams: state.allTeams.map(t => t.id === action.payload.id ? action.payload : t),
+        userTeam: updated,
+        allTeams: state.allTeams.map(t => t.id === updated.id ? updated : t),
+        leagues: (state.leagues || []).map(l => ({
+          ...l,
+          teams: (l.teams || []).map(t => t.id === updated.id ? updated : t),
+        })),
         lastUpdated: Date.now(),
       };
+    }
     case 'UPDATE_PLAYER': {
       const updatedPlayers = state.userTeam.players.map(p =>
         p.id === action.payload.id ? action.payload : p
@@ -124,22 +163,18 @@ function gameReducer(state, action) {
         userTeam: action.payload.find(t => t.isUserTeam) || state.userTeam,
         lastUpdated: Date.now(),
       };
+    case 'UPDATE_LEAGUES':
+      return { ...state, leagues: action.payload, lastUpdated: Date.now() };
+    case 'SET_TRANSFER_MARKET':
+      return { ...state, transferMarket: action.payload };
     case 'SET_MATCH_LIVE':
       return { ...state, currentMatch: action.payload, isMatchLive: true };
     case 'END_MATCH':
       return { ...state, currentMatch: null, isMatchLive: false };
     case 'ADD_NOTIFICATION':
-      return {
-        ...state,
-        notifications: [action.payload, ...state.notifications].slice(0, 50),
-      };
+      return { ...state, notifications: [action.payload, ...state.notifications].slice(0, 50) };
     case 'CLEAR_NOTIFICATION':
-      return {
-        ...state,
-        notifications: state.notifications.filter(n => n.id !== action.payload),
-      };
-    case 'UPDATE_LEAGUES':
-      return { ...state, leagues: action.payload, lastUpdated: Date.now() };
+      return { ...state, notifications: state.notifications.filter(n => n.id !== action.payload) };
     default:
       return state;
   }
@@ -147,64 +182,72 @@ function gameReducer(state, action) {
 
 export function GameProvider({ children }) {
   const [state, dispatch] = useReducer(gameReducer, initialState);
-  // Track whether state was loaded from Firestore vs. locally dispatched
   const justLoaded = useRef(false);
 
-  // Listen to Firebase auth state and load game state from Firestore
+  // ── Load from structured DB tables on mount ─────────────────
   useEffect(() => {
-    const unsubscribe = onAuthStateChanged(auth, async (firebaseUser) => {
-      if (firebaseUser) {
-        try {
-          const snap = await getDoc(doc(db, 'gameStates', firebaseUser.uid));
-          if (snap.exists()) {
-            justLoaded.current = true;
-            const fullState = deserializeFromFirestore(snap.data());
-            dispatch({ type: 'INIT_GAME', payload: fullState });
-          } else {
-            // Check if this is a brand-new registration (< 30s) — if so, wait for
-            // Login.jsx to write the doc; don't sign out mid-registration.
-            const createdAt = new Date(firebaseUser.metadata.creationTime).getTime();
-            if (Date.now() - createdAt < 30000) {
-              // New account — Login.jsx will dispatch INIT_GAME after setDoc
-              dispatch({ type: 'INIT_GAME', payload: { ...initialState, initialized: true } });
-              return;
-            }
-            // Authenticated but no game data — sign out so user can re-register
-            await signOut(auth);
-            const note = { id: Date.now() + Math.random(), message: 'No account data found. Please register to create your club.', type: 'error', timestamp: Date.now() };
-            dispatch({ type: 'ADD_NOTIFICATION', payload: note });
-            setTimeout(() => dispatch({ type: 'CLEAR_NOTIFICATION', payload: note.id }), 6000);
-            dispatch({ type: 'INIT_GAME', payload: { ...initialState, initialized: true } });
-          }
-        } catch (err) {
-          console.error('Firestore load failed:', err.code, err.message);
-          dispatch({ type: 'INIT_GAME', payload: { ...initialState, initialized: true } });
-        }
-      } else {
-        dispatch({ type: 'INIT_GAME', payload: { ...initialState, initialized: true } });
-      }
-    });
-    return unsubscribe;
-  }, []);
-
-  // Save to Firestore whenever game state changes — skip the load-triggered save
-  useEffect(() => {
-    if (!state.initialized || !state.user) return;
-    const uid = auth.currentUser?.uid;
-    if (!uid) return;
-
-    // Skip the save immediately following a Firestore load (no changes were made)
-    if (justLoaded.current) {
-      justLoaded.current = false;
+    const token = getToken();
+    if (!token) {
+      dispatch({ type: 'INIT_GAME', payload: { ...initialState, initialized: true } });
       return;
     }
 
-    const toSave = serializeForFirestore(state);
+    Promise.all([
+      apiGetWorld(),        // { leagues } — teams + players + staff (shared, static)
+      apiGetMatches(),      // world_matches rows (shared, dynamic)
+      apiGetStandings(),    // world_standings rows (shared, dynamic)
+      apiGetUserState(),    // { state, user } (per-user)
+    ]).then(([world, dbMatches, dbStandings, userStateRes]) => {
+      if (!world || !userStateRes?.state) {
+        clearToken();
+        dispatch({ type: 'INIT_GAME', payload: { ...initialState, initialized: true } });
+        return;
+      }
 
-    setDoc(doc(db, 'gameStates', uid), toSave).catch((err) => {
-      console.error('Firestore save failed:', err.code, err.message);
+      const leagues = buildLeagues(world.leagues, dbMatches, dbStandings);
+      const userTeam = buildUserTeam(world.leagues, userStateRes.state);
+      const user = buildUserProfile(
+        { ...userStateRes.user, id: userStateRes.state.user_id },
+        userStateRes.state.profile_data || {}
+      );
+
+      if (!userTeam) {
+        clearToken();
+        dispatch({ type: 'INIT_GAME', payload: { ...initialState, initialized: true } });
+        return;
+      }
+
+      const updatedLeagues = leagues.map(l => ({
+        ...l,
+        teams: (l.teams || []).map(t => t.id === userTeam.id ? userTeam : t),
+      }));
+
+      justLoaded.current = true;
+      dispatch({
+        type: 'INIT_GAME',
+        payload: {
+          user,
+          userTeam,
+          leagues: updatedLeagues,
+          allTeams: updatedLeagues.flatMap(l => l.teams || []),
+          lastUpdated: Date.now(),
+        },
+      });
+    }).catch(() => {
+      clearToken();
+      dispatch({ type: 'INIT_GAME', payload: { ...initialState, initialized: true } });
     });
-  }, [state.user, state.userTeam, state.leagues, state.allTeams, state.lastUpdated]);
+  }, []);
+
+  // ── Auto-save per-user state on change ──────────────────────
+  useEffect(() => {
+    if (!state.initialized || !state.user || !state.userTeam) return;
+    if (!getToken()) return;
+    if (justLoaded.current) { justLoaded.current = false; return; }
+
+    const payload = extractUserState(state);
+    if (payload) apiSaveUserState(payload);
+  }, [state.user, state.userTeam, state.lastUpdated]);
 
   const addNotification = useCallback((msg, type = 'info') => {
     const note = { id: Date.now() + Math.random(), message: msg, type, timestamp: Date.now() };
@@ -212,9 +255,16 @@ export function GameProvider({ children }) {
     setTimeout(() => dispatch({ type: 'CLEAR_NOTIFICATION', payload: note.id }), 5000);
   }, []);
 
-  const value = { state, dispatch, addNotification };
+  const logout = useCallback(() => {
+    clearToken();
+    dispatch({ type: 'INIT_GAME', payload: { ...initialState, initialized: true } });
+  }, []);
 
-  return <GameContext.Provider value={value}>{children}</GameContext.Provider>;
+  return (
+    <GameContext.Provider value={{ state, dispatch, addNotification, logout }}>
+      {children}
+    </GameContext.Provider>
+  );
 }
 
 export function useGame() {

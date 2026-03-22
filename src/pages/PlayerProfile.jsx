@@ -142,6 +142,150 @@ function getPlayerStats(player) {
   };
 }
 
+// ── Radar Chart ────────────────────────────────────────────────
+
+const RADAR_AXES = [
+  {
+    key: 'offense',
+    label: 'Offense',
+    keys: ['finishingAtTheRim', 'midRangeScoring', 'postMoves', 'aggressivenessOffensive', 'offBallMovement'],
+    color: '#E8621A',
+  },
+  {
+    key: 'shooting',
+    label: 'Shooting',
+    keys: ['threePtShooting', 'freeThrowShooting', 'consistencyPerformance', 'midRangeScoring'],
+    color: '#3B82F6',
+  },
+  {
+    key: 'playmaking',
+    label: 'Playmaking',
+    keys: ['courtVision', 'passingAccuracy', 'ballHandlingDribbling', 'basketballIQ', 'patienceOffense'],
+    color: '#10B981',
+  },
+  {
+    key: 'defense',
+    label: 'Defense',
+    keys: ['perimeterDefense', 'interiorDefense', 'helpDefense', 'onBallScreenNavigation', 'disciplineFouling'],
+    color: '#EF4444',
+  },
+  {
+    key: 'physical',
+    label: 'Physical',
+    keys: ['verticalLeapingAbility', 'agilityLateralSpeed', 'staminaEndurance', 'conditioningFitness', 'rebounding', 'bodyControl'],
+    color: '#8B5CF6',
+  },
+  {
+    key: 'mental',
+    label: 'Mental',
+    keys: ['clutchPerformance', 'handlePressureMental', 'leadershipCommunication', 'teamFirstAttitude', 'workEthicOutOfGame'],
+    color: '#F59E0B',
+  },
+];
+
+function RadarChart({ attrs }) {
+  const SIZE = 240;
+  const CX = SIZE / 2;
+  const CY = SIZE / 2;
+  const R = 82;
+  const n = RADAR_AXES.length;
+
+  const values = RADAR_AXES.map(axis => {
+    const vals = axis.keys.map(k => attrs[k] ?? 50);
+    return vals.reduce((a, b) => a + b, 0) / vals.length;
+  });
+
+  const toXY = (index, value) => {
+    const angle = (Math.PI * 2 * index) / n - Math.PI / 2;
+    const rv = (value / 100) * R;
+    return { x: CX + rv * Math.cos(angle), y: CY + rv * Math.sin(angle) };
+  };
+
+  const axisEnd = (index) => {
+    const angle = (Math.PI * 2 * index) / n - Math.PI / 2;
+    return { x: CX + R * Math.cos(angle), y: CY + R * Math.sin(angle) };
+  };
+
+  const labelPos = (index) => {
+    const angle = (Math.PI * 2 * index) / n - Math.PI / 2;
+    const lr = R + 24;
+    return { x: CX + lr * Math.cos(angle), y: CY + lr * Math.sin(angle) };
+  };
+
+  const dataPoints = values.map((v, i) => toXY(i, v));
+  const polygon = dataPoints.map(p => `${p.x.toFixed(1)},${p.y.toFixed(1)}`).join(' ');
+  const rings = [25, 50, 75, 100];
+
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 'var(--space-3)' }}>
+      <svg width={SIZE} height={SIZE} viewBox={`0 0 ${SIZE} ${SIZE}`} style={{ overflow: 'visible' }}>
+        {/* Grid rings */}
+        {rings.map(ring => (
+          <polygon
+            key={ring}
+            points={Array.from({ length: n }, (_, i) => toXY(i, ring)).map(p => `${p.x.toFixed(1)},${p.y.toFixed(1)}`).join(' ')}
+            fill="none"
+            stroke={ring === 100 ? 'var(--border-color)' : 'var(--border-color)'}
+            strokeWidth={ring === 100 ? 1.5 : 0.6}
+            strokeDasharray={ring === 50 ? '3,3' : undefined}
+          />
+        ))}
+        {/* Axis spokes */}
+        {RADAR_AXES.map((_, i) => {
+          const end = axisEnd(i);
+          return <line key={i} x1={CX} y1={CY} x2={end.x.toFixed(1)} y2={end.y.toFixed(1)} stroke="var(--border-color)" strokeWidth={0.8} />;
+        })}
+        {/* Data fill */}
+        <polygon points={polygon} fill="rgba(232,98,26,0.18)" stroke="var(--color-primary)" strokeWidth={2} strokeLinejoin="round" />
+        {/* Data dots */}
+        {dataPoints.map((p, i) => (
+          <circle key={i} cx={p.x.toFixed(1)} cy={p.y.toFixed(1)} r={4} fill="var(--color-primary)" stroke="white" strokeWidth={1.5} />
+        ))}
+        {/* Labels */}
+        {RADAR_AXES.map((axis, i) => {
+          const pos = labelPos(i);
+          return (
+            <text
+              key={i}
+              x={pos.x.toFixed(1)}
+              y={pos.y.toFixed(1)}
+              textAnchor="middle"
+              dominantBaseline="middle"
+              fontSize="9"
+              fontWeight="700"
+              fill="var(--text-secondary)"
+              style={{ userSelect: 'none' }}
+            >
+              {axis.label}
+            </text>
+          );
+        })}
+        {/* Value labels on ring */}
+        {[25, 50, 75].map(ring => {
+          const p = toXY(2, ring); // along 3rd axis
+          return (
+            <text key={ring} x={(p.x + 4).toFixed(1)} y={p.y.toFixed(1)} fontSize="7" fill="var(--text-muted)" dominantBaseline="middle">
+              {ring}
+            </text>
+          );
+        })}
+      </svg>
+
+      {/* Legend */}
+      <div style={{ display: 'flex', flexWrap: 'wrap', gap: '6px 12px', justifyContent: 'center' }}>
+        {RADAR_AXES.map((axis, i) => (
+          <div key={axis.key} style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
+            <div style={{ width: 8, height: 8, borderRadius: '50%', background: axis.color, flexShrink: 0 }} />
+            <span style={{ fontSize: 'var(--font-size-xs)', color: 'var(--text-secondary)', fontWeight: 600 }}>
+              {axis.label}: <strong style={{ color: 'var(--text-primary)' }}>{values[i].toFixed(0)}</strong>
+            </span>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
 // ── Attribute row ──────────────────────────────────────────────
 
 function AttrRow({ attrKey, value }) {
@@ -444,6 +588,15 @@ export default function PlayerProfile() {
             </div>
           ))}
         </div>
+      </div>
+
+      {/* Radar Chart */}
+      <div className="card" style={{ marginBottom: 'var(--space-5)' }}>
+        <div className="card-header">
+          <span className="card-title">Ability Radar</span>
+          <span style={{ fontSize: 'var(--font-size-xs)', color: 'var(--text-muted)' }}>6 key categories</span>
+        </div>
+        <RadarChart attrs={attrs} />
       </div>
 
       {/* Attributes */}

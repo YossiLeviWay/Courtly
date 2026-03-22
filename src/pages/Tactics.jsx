@@ -1,6 +1,6 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { useGame } from '../context/GameContext.jsx';
-import { Users, Target, Shield, Zap, Settings, CheckCircle } from 'lucide-react';
+import { Users, Target, Shield, Zap, Settings, CheckCircle, X } from 'lucide-react';
 
 // ── Constants ─────────────────────────────────────────────────
 
@@ -68,9 +68,228 @@ const DEFAULT_TACTICS = {
   subStrategy: 'Flow Rotation',
   selectedPlayers: [],
   startingFive: [],
+  lineup: { PG: null, SG: null, SF: null, PF: null, C: null },
+  benchPlayers: [],
   timeoutTriggers: [],
   injuryManagement: 'Balanced — standard rotation, monitor closely',
 };
+
+const COURT_POSITIONS = [
+  { pos: 'PG', label: 'Point Guard',    x: 200, y: 92  },
+  { pos: 'SG', label: 'Shooting Guard', x: 60,  y: 186 },
+  { pos: 'SF', label: 'Small Forward',  x: 350, y: 226 },
+  { pos: 'PF', label: 'Power Forward',  x: 130, y: 298 },
+  { pos: 'C',  label: 'Center',         x: 272, y: 264 },
+];
+
+// ── Basketball Court SVG ─────────────────────────────────────
+
+function BasketballCourtSVG() {
+  return (
+    <>
+      {/* Wood floor strips */}
+      {Array.from({ length: 9 }, (_, i) => (
+        <rect key={i} x={i * 45} y={0} width={45} height={380}
+          fill={i % 2 === 0 ? '#D4956A' : '#C8865A'} />
+      ))}
+      {/* Key/paint */}
+      <rect x={145} y={210} width={110} height={145} fill="#B97A3D" fillOpacity={0.35} stroke="white" strokeWidth={2} />
+      {/* Free throw circle top half only */}
+      <path d="M 145 210 A 55 55 0 0 1 255 210" fill="none" stroke="white" strokeWidth={2} />
+      <path d="M 145 210 A 55 55 0 0 0 255 210" fill="none" stroke="white" strokeWidth={2} strokeDasharray="6 5" />
+      {/* Three-point line: corners + arc */}
+      <line x1={42} y1={355} x2={42} y2={268} stroke="white" strokeWidth={2.5} />
+      <line x1={358} y1={355} x2={358} y2={268} stroke="white" strokeWidth={2.5} />
+      <path d="M 42 268 A 176 176 0 1 0 358 268" fill="none" stroke="white" strokeWidth={2.5} />
+      {/* Restricted area arc */}
+      <path d="M 175 355 A 25 25 0 0 1 225 355" fill="none" stroke="white" strokeWidth={1.5} strokeDasharray="5 4" />
+      {/* Basket ring */}
+      <circle cx={200} cy={338} r={16} fill="#D07010" stroke="white" strokeWidth={2.5} />
+      <circle cx={200} cy={338} r={9} fill="none" stroke="white" strokeWidth={2} />
+      {/* Backboard */}
+      <rect x={168} y={356} width={64} height={7} rx={2} fill="#2D3748" />
+      {/* Hoop post */}
+      <rect x={197} y={363} width={6} height={12} rx={1} fill="#718096" />
+    </>
+  );
+}
+
+// ── Player Picker Popover ────────────────────────────────────
+
+function PlayerPicker({ position, players, lineup, onAssign, onClose, anchorPos }) {
+  const assignedIds = new Set(Object.values(lineup).filter(Boolean));
+  const available = players.filter(p => !assignedIds.has(p.id) || lineup[position] === p.id);
+
+  return (
+    <div
+      style={{
+        position: 'absolute',
+        left: Math.min(anchorPos.x, 260),
+        top: anchorPos.y + 30,
+        zIndex: 200,
+        background: 'var(--bg-card)',
+        border: '2px solid var(--color-primary)',
+        borderRadius: 'var(--radius-lg)',
+        padding: 'var(--space-3)',
+        minWidth: 220,
+        maxHeight: 280,
+        overflowY: 'auto',
+        boxShadow: '0 8px 32px rgba(0,0,0,0.22)',
+      }}
+    >
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 'var(--space-2)' }}>
+        <span style={{ fontWeight: 800, fontSize: 'var(--font-size-sm)', color: 'var(--color-primary)' }}>
+          Assign {position}
+        </span>
+        <button onClick={onClose} style={{ background: 'none', border: 'none', cursor: 'pointer', padding: 2 }}>
+          <X size={14} style={{ color: 'var(--text-muted)' }} />
+        </button>
+      </div>
+      {lineup[position] && (
+        <button
+          onClick={() => { onAssign(position, null); onClose(); }}
+          style={{
+            width: '100%', marginBottom: 'var(--space-2)', padding: '6px 10px',
+            borderRadius: 'var(--radius-md)', border: '1px solid var(--border-color)',
+            background: 'var(--bg-muted)', cursor: 'pointer', fontSize: 'var(--font-size-xs)',
+            color: 'var(--color-danger)', fontWeight: 700, textAlign: 'left',
+          }}
+        >
+          ✕ Remove player
+        </button>
+      )}
+      {available.length === 0 ? (
+        <div style={{ fontSize: 'var(--font-size-xs)', color: 'var(--text-muted)', padding: 'var(--space-2)' }}>No available players</div>
+      ) : (
+        available.map(p => {
+          const isSelected = lineup[position] === p.id;
+          const isInjured = p.injuryStatus && p.injuryStatus !== 'healthy';
+          return (
+            <button
+              key={p.id}
+              onClick={() => { onAssign(position, p.id); onClose(); }}
+              style={{
+                width: '100%', display: 'flex', alignItems: 'center', gap: 'var(--space-2)',
+                padding: '7px 10px', borderRadius: 'var(--radius-md)',
+                border: isSelected ? '2px solid var(--color-primary)' : '1px solid transparent',
+                background: isSelected ? 'var(--color-primary-100)' : 'transparent',
+                cursor: 'pointer', marginBottom: 3, textAlign: 'left',
+                opacity: isInjured ? 0.5 : 1,
+              }}
+            >
+              <div style={{
+                width: 28, height: 28, borderRadius: '50%', background: 'var(--color-primary)',
+                color: 'white', fontWeight: 800, fontSize: '0.65rem', display: 'flex',
+                alignItems: 'center', justifyContent: 'center', flexShrink: 0,
+              }}>
+                {p.name?.split(' ').map(n => n[0]).join('').slice(0, 2) || '?'}
+              </div>
+              <div style={{ flex: 1, minWidth: 0 }}>
+                <div style={{ fontWeight: 700, fontSize: 'var(--font-size-xs)', color: 'var(--text-primary)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                  {p.name}
+                </div>
+                <div style={{ fontSize: '0.65rem', color: 'var(--text-muted)' }}>
+                  {p.position} · OVR {p.overallRating}
+                  {isInjured && <span style={{ color: 'var(--color-danger)', marginLeft: 4 }}>⚠ Injured</span>}
+                </div>
+              </div>
+              {isSelected && <CheckCircle size={13} style={{ color: 'var(--color-primary)', flexShrink: 0 }} />}
+            </button>
+          );
+        })
+      )}
+    </div>
+  );
+}
+
+// ── Interactive Court Lineup ─────────────────────────────────
+
+function CourtLineup({ players, lineup, onLineupChange }) {
+  const [openPos, setOpenPos] = useState(null);
+  const [anchorPos, setAnchorPos] = useState({ x: 0, y: 0 });
+  const courtRef = useRef(null);
+
+  const handlePositionClick = (pos, svgX, svgY) => {
+    if (openPos === pos) { setOpenPos(null); return; }
+    const rect = courtRef.current?.getBoundingClientRect() || { left: 0, top: 0 };
+    const scaleX = (courtRef.current?.clientWidth || 400) / 400;
+    const scaleY = (courtRef.current?.clientHeight || 380) / 380;
+    setAnchorPos({ x: svgX * scaleX - 110, y: svgY * scaleY });
+    setOpenPos(pos);
+  };
+
+  return (
+    <div ref={courtRef} style={{ position: 'relative', userSelect: 'none' }}>
+      <svg
+        viewBox="0 0 400 380"
+        style={{ width: '100%', maxWidth: 480, display: 'block', margin: '0 auto', borderRadius: 'var(--radius-lg)', overflow: 'hidden' }}
+      >
+        <BasketballCourtSVG />
+
+        {COURT_POSITIONS.map(({ pos, label, x, y }) => {
+          const assignedId = lineup[pos];
+          const player = assignedId ? players.find(p => p.id === assignedId) : null;
+          const isOpen = openPos === pos;
+          const filled = !!player;
+
+          return (
+            <g key={pos} style={{ cursor: 'pointer' }} onClick={() => handlePositionClick(pos, x, y)}>
+              {/* Glow ring when open */}
+              {isOpen && (
+                <circle cx={x} cy={y} r={32} fill="rgba(232,98,26,0.18)" stroke="var(--color-primary)" strokeWidth={2.5} />
+              )}
+              {/* Player circle */}
+              <circle
+                cx={x} cy={y} r={24}
+                fill={filled ? '#E8621A' : 'rgba(255,255,255,0.92)'}
+                stroke={filled ? 'white' : '#E8621A'}
+                strokeWidth={2.5}
+              />
+              {/* Initials or + */}
+              {player ? (
+                <text x={x} y={y - 2} textAnchor="middle" dominantBaseline="middle"
+                  fontSize="9" fontWeight="900" fill="white" style={{ pointerEvents: 'none' }}>
+                  {player.name?.split(' ').map(n => n[0]).join('').slice(0, 2) || '?'}
+                </text>
+              ) : (
+                <text x={x} y={y} textAnchor="middle" dominantBaseline="middle"
+                  fontSize="18" fontWeight="700" fill="#E8621A" style={{ pointerEvents: 'none' }}>
+                  +
+                </text>
+              )}
+              {/* OVR badge */}
+              {player && (
+                <text x={x} y={y + 11} textAnchor="middle" dominantBaseline="middle"
+                  fontSize="7.5" fontWeight="700" fill="rgba(255,255,255,0.85)" style={{ pointerEvents: 'none' }}>
+                  {player.overallRating}
+                </text>
+              )}
+              {/* Position label below circle */}
+              <rect x={x - 22} y={y + 28} width={44} height={14} rx={5}
+                fill={filled ? 'rgba(232,98,26,0.85)' : 'rgba(255,255,255,0.85)'} />
+              <text x={x} y={y + 35} textAnchor="middle" dominantBaseline="middle"
+                fontSize="8" fontWeight="800" fill={filled ? 'white' : '#E8621A'} style={{ pointerEvents: 'none' }}>
+                {pos}
+              </text>
+            </g>
+          );
+        })}
+      </svg>
+
+      {/* Player picker popover */}
+      {openPos && (
+        <PlayerPicker
+          position={openPos}
+          players={players}
+          lineup={lineup}
+          onAssign={onLineupChange}
+          onClose={() => setOpenPos(null)}
+          anchorPos={anchorPos}
+        />
+      )}
+    </div>
+  );
+}
 
 // ── Helpers ───────────────────────────────────────────────────
 
@@ -173,6 +392,8 @@ export default function Tactics() {
     ...savedTactics,
     selectedPlayers: savedTactics.selectedPlayers ?? [],
     startingFive: savedTactics.startingFive ?? [],
+    lineup: savedTactics.lineup ?? { PG: null, SG: null, SF: null, PF: null, C: null },
+    benchPlayers: savedTactics.benchPlayers ?? [],
     timeoutTriggers: savedTactics.timeoutTriggers ?? [],
   });
   const [saved, setSaved] = useState(false);
@@ -198,6 +419,33 @@ export default function Tactics() {
   }
 
   // ── Handlers ────────────────────────────────────────────────
+
+  const handleLineupChange = (pos, playerId) => {
+    setTactics(prev => {
+      const newLineup = { ...prev.lineup, [pos]: playerId };
+      // Derive startingFive and selectedPlayers from lineup + bench
+      const starters = Object.values(newLineup).filter(Boolean);
+      const selectedPlayers = [...new Set([...starters, ...prev.benchPlayers])];
+      return { ...prev, lineup: newLineup, startingFive: starters, selectedPlayers };
+    });
+  };
+
+  const toggleBench = (playerId) => {
+    setTactics(prev => {
+      const starters = Object.values(prev.lineup).filter(Boolean);
+      if (starters.includes(playerId)) return prev; // can't bench a starter directly
+      const inBench = prev.benchPlayers.includes(playerId);
+      let benchPlayers;
+      if (inBench) {
+        benchPlayers = prev.benchPlayers.filter(id => id !== playerId);
+      } else {
+        if (prev.benchPlayers.length >= 7) return prev;
+        benchPlayers = [...prev.benchPlayers, playerId];
+      }
+      const selectedPlayers = [...new Set([...starters, ...benchPlayers])];
+      return { ...prev, benchPlayers, selectedPlayers };
+    });
+  };
 
   const toggleSelected = (playerId) => {
     setTactics(prev => {
@@ -267,117 +515,74 @@ export default function Tactics() {
         </div>
       </div>
 
-      {/* ── 1. Match Roster & Depth Chart ──────────────────────── */}
+      {/* ── 1. Starting Lineup (Interactive Court) ─────────────── */}
       <div className="card mb-6">
         <SectionHeader
           icon={<Users size={18} />}
-          title="Match Roster & Depth Chart"
-          subtitle={`Select up to 12 players for the match, then designate your Starting 5`}
+          title="Starting Lineup"
+          subtitle="Click a position on the court to assign a player"
         />
 
         <div style={{ display: 'flex', gap: 'var(--space-3)', marginBottom: 'var(--space-4)', flexWrap: 'wrap' }}>
           <span className="badge badge-orange">
-            {tactics.selectedPlayers.length}/12 Selected
+            {Object.values(tactics.lineup).filter(Boolean).length}/5 Starters set
           </span>
           <span className="badge badge-blue">
-            {tactics.startingFive.length}/5 Starters
+            {tactics.benchPlayers.length}/7 Bench players
           </span>
-          {tactics.selectedPlayers.length < 5 && (
-            <span className="badge badge-red">Need at least 5 players selected</span>
+          {Object.values(tactics.lineup).filter(Boolean).length < 5 && (
+            <span className="badge badge-red">Starting 5 incomplete</span>
           )}
         </div>
 
-        <div className="table-container">
-          <table>
-            <thead>
-              <tr>
-                <th>In Match</th>
-                <th>Starter</th>
-                <th>Name</th>
-                <th>Pos</th>
-                <th>Overall</th>
-                <th>Status</th>
-              </tr>
-            </thead>
-            <tbody>
-              {players.length === 0 ? (
-                <tr>
-                  <td colSpan={6} style={{ textAlign: 'center', color: 'var(--text-muted)', padding: 'var(--space-6)' }}>
-                    No players on roster
-                  </td>
-                </tr>
-              ) : (
-                players.map(player => {
-                  const isSelected = tactics.selectedPlayers.includes(player.id);
-                  const isStarter = tactics.startingFive.includes(player.id);
-                  const isInjured = player.injuryStatus && player.injuryStatus !== 'healthy';
-                  return (
-                    <tr
-                      key={player.id}
-                      style={{
-                        opacity: isInjured ? 0.6 : 1,
-                        background: isStarter
-                          ? 'rgba(232, 98, 26, 0.06)'
-                          : isSelected
-                          ? 'var(--bg-muted)'
-                          : undefined,
-                      }}
-                    >
-                      <td>
-                        <input
-                          type="checkbox"
-                          checked={isSelected}
-                          onChange={() => toggleSelected(player.id)}
-                          disabled={isInjured && !isSelected}
-                          style={{ accentColor: 'var(--color-primary)', width: 16, height: 16, cursor: 'pointer' }}
-                        />
-                      </td>
-                      <td>
-                        <input
-                          type="checkbox"
-                          checked={isStarter}
-                          onChange={() => toggleStarting(player.id)}
-                          disabled={!isSelected}
-                          title={!isSelected ? 'Select player for match first' : isStarter ? 'Remove from starting 5' : tactics.startingFive.length >= 5 ? 'Starting 5 full' : 'Add to starting 5'}
-                          style={{ accentColor: 'var(--color-primary-dark)', width: 16, height: 16, cursor: isSelected ? 'pointer' : 'not-allowed' }}
-                        />
-                      </td>
-                      <td>
-                        <div style={{ display: 'flex', alignItems: 'center', gap: 'var(--space-2)' }}>
-                          <div
-                            className="avatar avatar-sm"
-                            style={{ fontSize: 'var(--font-size-xs)', fontWeight: 800 }}
-                          >
-                            {player.name?.split(' ').map(n => n[0]).join('').slice(0, 2) || '?'}
-                          </div>
-                          <span style={{ fontWeight: 600 }}>{player.name}</span>
-                          {isStarter && (
-                            <span className="badge badge-orange" style={{ fontSize: '0.65rem' }}>Starter</span>
-                          )}
-                        </div>
-                      </td>
-                      <td>
-                        <span className="player-position-badge">{player.position}</span>
-                      </td>
-                      <td style={{ fontWeight: 700, color: 'var(--color-primary)' }}>
-                        {player.overallRating ?? '–'}
-                      </td>
-                      <td>
-                        <div style={{ display: 'flex', alignItems: 'center', flexWrap: 'wrap' }}>
-                          {isInjured ? (
-                            getInjuryBadge(player)
-                          ) : (
-                            <span className="badge badge-green">Healthy</span>
-                          )}
-                          {getFatigueBadge(player)}
-                        </div>
-                      </td>
-                    </tr>
-                  );
-                })
-              )}
-            </tbody>
-          </table>
+        {/* Court */}
+        <CourtLineup
+          players={players}
+          lineup={tactics.lineup}
+          onLineupChange={handleLineupChange}
+        />
+
+        {/* Bench selection */}
+        <div style={{ marginTop: 'var(--space-5)' }}>
+          <div style={{ fontWeight: 700, fontSize: 'var(--font-size-sm)', marginBottom: 'var(--space-3)', color: 'var(--text-secondary)', display: 'flex', alignItems: 'center', gap: 'var(--space-2)' }}>
+            <span>Bench Players</span>
+            <span className="badge badge-gray">{tactics.benchPlayers.length}/7</span>
+          </div>
+          <div style={{ display: 'flex', flexWrap: 'wrap', gap: 'var(--space-2)' }}>
+            {players.map(player => {
+              const isStarter = Object.values(tactics.lineup).includes(player.id);
+              const isBench = tactics.benchPlayers.includes(player.id);
+              const isInjured = player.injuryStatus && player.injuryStatus !== 'healthy';
+              if (isStarter) return null;
+              return (
+                <button
+                  key={player.id}
+                  onClick={() => toggleBench(player.id)}
+                  disabled={isInjured && !isBench}
+                  style={{
+                    display: 'flex', alignItems: 'center', gap: 'var(--space-2)',
+                    padding: '6px 10px', borderRadius: 'var(--radius-md)',
+                    border: isBench ? '2px solid var(--color-primary)' : '1px solid var(--border-color)',
+                    background: isBench ? 'var(--color-primary-100)' : 'var(--bg-muted)',
+                    cursor: (isInjured && !isBench) ? 'not-allowed' : 'pointer',
+                    opacity: isInjured ? 0.55 : 1,
+                    transition: 'all 0.15s',
+                  }}
+                >
+                  <span style={{ fontWeight: 700, fontSize: 'var(--font-size-xs)', color: isBench ? 'var(--color-primary)' : 'var(--text-primary)' }}>
+                    {player.name}
+                  </span>
+                  <span style={{ fontSize: '0.65rem', color: 'var(--text-muted)' }}>
+                    {player.position} · {player.overallRating}
+                  </span>
+                  {isInjured && <span style={{ fontSize: '0.65rem', color: 'var(--color-danger)' }}>⚠</span>}
+                </button>
+              );
+            })}
+            {players.filter(p => !Object.values(tactics.lineup).includes(p.id)).length === 0 && (
+              <span style={{ fontSize: 'var(--font-size-xs)', color: 'var(--text-muted)' }}>All players assigned as starters</span>
+            )}
+          </div>
         </div>
       </div>
 
