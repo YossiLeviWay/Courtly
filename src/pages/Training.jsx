@@ -8,7 +8,39 @@ import {
   CheckCircle,
   AlertTriangle,
   Info,
+  Save,
 } from 'lucide-react';
+
+// ── Floating player hover card ─────────────────────────────────
+function PlayerHoverCard({ player, x, y }) {
+  if (!player) return null;
+  return (
+    <div style={{
+      position: 'fixed', left: x + 16, top: y - 40, zIndex: 9999,
+      background: 'var(--bg-card)', border: '1px solid var(--border-color)',
+      borderRadius: 'var(--radius-lg)', padding: '10px 14px',
+      boxShadow: '0 8px 24px rgba(0,0,0,0.18)', minWidth: 180, pointerEvents: 'none',
+    }}>
+      <div style={{ fontWeight: 700, fontSize: 'var(--font-size-sm)', marginBottom: 4 }}>{player.name}</div>
+      <div style={{ fontSize: 'var(--font-size-xs)', color: 'var(--text-muted)', marginBottom: 6 }}>
+        {player.position} · OVR {player.overallRating ?? player.overall ?? '?'}
+      </div>
+      <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
+        <span style={{ fontSize: 11, padding: '2px 7px', borderRadius: 20, background: (player.fatigue ?? 0) > 70 ? 'rgba(239,68,68,0.1)' : 'var(--bg-muted)', color: (player.fatigue ?? 0) > 70 ? '#ef4444' : 'var(--text-muted)' }}>
+          Fatigue {player.fatigue ?? 0}%
+        </span>
+        <span style={{ fontSize: 11, padding: '2px 7px', borderRadius: 20, background: 'var(--bg-muted)', color: 'var(--text-muted)' }}>
+          Form {player.lastFormRating ?? 50}
+        </span>
+        {player.injuryStatus && player.injuryStatus !== 'healthy' && (
+          <span style={{ fontSize: 11, padding: '2px 7px', borderRadius: 20, background: 'rgba(239,68,68,0.1)', color: '#ef4444' }}>
+            {player.injuryStatus}
+          </span>
+        )}
+      </div>
+    </div>
+  );
+}
 
 // ── Training area definitions ─────────────────────────────────
 
@@ -58,6 +90,15 @@ const TRAINING_AREAS = [
     staffInfluenceLabel: 'Psychologist',
     staffAbilityKey: 'motivation',
   },
+  {
+    id: 'gymStrength',
+    label: 'GYM / Strength Training',
+    icon: '💪',
+    impactsLabel: 'Vertical/Leaping Ability, Body Control, Agility/Lateral Speed',
+    staffInfluenceRole: 'Strength & Conditioning Coach',
+    staffInfluenceLabel: 'S&C Coach',
+    staffAbilityKey: 'strengthTraining',
+  },
 ];
 
 const MAX_POINTS = 100;
@@ -67,8 +108,9 @@ const DEFAULT_TRAINING = {
   offensiveSchemes: 20,
   defensiveDrills: 20,
   skillWorkShooting: 20,
-  conditioning: 20,
-  teamBuilding: 20,
+  conditioning: 15,
+  teamBuilding: 10,
+  gymStrength: 15,
 };
 
 // ── Chemistry factors ─────────────────────────────────────────
@@ -326,8 +368,10 @@ export default function Training() {
 
   // ── Render ─────────────────────────────────────────────────
 
+  const usedPoints = totalPoints(training);
+
   return (
-    <div className="page-content animate-fade-in">
+    <div className="page-content animate-fade-in" style={{ paddingBottom: 80 }}>
       {/* Page header */}
       <div className="page-header">
         <div
@@ -908,32 +952,39 @@ export default function Training() {
         </div>
       </div>
 
-      {/* Save row */}
+      {/* Sticky save bar */}
       <div
         style={{
-          display: 'flex',
-          justifyContent: 'flex-end',
-          gap: 'var(--space-3)',
-          marginTop: 'var(--space-4)',
+          position: 'fixed', bottom: 0, left: 0, right: 0, zIndex: 100,
+          background: 'var(--bg-card)', borderTop: '1px solid var(--border-color)',
+          padding: '12px 24px', display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+          boxShadow: '0 -4px 12px rgba(0,0,0,0.08)',
         }}
       >
-        <button
-          className="btn btn-ghost"
-          onClick={() => {
-            setTraining({ ...DEFAULT_TRAINING, ...userTeam?.training });
-            setFocusPlayers(userTeam?.training?.focusPlayers ?? []);
-          }}
-        >
-          Reset Changes
-        </button>
-        <button
-          className="btn btn-primary btn-lg"
-          onClick={handleSave}
-          disabled={isOver}
-        >
-          <CheckCircle size={18} />
-          Save Training
-        </button>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+          <span style={{ fontSize: 'var(--font-size-sm)', color: isOver ? 'var(--color-danger)' : 'var(--text-muted)', fontWeight: isOver ? 700 : 400 }}>
+            {usedPoints}/100 points allocated
+          </span>
+          {isOver && <span style={{ fontSize: 'var(--font-size-xs)', color: 'var(--color-danger)' }}>Over by {usedPoints - 100} — adjust sliders</span>}
+        </div>
+        <div style={{ display: 'flex', gap: 'var(--space-3)' }}>
+          <button
+            className="btn btn-ghost"
+            onClick={() => {
+              setTraining({ ...DEFAULT_TRAINING, ...userTeam?.training });
+              setFocusPlayers(userTeam?.training?.focusPlayers ?? []);
+            }}
+          >
+            Reset
+          </button>
+          <button
+            className={`btn btn-lg ${saved ? 'btn-success' : 'btn-primary'}`}
+            onClick={handleSave}
+            disabled={isOver || saved}
+          >
+            {saved ? <><CheckCircle size={16} /> Saved!</> : <><Save size={16} /> Save Training Plan</>}
+          </button>
+        </div>
       </div>
 
       {/* Inline success notification */}

@@ -19,6 +19,7 @@ import Profile from './pages/Profile.jsx';
 import LiveMatch from './pages/LiveMatch.jsx';
 import FinancialReport from './pages/FinancialReport.jsx';
 import SearchPage from './pages/Search.jsx';
+import YouthAcademy from './pages/YouthAcademy.jsx';
 
 function ProtectedRoute({ children }) {
   const { state } = useGame();
@@ -70,6 +71,7 @@ export default function App() {
           <Route path="match/live" element={<LiveMatch />} />
           <Route path="finances" element={<FinancialReport />} />
           <Route path="search" element={<SearchPage />} />
+          <Route path="youth-academy" element={<ProtectedRoute><YouthAcademy /></ProtectedRoute>} />
         </Route>
         <Route path="*" element={<Navigate to="/" replace />} />
       </Routes>

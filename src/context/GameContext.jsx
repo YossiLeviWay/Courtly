@@ -45,15 +45,28 @@ function buildLeagues(worldLeagues, dbMatches, dbStandings) {
   });
 }
 
-function buildUserTeam(worldLeagues, userState) {
-  const allWorldTeams = worldLeagues.flatMap(l => l.teams || []);
-  const baseTeam = allWorldTeams.find(t => t.id === userState.team_id);
+function buildUserTeam(leagues, userState) {
+  // leagues is the already-built array (with DB names applied)
+  const allTeams = leagues.flatMap(l => l.teams || []);
+  const baseTeam = allTeams.find(t => t.id === userState.team_id);
   if (!baseTeam) return null;
 
   const profileData = userState.profile_data || {};
   const evolvedPlayers = Array.isArray(userState.players_state) && userState.players_state.length > 0
     ? userState.players_state
     : (baseTeam.players || []);
+
+  // Attach user's fixture schedule so Dashboard/Calendar can show upcoming matches
+  const userLeague = leagues.find(l => l.teams?.some(t => t.id === userState.team_id));
+  const seasonMatches = (userLeague?.schedule || [])
+    .filter(m => m.homeTeamId === userState.team_id || m.awayTeamId === userState.team_id)
+    .map(m => ({
+      ...m,
+      date: m.scheduledDate,                // Dashboard uses m.date
+      isHome: m.homeTeamId === userState.team_id,
+      opponentName: m.homeTeamId === userState.team_id ? m.awayTeamName : m.homeTeamName,
+      opponentId: m.homeTeamId === userState.team_id ? m.awayTeamId : m.homeTeamId,
+    }));
 
   return {
     ...baseTeam,
@@ -62,9 +75,11 @@ function buildUserTeam(worldLeagues, userState) {
     stadiumName: profileData.stadiumName?.trim() || baseTeam.stadiumName,
     isUserTeam: true,
     players: evolvedPlayers,
+    seasonMatches,
     budget: userState.budget ?? 250,
     facilities: userState.facilities ?? {},
     tactics: userState.tactics ?? {},
+    training: profileData.training ?? {},
     fanCount: userState.fan_count ?? 250,
     fanEnthusiasm: userState.fan_enthusiasm ?? 20,
     ticketPrice: userState.ticket_price ?? 20,
@@ -120,6 +135,7 @@ function extractUserState(state) {
       records: state.user?.records || { wins: 0, losses: 0, honors: [] },
       teamName: state.userTeam?.name || '',
       stadiumName: state.userTeam?.stadiumName || '',
+      training: state.userTeam?.training ?? {},
     },
   };
 }
@@ -232,7 +248,7 @@ export function GameProvider({ children }) {
       }
 
       const leagues = buildLeagues(world.leagues, dbMatches, dbStandings);
-      const userTeam = buildUserTeam(world.leagues, userStateRes.state);
+      const userTeam = buildUserTeam(leagues, userStateRes.state);
       const user = buildUserProfile(
         { ...userStateRes.user, id: userStateRes.state.user_id },
         userStateRes.state.profile_data || {}

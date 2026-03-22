@@ -91,7 +91,7 @@ const POSITION_COLORS = {
 
 // ── Player card ────────────────────────────────────────────────
 
-function PlayerCard({ player, onClick }) {
+function PlayerCard({ player, onClick, releaseConfirm, onReleaseConfirm, onReleaseClear, onReleasePlayer }) {
   const fatiguePct = Math.min(100, Math.max(0, player.fatigue || 0));
   const fatigueColor = fatiguePct > 70 ? 'var(--color-danger)' : fatiguePct > 40 ? 'var(--color-warning)' : 'var(--color-success)';
   const injuryStatus = player.injuryStatus || 'healthy';
@@ -152,6 +152,28 @@ function PlayerCard({ player, onClick }) {
           {injuryStatus}
         </span>
       </div>
+
+      {/* Release */}
+      {releaseConfirm === player.id ? (
+        <div style={{ marginTop: 8, padding: '8px', background: 'rgba(239,68,68,0.08)', borderRadius: 'var(--radius-sm)' }}>
+          <p style={{ fontSize: 'var(--font-size-xs)', color: 'var(--color-danger)', marginBottom: 4 }}>Release {player.name}?</p>
+          <div style={{ display: 'flex', gap: 4 }}>
+            <button className="btn btn-sm" style={{ fontSize: 11, padding: '2px 8px', background: 'var(--color-danger)', color: 'white', border: 'none', borderRadius: 4, cursor: 'pointer' }}
+              onClick={(e) => { e.stopPropagation(); onReleasePlayer(player); }}>
+              Confirm
+            </button>
+            <button className="btn btn-sm btn-ghost" style={{ fontSize: 11, padding: '2px 8px' }}
+              onClick={(e) => { e.stopPropagation(); onReleaseClear(); }}>
+              Cancel
+            </button>
+          </div>
+        </div>
+      ) : (
+        <button className="btn btn-ghost btn-sm" style={{ marginTop: 6, fontSize: 11, color: 'var(--color-danger)', opacity: 0.7, width: '100%' }}
+          onClick={(e) => { e.stopPropagation(); onReleaseConfirm(player.id); }}>
+          Release
+        </button>
+      )}
     </div>
   );
 }
@@ -249,12 +271,13 @@ function CaptainDisplay({ players, onSetCaptain, onSetViceCaptain }) {
 // ── Main Squad page ────────────────────────────────────────────
 
 export default function Squad() {
-  const { state, dispatch } = useGame();
+  const { state, dispatch, addNotification } = useGame();
   const navigate = useNavigate();
   const { userTeam } = state;
 
   const [filterPosition, setFilterPosition] = useState('ALL');
   const [sortBy, setSortBy] = useState('rating');
+  const [releaseConfirm, setReleaseConfirm] = useState(null); // playerId
 
   if (!userTeam) {
     return (
@@ -297,6 +320,13 @@ export default function Squad() {
       isCaptain: p.isCaptain && p.id !== player.id,
     }));
     dispatch({ type: 'UPDATE_TEAM', payload: { ...userTeam, players: updated } });
+  }
+
+  function handleReleasePlayer(player) {
+    const updatedPlayers = (userTeam.players || []).filter(p => p.id !== player.id);
+    dispatch({ type: 'UPDATE_TEAM', payload: { ...userTeam, players: updatedPlayers } });
+    addNotification(`${player.name} has been released from the squad.`, 'info');
+    setReleaseConfirm(null);
   }
 
   return (
@@ -389,6 +419,10 @@ export default function Squad() {
               key={player.id}
               player={player}
               onClick={() => navigate(`/squad/${player.id}`)}
+              releaseConfirm={releaseConfirm}
+              onReleaseConfirm={(id) => setReleaseConfirm(id)}
+              onReleaseClear={() => setReleaseConfirm(null)}
+              onReleasePlayer={handleReleasePlayer}
             />
           ))}
         </div>

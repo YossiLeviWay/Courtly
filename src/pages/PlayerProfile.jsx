@@ -1,3 +1,4 @@
+import { useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import { useGame } from '../context/GameContext.jsx';
 import AttrBar from '../components/ui/AttrBar.jsx';
@@ -83,45 +84,33 @@ const ATTR_LABELS = {
   bodyControl: 'Body Control',
 };
 
-// ── Attribute columns ──────────────────────────────────────────
+// ── Attribute categories ───────────────────────────────────────
 
-const ATTR_COLUMNS = [
-  [
-    'courtVision',
-    'perimeterDefense',
-    'interiorDefense',
-    'offBallMovement',
-    'rebounding',
-    'freeThrowShooting',
-    'clutchPerformance',
-    'staminaEndurance',
-    'leadershipCommunication',
-    'postMoves',
-  ],
-  [
-    'threePtShooting',
-    'midRangeScoring',
-    'ballHandlingDribbling',
-    'passingAccuracy',
-    'basketballIQ',
-    'aggressivenessOffensive',
-    'helpDefense',
-    'onBallScreenNavigation',
-    'conditioningFitness',
-    'patienceOffense',
-  ],
-  [
-    'disciplineFouling',
-    'handlePressureMental',
-    'verticalLeapingAbility',
-    'agilityLateralSpeed',
-    'settingScreens',
-    'finishingAtTheRim',
-    'consistencyPerformance',
-    'workEthicOutOfGame',
-    'teamFirstAttitude',
-    'bodyControl',
-  ],
+const ATTR_CATEGORIES = [
+  {
+    label: 'Offense', icon: '⚔️', color: '#E8621A',
+    keys: ['finishingAtTheRim', 'aggressivenessOffensive', 'postMoves', 'offBallMovement', 'settingScreens'],
+  },
+  {
+    label: 'Shooting', icon: '🎯', color: '#1565C0',
+    keys: ['threePtShooting', 'midRangeScoring', 'freeThrowShooting', 'clutchPerformance'],
+  },
+  {
+    label: 'Playmaking', icon: '🧠', color: '#7B1FA2',
+    keys: ['courtVision', 'passingAccuracy', 'ballHandlingDribbling', 'basketballIQ', 'patienceOffense'],
+  },
+  {
+    label: 'Defense', icon: '🛡️', color: '#2E7D32',
+    keys: ['perimeterDefense', 'interiorDefense', 'helpDefense', 'onBallScreenNavigation', 'rebounding'],
+  },
+  {
+    label: 'Physical', icon: '💪', color: '#F57C00',
+    keys: ['staminaEndurance', 'conditioningFitness', 'verticalLeapingAbility', 'agilityLateralSpeed', 'bodyControl'],
+  },
+  {
+    label: 'Mental', icon: '🔮', color: '#00838F',
+    keys: ['leadershipCommunication', 'handlePressureMental', 'disciplineFouling', 'consistencyPerformance', 'workEthicOutOfGame', 'teamFirstAttitude'],
+  },
 ];
 
 // ── Per-game stats helper ──────────────────────────────────────
@@ -286,20 +275,6 @@ function RadarChart({ attrs }) {
   );
 }
 
-// ── Attribute row ──────────────────────────────────────────────
-
-function AttrRow({ attrKey, value }) {
-  const label = ATTR_LABELS[attrKey] || attrKey;
-  return (
-    <div style={{ marginBottom: 'var(--space-2)' }}>
-      <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 3 }}>
-        <span style={{ fontSize: 'var(--font-size-xs)', color: 'var(--text-secondary)', fontWeight: 500 }}>{label}</span>
-      </div>
-      <AttrBar value={value ?? 0} />
-    </div>
-  );
-}
-
 // ── Position badge colors ──────────────────────────────────────
 
 const POSITION_COLORS = {
@@ -318,6 +293,87 @@ function injuryBadgeClass(status) {
   return 'badge-red';
 }
 
+// ── Contract Negotiation Panel ─────────────────────────────────
+
+function ContractNegotiationPanel({ player, onClose, dispatch }) {
+  const demand = Math.round((player.salary * 1.15 + (player.overallRating ?? 60) * 2) / 5) * 5;
+  const [offer, setOffer] = useState(player.salary ?? demand);
+  const [seasons, setSeasons] = useState(2);
+  const [signOnBonus, setSignOnBonus] = useState(0);
+  const [result, setResult] = useState(null);
+
+  const handleNegotiate = () => {
+    if (offer >= demand * 0.9) {
+      dispatch({ type: 'UPDATE_PLAYER', payload: { ...player, salary: offer, contractYears: seasons } });
+      setResult('accepted');
+    } else {
+      setResult('declined');
+    }
+  };
+
+  if (result === 'accepted') return (
+    <div style={{ textAlign: 'center', padding: 24 }}>
+      <div style={{ fontSize: '3rem', marginBottom: 12 }}>🎉</div>
+      <div style={{ fontWeight: 700, fontSize: 'var(--font-size-lg)', color: 'var(--color-success)', marginBottom: 8 }}>
+        Contract Signed!
+      </div>
+      <div style={{ color: 'var(--text-muted)', fontSize: 'var(--font-size-sm)', marginBottom: 16 }}>
+        {player.name} agreed to ${offer}k/year for {seasons} season{seasons > 1 ? 's' : ''}.
+        {signOnBonus > 0 && ` Sign-on bonus: $${signOnBonus}k.`}
+      </div>
+      <button className="btn btn-primary" onClick={onClose}>Close</button>
+    </div>
+  );
+
+  if (result === 'declined') return (
+    <div style={{ textAlign: 'center', padding: 24 }}>
+      <div style={{ fontSize: '3rem', marginBottom: 12 }}>❌</div>
+      <div style={{ fontWeight: 700, fontSize: 'var(--font-size-lg)', color: 'var(--color-danger)', marginBottom: 8 }}>
+        Player Declined
+      </div>
+      <div style={{ color: 'var(--text-muted)', fontSize: 'var(--font-size-sm)', marginBottom: 16 }}>
+        {player.name} is demanding at least ${Math.round(demand * 0.9)}k/year. Consider raising your offer.
+      </div>
+      <div style={{ display: 'flex', gap: 8, justifyContent: 'center' }}>
+        <button className="btn btn-ghost" onClick={() => setResult(null)}>Try Again</button>
+        <button className="btn btn-sm" onClick={onClose}>Cancel</button>
+      </div>
+    </div>
+  );
+
+  return (
+    <div>
+      <div className="card mb-4" style={{ background: 'var(--bg-muted)', padding: 12 }}>
+        <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 'var(--font-size-sm)', marginBottom: 4 }}>
+          <span style={{ color: 'var(--text-muted)' }}>Current salary</span>
+          <span style={{ fontWeight: 700 }}>${player.salary ?? 0}k/year</span>
+        </div>
+        <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 'var(--font-size-sm)' }}>
+          <span style={{ color: 'var(--text-muted)' }}>Player demand</span>
+          <span style={{ fontWeight: 700, color: 'var(--color-warning)' }}>${demand}k/year</span>
+        </div>
+      </div>
+      <div className="form-group">
+        <label className="form-label">Your Offer (k/year)</label>
+        <input className="form-input" type="number" min={0} max={9999} value={offer}
+          onChange={e => setOffer(Number(e.target.value))} />
+      </div>
+      <div className="form-group">
+        <label className="form-label">Contract Length</label>
+        <select className="form-select" value={seasons} onChange={e => setSeasons(Number(e.target.value))}>
+          {[1, 2, 3, 4, 5].map(n => <option key={n} value={n}>{n} season{n > 1 ? 's' : ''}</option>)}
+        </select>
+      </div>
+      <div className="form-group">
+        <label className="form-label">Sign-on Bonus (k, optional)</label>
+        <input className="form-input" type="number" min={0} max={999} value={signOnBonus}
+          onChange={e => setSignOnBonus(Number(e.target.value))} />
+      </div>
+      <button className="btn btn-primary w-full" onClick={handleNegotiate}>Submit Offer</button>
+    </div>
+  );
+}
+
 // ── Main PlayerProfile page ────────────────────────────────────
 
 export default function PlayerProfile() {
@@ -325,6 +381,8 @@ export default function PlayerProfile() {
   const navigate = useNavigate();
   const { state, dispatch } = useGame();
   const { userTeam } = state;
+
+  const [showContractModal, setShowContractModal] = useState(false);
 
   if (!userTeam) {
     return (
@@ -601,15 +659,16 @@ export default function PlayerProfile() {
 
       {/* Attributes */}
       <div className="card" style={{ marginBottom: 'var(--space-5)' }}>
-        <div className="card-header">
-          <span className="card-title">Attributes</span>
-          <span style={{ fontSize: 'var(--font-size-xs)', color: 'var(--text-muted)' }}>30 attributes across all areas</span>
-        </div>
-        <div className="grid-3">
-          {ATTR_COLUMNS.map((col, colIdx) => (
-            <div key={colIdx}>
-              {col.map(key => (
-                <AttrRow key={key} attrKey={key} value={attrs[key]} />
+        <div className="card-header"><span className="card-title">Attributes</span></div>
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 'var(--space-4)' }}>
+          {ATTR_CATEGORIES.map(cat => (
+            <div key={cat.label}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 8, borderBottom: `2px solid ${cat.color}`, paddingBottom: 4 }}>
+                <span>{cat.icon}</span>
+                <span style={{ fontWeight: 700, fontSize: 'var(--font-size-sm)', color: cat.color }}>{cat.label}</span>
+              </div>
+              {cat.keys.map(key => (
+                <AttrBar key={key} label={ATTR_LABELS[key] || key} value={attrs[key] ?? 50} />
               ))}
             </div>
           ))}
@@ -620,18 +679,21 @@ export default function PlayerProfile() {
       <div className="card" style={{ marginBottom: 'var(--space-5)' }}>
         <div className="card-header">
           <span className="card-title">Contract</span>
+          <button className="btn btn-sm btn-ghost" onClick={() => setShowContractModal(true)}>
+            Negotiate
+          </button>
         </div>
-        <div className="grid-2">
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: 'var(--space-3)', marginBottom: 'var(--space-3)' }}>
           <div style={{ padding: 'var(--space-3)', background: 'var(--bg-muted)', borderRadius: 'var(--radius-md)' }}>
             <div style={{ fontSize: 'var(--font-size-xs)', color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: 0.5, fontWeight: 700, marginBottom: 4 }}>
-              Years Remaining
+              Seasons Remaining
             </div>
-            <div style={{ fontSize: 'var(--font-size-2xl)', fontWeight: 900, color: player.contractYears <= 1 ? 'var(--color-danger)' : 'var(--text-primary)' }}>
+            <div style={{ fontSize: 'var(--font-size-2xl)', fontWeight: 900, color: (player.contractYears ?? 99) <= 1 ? 'var(--color-danger)' : 'var(--text-primary)' }}>
               {player.contractYears ?? '–'}
             </div>
-            {player.contractYears <= 1 && (
+            {(player.contractYears ?? 99) <= 1 && (
               <div style={{ fontSize: 'var(--font-size-xs)', color: 'var(--color-danger)', fontWeight: 600, marginTop: 2 }}>
-                Expiring soon
+                ⚠️ Expiring soon — negotiate now!
               </div>
             )}
           </div>
@@ -642,26 +704,43 @@ export default function PlayerProfile() {
             <div style={{ fontSize: 'var(--font-size-2xl)', fontWeight: 900, color: 'var(--color-success)' }}>
               ${player.salary ?? '–'}k
             </div>
+            <div style={{ fontSize: 'var(--font-size-xs)', color: 'var(--text-muted)' }}>
+              ${player.salary ? Math.round(player.salary / 12) : '–'}k / month
+            </div>
+          </div>
+          <div style={{ padding: 'var(--space-3)', background: 'var(--bg-muted)', borderRadius: 'var(--radius-md)' }}>
+            <div style={{ fontSize: 'var(--font-size-xs)', color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: 0.5, fontWeight: 700, marginBottom: 4 }}>
+              Seasons In Club
+            </div>
+            <div style={{ fontSize: 'var(--font-size-2xl)', fontWeight: 900, color: 'var(--text-primary)' }}>
+              {player.yearsInClub ?? '–'}
+            </div>
+          </div>
+          <div style={{ padding: 'var(--space-3)', background: 'var(--bg-muted)', borderRadius: 'var(--radius-md)' }}>
+            <div style={{ fontSize: 'var(--font-size-xs)', color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: 0.5, fontWeight: 700, marginBottom: 4 }}>
+              Status
+            </div>
+            <div style={{ fontSize: 'var(--font-size-sm)', fontWeight: 700 }}>
+              {player.isOnTransferMarket ? <span style={{ color: 'var(--color-warning)' }}>Listed for Transfer</span> : <span style={{ color: 'var(--color-success)' }}>Under Contract</span>}
+            </div>
           </div>
         </div>
-        {player.isOnTransferMarket && (
-          <div style={{
-            marginTop: 'var(--space-3)',
-            padding: 'var(--space-3)',
-            background: 'var(--color-warning-light)',
-            borderRadius: 'var(--radius-md)',
-            border: '1px solid var(--color-warning)',
-            display: 'flex',
-            alignItems: 'center',
-            gap: 'var(--space-2)',
-          }}>
-            <span style={{ fontSize: '1rem' }}>💰</span>
-            <span style={{ fontSize: 'var(--font-size-sm)', fontWeight: 700, color: 'var(--color-warning)' }}>
-              This player is listed on the transfer market.
-            </span>
-          </div>
-        )}
       </div>
+
+      {/* Contract Negotiation Modal */}
+      {showContractModal && (
+        <div className="modal-overlay" onClick={() => setShowContractModal(false)}>
+          <div className="modal" onClick={e => e.stopPropagation()} style={{ maxWidth: 460 }}>
+            <div className="modal-header">
+              <h3>Contract Negotiation — {player.name}</h3>
+              <button className="btn btn-ghost btn-sm" onClick={() => setShowContractModal(false)}>✕</button>
+            </div>
+            <div className="modal-body">
+              <ContractNegotiationPanel player={player} onClose={() => setShowContractModal(false)} dispatch={dispatch} />
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

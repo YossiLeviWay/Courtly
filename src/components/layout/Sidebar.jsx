@@ -6,6 +6,10 @@ import {
   BarChart2, Settings, User, LogOut, Zap, TrendingUp
 } from 'lucide-react';
 
+function YouthAcademyIcon({ size = 18 }) {
+  return <span style={{ fontSize: size, lineHeight: 1, display: 'inline-flex', alignItems: 'center' }}>🌱</span>;
+}
+
 const NAV_GROUPS = [
   {
     label: 'Club',
@@ -20,6 +24,7 @@ const NAV_GROUPS = [
     label: 'Management',
     items: [
       { to: '/staff', icon: UserCheck, label: 'Staff' },
+      { to: '/youth-academy', icon: YouthAcademyIcon, label: 'Youth Academy' },
       { to: '/training', icon: Dumbbell, label: 'Training' },
       { to: '/facilities', icon: Building2, label: 'Facilities' },
       { to: '/fans', icon: Heart, label: 'Fans' },

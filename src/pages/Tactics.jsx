@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef } from 'react';
 import { useGame } from '../context/GameContext.jsx';
-import { Users, Target, Shield, Zap, Settings, CheckCircle, X } from 'lucide-react';
+import { Users, Target, Shield, Zap, Settings, CheckCircle, X, Save } from 'lucide-react';
 
 // ── Constants ─────────────────────────────────────────────────
 
@@ -204,7 +204,7 @@ function PlayerPicker({ position, players, lineup, onAssign, onClose, anchorPos 
 
 // ── Interactive Court Lineup ─────────────────────────────────
 
-function CourtLineup({ players, lineup, onLineupChange }) {
+function CourtLineup({ players, lineup, onLineupChange, onPlayerHover, onPlayerHoverMove, onPlayerHoverLeave }) {
   const [openPos, setOpenPos] = useState(null);
   const [anchorPos, setAnchorPos] = useState({ x: 0, y: 0 });
   const courtRef = useRef(null);
@@ -233,7 +233,11 @@ function CourtLineup({ players, lineup, onLineupChange }) {
           const filled = !!player;
 
           return (
-            <g key={pos} style={{ cursor: 'pointer' }} onClick={() => handlePositionClick(pos, x, y)}>
+            <g key={pos} style={{ cursor: 'pointer' }} onClick={() => handlePositionClick(pos, x, y)}
+              onMouseEnter={player ? (e) => { onPlayerHover && onPlayerHover(player, e.clientX, e.clientY); } : undefined}
+              onMouseMove={player ? (e) => { onPlayerHoverMove && onPlayerHoverMove(e.clientX, e.clientY); } : undefined}
+              onMouseLeave={player ? () => { onPlayerHoverLeave && onPlayerHoverLeave(); } : undefined}
+            >
               {/* Glow ring when open */}
               {isOpen && (
                 <circle cx={x} cy={y} r={32} fill="rgba(232,98,26,0.18)" stroke="var(--color-primary)" strokeWidth={2.5} />
@@ -377,6 +381,39 @@ function SuccessToast({ message, onClose }) {
   );
 }
 
+// ── Player Hover Card ─────────────────────────────────────────
+
+function PlayerHoverCard({ player, x, y }) {
+  if (!player) return null;
+  return (
+    <div style={{
+      position: 'fixed', left: x + 16, top: y - 40, zIndex: 9999,
+      background: 'var(--bg-card)', border: '1px solid var(--border-color)',
+      borderRadius: 'var(--radius-lg)', padding: '10px 14px',
+      boxShadow: '0 8px 24px rgba(0,0,0,0.18)', minWidth: 180,
+      pointerEvents: 'none',
+    }}>
+      <div style={{ fontWeight: 700, fontSize: 'var(--font-size-sm)', marginBottom: 4 }}>{player.name}</div>
+      <div style={{ fontSize: 'var(--font-size-xs)', color: 'var(--text-muted)', marginBottom: 6 }}>
+        {player.position} · OVR {player.overallRating ?? player.overall ?? '?'}
+      </div>
+      <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+        <span style={{ fontSize: 'var(--font-size-xs)', padding: '2px 8px', borderRadius: 'var(--radius-full)', background: 'var(--bg-muted)', color: 'var(--text-muted)' }}>
+          Fatigue {player.fatigue ?? 0}%
+        </span>
+        <span style={{ fontSize: 'var(--font-size-xs)', padding: '2px 8px', borderRadius: 'var(--radius-full)', background: 'var(--bg-muted)', color: 'var(--text-muted)' }}>
+          Form {player.lastFormRating ?? 50}
+        </span>
+        {player.injuryStatus && player.injuryStatus !== 'healthy' && (
+          <span style={{ fontSize: 'var(--font-size-xs)', padding: '2px 8px', borderRadius: 'var(--radius-full)', background: 'rgba(239,68,68,0.1)', color: '#ef4444' }}>
+            Injured
+          </span>
+        )}
+      </div>
+    </div>
+  );
+}
+
 // ── Main Component ────────────────────────────────────────────
 
 export default function Tactics() {
@@ -397,6 +434,8 @@ export default function Tactics() {
     timeoutTriggers: savedTactics.timeoutTriggers ?? [],
   });
   const [saved, setSaved] = useState(false);
+  const [hoverPlayer, setHoverPlayer] = useState(null);
+  const [hoverPos, setHoverPos] = useState({ x: 0, y: 0 });
 
   // Keep tactics in sync if userTeam changes externally
   useEffect(() => {
@@ -500,7 +539,7 @@ export default function Tactics() {
   // ── Render ───────────────────────────────────────────────────
 
   return (
-    <div className="page-content animate-fade-in">
+    <div className="page-content animate-fade-in" style={{ paddingBottom: 80 }}>
       {/* Page header */}
       <div className="page-header">
         <div style={{ display: 'flex', alignItems: 'flex-end', justifyContent: 'space-between', flexWrap: 'wrap', gap: 'var(--space-3)' }}>
@@ -540,6 +579,9 @@ export default function Tactics() {
           players={players}
           lineup={tactics.lineup}
           onLineupChange={handleLineupChange}
+          onPlayerHover={(player, x, y) => { setHoverPlayer(player); setHoverPos({ x, y }); }}
+          onPlayerHoverMove={(x, y) => setHoverPos({ x, y })}
+          onPlayerHoverLeave={() => setHoverPlayer(null)}
         />
 
         {/* Bench selection */}
@@ -559,6 +601,9 @@ export default function Tactics() {
                   key={player.id}
                   onClick={() => toggleBench(player.id)}
                   disabled={isInjured && !isBench}
+                  onMouseEnter={(e) => { setHoverPlayer(player); setHoverPos({ x: e.clientX, y: e.clientY }); }}
+                  onMouseMove={(e) => setHoverPos({ x: e.clientX, y: e.clientY })}
+                  onMouseLeave={() => setHoverPlayer(null)}
                   style={{
                     display: 'flex', alignItems: 'center', gap: 'var(--space-2)',
                     padding: '6px 10px', borderRadius: 'var(--radius-md)',
@@ -841,6 +886,24 @@ export default function Tactics() {
       {saved && (
         <SuccessToast message="Tactics saved successfully!" onClose={() => setSaved(false)} />
       )}
+
+      {/* Sticky save bar */}
+      <div style={{
+        position: 'fixed', bottom: 0, left: 0, right: 0, zIndex: 100,
+        background: 'var(--bg-card)', borderTop: '1px solid var(--border-color)',
+        padding: '12px 24px', display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+        boxShadow: '0 -4px 12px rgba(0,0,0,0.08)'
+      }}>
+        <span style={{ fontSize: 'var(--font-size-sm)', color: 'var(--text-muted)' }}>
+          Lineup: {Object.values(tactics.lineup).filter(Boolean).length}/5 starters · Bench: {tactics.benchPlayers.length}/7
+        </span>
+        <button className={`btn ${saved ? 'btn-success' : 'btn-primary'}`} onClick={handleSave} disabled={saved}>
+          {saved ? '✓ Saved!' : '💾 Save Tactics'}
+        </button>
+      </div>
+
+      {/* Player hover card */}
+      <PlayerHoverCard player={hoverPlayer} x={hoverPos.x} y={hoverPos.y} />
     </div>
   );
 }

@@ -156,6 +156,9 @@ export default function Dashboard() {
     (a, b) => (b.seasonStats.assists ?? 0) / (b.seasonStats.gamesPlayed || 1) - (a.seasonStats.assists ?? 0) / (a.seasonStats.gamesPlayed || 1)
   )[0];
 
+  // ── Expiring contracts ────────────────────────────────────
+  const expiringContracts = activePlayers.filter(p => (p.contractYears ?? 99) <= 1);
+
   // ── Injuries / squad news ─────────────────────────────────
   const injured = activePlayers.filter((p) => p.injuryStatus !== 'healthy');
   const highForm = activePlayers.filter((p) => p.lastFormRating >= 75);
@@ -192,6 +195,25 @@ export default function Dashboard() {
           )}
         </div>
       </div>
+
+      {/* Expiring contracts alert */}
+      {expiringContracts.length > 0 && (
+        <div style={{
+          background: 'rgba(239,68,68,0.08)', border: '1px solid rgba(239,68,68,0.3)',
+          borderRadius: 'var(--radius-lg)', padding: '12px 16px', marginBottom: 'var(--space-5)',
+          display: 'flex', alignItems: 'center', gap: 12
+        }}>
+          <AlertCircle size={18} color="#ef4444" />
+          <div>
+            <span style={{ fontWeight: 700, color: '#ef4444', fontSize: 'var(--font-size-sm)' }}>
+              {expiringContracts.length} contract{expiringContracts.length > 1 ? 's' : ''} expiring this season!
+            </span>
+            <span style={{ color: 'var(--text-muted)', fontSize: 'var(--font-size-sm)', marginLeft: 8 }}>
+              {expiringContracts.map(p => p.name).join(', ')}
+            </span>
+          </div>
+        </div>
+      )}
 
       {/* Stats grid */}
       <div className="stats-grid mb-6">

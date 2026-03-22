@@ -144,7 +144,7 @@ function AbilityBar({ label, value }) {
 
 // ── Staff detail modal ────────────────────────────────────────
 
-function StaffModal({ member, meta, onClose }) {
+function StaffModal({ member, meta, onClose, releaseConfirm, onReleaseConfirm, onReleaseClear, onReleaseStaff }) {
   if (!member) return null;
 
   const abilities = member.abilities ?? {};
@@ -277,6 +277,26 @@ function StaffModal({ member, meta, onClose }) {
               </span>
             </div>
           )}
+
+          {/* Release section */}
+          <div style={{ borderTop: '1px solid var(--border-color)', marginTop: 16, paddingTop: 16 }}>
+            {releaseConfirm === member?.role ? (
+              <div style={{ background: 'var(--color-danger-light, rgba(239,68,68,0.1))', borderRadius: 'var(--radius-md)', padding: 12, marginBottom: 8 }}>
+                <p style={{ fontWeight: 600, color: 'var(--color-danger)', marginBottom: 8, fontSize: 'var(--font-size-sm)' }}>
+                  Release {member.name} from the club?
+                </p>
+                <div style={{ display: 'flex', gap: 8 }}>
+                  <button className="btn btn-sm btn-danger" onClick={onReleaseStaff}>Confirm Release</button>
+                  <button className="btn btn-sm btn-ghost" onClick={onReleaseClear}>Cancel</button>
+                </div>
+              </div>
+            ) : (
+              <button className="btn btn-sm btn-ghost" style={{ color: 'var(--color-danger)', width: '100%' }}
+                onClick={() => onReleaseConfirm(member?.role)}>
+                Release from Club
+              </button>
+            )}
+          </div>
         </div>
 
         <div className="modal-footer">
@@ -522,10 +542,23 @@ function buildImpactSummary(staffObj) {
 // ── Main Staff page ───────────────────────────────────────────
 
 export default function Staff() {
-  const { state } = useGame();
+  const { state, dispatch, addNotification } = useGame();
   const { userTeam } = state;
 
   const [selectedMember, setSelectedMember] = useState(null);
+  const [releaseConfirm, setReleaseConfirm] = useState(null); // role of staff member to release
+
+  const handleReleaseStaff = () => {
+    if (!selectedMember) return;
+    const currentStaff = userTeam.staff ?? {};
+    const updatedStaff = Object.fromEntries(
+      Object.entries(currentStaff).filter(([role]) => role !== selectedMember.role)
+    );
+    dispatch({ type: 'UPDATE_TEAM', payload: { ...userTeam, staff: updatedStaff } });
+    addNotification(`${selectedMember.name} has been released from the club.`, 'info');
+    setSelectedMember(null);
+    setReleaseConfirm(null);
+  };
 
   if (!userTeam) {
     return (
@@ -678,7 +711,11 @@ export default function Staff() {
         <StaffModal
           member={staffMembersForModal}
           meta={modalMeta}
-          onClose={() => setSelectedMember(null)}
+          onClose={() => { setSelectedMember(null); setReleaseConfirm(null); }}
+          releaseConfirm={releaseConfirm}
+          onReleaseConfirm={(role) => setReleaseConfirm(role)}
+          onReleaseClear={() => setReleaseConfirm(null)}
+          onReleaseStaff={handleReleaseStaff}
         />
       )}
     </div>
