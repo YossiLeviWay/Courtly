@@ -40,12 +40,16 @@ function buildUserTeam(worldLeagues, userState) {
   const baseTeam = allWorldTeams.find(t => t.id === userState.team_id);
   if (!baseTeam) return null;
 
+  const profileData = userState.profile_data || {};
   const evolvedPlayers = Array.isArray(userState.players_state) && userState.players_state.length > 0
     ? userState.players_state
     : (baseTeam.players || []);
 
   return {
     ...baseTeam,
+    // Apply user's custom team/stadium names if set
+    name: profileData.teamName?.trim() || baseTeam.name,
+    stadiumName: profileData.stadiumName?.trim() || baseTeam.stadiumName,
     isUserTeam: true,
     players: evolvedPlayers,
     budget: userState.budget ?? 250,
@@ -104,6 +108,8 @@ function extractUserState(state) {
       settingsChangesToday: state.user?.settingsChangesToday || 0,
       lastSettingsChange: state.user?.lastSettingsChange || null,
       records: state.user?.records || { wins: 0, losses: 0, honors: [] },
+      teamName: state.userTeam?.name || '',
+      stadiumName: state.userTeam?.stadiumName || '',
     },
   };
 }
@@ -199,6 +205,17 @@ export function GameProvider({ children }) {
       apiGetUserState(),    // { state, user } (per-user)
     ]).then(([world, dbMatches, dbStandings, userStateRes]) => {
       if (!world || !userStateRes?.state) {
+        if (!world) {
+          dispatch({
+            type: 'ADD_NOTIFICATION',
+            payload: {
+              id: Date.now(),
+              message: 'Game world not initialized yet. Ask the admin to seed the world.',
+              type: 'error',
+              timestamp: Date.now(),
+            },
+          });
+        }
         clearToken();
         dispatch({ type: 'INIT_GAME', payload: { ...initialState, initialized: true } });
         return;

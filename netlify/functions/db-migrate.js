@@ -4,9 +4,16 @@ const json = (data, status = 200) =>
   new Response(JSON.stringify(data), { status, headers: { 'Content-Type': 'application/json' } });
 
 export default async (req) => {
-  if (req.method !== 'POST') return json({ error: 'Use POST' }, 405);
+  console.log('[db-migrate] invoked — method:', req.method);
+  console.log('[db-migrate] NETLIFY_DATABASE_URL set:', !!process.env.NETLIFY_DATABASE_URL);
+
+  if (req.method !== 'POST') {
+    console.log('[db-migrate] rejected — not POST');
+    return json({ error: 'Use POST' }, 405);
+  }
 
   try {
+    console.log('[db-migrate] connecting to DB...');
     const sql = neon(process.env.NETLIFY_DATABASE_URL);
 
     await sql`
@@ -102,9 +109,10 @@ export default async (req) => {
       )
     `;
 
+    console.log('[db-migrate] all tables created successfully');
     return json({ success: true, message: 'All tables created successfully' });
   } catch (err) {
-    console.error('Migration error:', err);
+    console.error('[db-migrate] DB error:', err.message);
     return json({ error: err.message }, 500);
   }
 };
