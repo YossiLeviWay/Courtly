@@ -8,6 +8,10 @@ import {
 // ── Build game state from structured DB rows ───────────────────
 
 function buildLeagues(worldLeagues, dbMatches, dbStandings) {
+  // Build a team_id → team_name map from the DB (authoritative, reflects user renames)
+  const dbNameMap = {};
+  dbStandings.forEach(s => { if (s.team_id) dbNameMap[s.team_id] = s.team_name; });
+
   return worldLeagues.map(league => {
     const schedule = dbMatches
       .filter(m => m.league_id === league.id)
@@ -29,9 +33,15 @@ function buildLeagues(worldLeagues, dbMatches, dbStandings) {
 
     const finalStandings = standings.length > 0
       ? standings
-      : (league.teams || []).map(t => ({ teamId: t.id, teamName: t.name, wins: 0, losses: 0, points: 0 }));
+      : (league.teams || []).map(t => ({ teamId: t.id, teamName: dbNameMap[t.id] || t.name, wins: 0, losses: 0, points: 0 }));
 
-    return { ...league, schedule, standings: finalStandings };
+    // Apply DB team names to every team so the league table always reads from world_standings
+    const teams = (league.teams || []).map(t => ({
+      ...t,
+      name: dbNameMap[t.id] || t.name,
+    }));
+
+    return { ...league, teams, schedule, standings: finalStandings };
   });
 }
 
