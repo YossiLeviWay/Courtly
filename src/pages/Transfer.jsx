@@ -315,10 +315,162 @@ function FilterModal({ onClose, playerFilters, setPlayerFilters, staffFilters, s
   );
 }
 
+// ── Transfer Compare Modal ─────────────────────────────────────
+
+const TRANSFER_COMPARE_STATS = [
+  { key: 'courtVision', label: 'Court Vision' },
+  { key: 'threePtShooting', label: '3PT Shooting' },
+  { key: 'finishingAtTheRim', label: 'Finishing' },
+  { key: 'perimeterDefense', label: 'Perimeter Def' },
+  { key: 'interiorDefense', label: 'Interior Def' },
+  { key: 'rebounding', label: 'Rebounding' },
+  { key: 'ballHandlingDribbling', label: 'Ball Handling' },
+  { key: 'passingAccuracy', label: 'Passing' },
+  { key: 'staminaEndurance', label: 'Stamina' },
+  { key: 'agilityLateralSpeed', label: 'Agility' },
+];
+
+function TransferCompareModal({ target, mySquad, onClose }) {
+  const samePos = mySquad.filter(p => p.position === target.position);
+  const defaultComp = samePos.length > 0
+    ? samePos.reduce((best, p) => (p.overallRating || 0) > (best.overallRating || 0) ? p : best, samePos[0])
+    : mySquad[0] || null;
+
+  const [compId, setCompId] = useState(defaultComp?.id || '');
+  const compPlayer = mySquad.find(p => p.id === compId) || null;
+
+  const targetOvr = calcOvr(target);
+  const compOvr = compPlayer ? (compPlayer.overallRating || calcOvr(compPlayer)) : 0;
+  const ovrDiff = targetOvr - compOvr;
+
+  function StatRow({ stat }) {
+    const v1 = target?.attributes?.[stat.key] ?? 0;
+    const v2 = compPlayer?.attributes?.[stat.key] ?? 0;
+    const targetBetter = v1 >= v2;
+    const compBetter = v2 > v1;
+
+    return (
+      <div style={{ display: 'grid', gridTemplateColumns: '1fr auto 1fr', gap: 'var(--space-2)', alignItems: 'center', marginBottom: 8 }}>
+        {/* Left: target (orange) */}
+        <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexDirection: 'row-reverse' }}>
+          <span style={{ fontSize: 'var(--font-size-xs)', fontWeight: 700, color: targetBetter ? 'var(--color-primary)' : 'var(--text-muted)', minWidth: 24, textAlign: 'right' }}>{v1}</span>
+          <div style={{ flex: 1, height: 8, background: 'var(--bg-muted)', borderRadius: 'var(--radius-full)', overflow: 'hidden', direction: 'rtl' }}>
+            <div style={{ width: `${(v1 / 100) * 100}%`, height: '100%', background: targetBetter ? 'var(--color-primary)' : 'rgba(249,115,22,0.4)', borderRadius: 'var(--radius-full)', transition: 'width 0.4s ease' }} />
+          </div>
+        </div>
+
+        <span style={{ fontSize: '0.65rem', fontWeight: 700, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: 0.4, whiteSpace: 'nowrap', textAlign: 'center', minWidth: 90 }}>
+          {stat.label}
+        </span>
+
+        {/* Right: your player (blue) */}
+        <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+          <div style={{ flex: 1, height: 8, background: 'var(--bg-muted)', borderRadius: 'var(--radius-full)', overflow: 'hidden' }}>
+            <div style={{ width: `${(v2 / 100) * 100}%`, height: '100%', background: compPlayer ? (compBetter ? '#3b82f6' : 'rgba(59,130,246,0.4)') : 'var(--bg-muted)', borderRadius: 'var(--radius-full)', transition: 'width 0.4s ease' }} />
+          </div>
+          <span style={{ fontSize: 'var(--font-size-xs)', fontWeight: 700, color: compBetter ? '#3b82f6' : 'var(--text-muted)', minWidth: 24 }}>{compPlayer ? v2 : '—'}</span>
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <div className="modal-overlay" onClick={onClose}>
+      <div className="modal" onClick={e => e.stopPropagation()} style={{ maxWidth: 560, maxHeight: '90vh', display: 'flex', flexDirection: 'column' }}>
+        <div className="modal-header">
+          <h3 className="card-title">Compare to My Squad</h3>
+          <button className="btn btn-ghost btn-sm" onClick={onClose}>✕</button>
+        </div>
+
+        <div className="modal-body" style={{ overflowY: 'auto', flex: 1 }}>
+          {/* Player headers */}
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr auto 1fr', gap: 'var(--space-2)', marginBottom: 'var(--space-4)', alignItems: 'start' }}>
+            {/* Target */}
+            <div style={{ textAlign: 'center', padding: 'var(--space-3)', background: 'rgba(249,115,22,0.08)', borderRadius: 'var(--radius-md)', border: '2px solid var(--color-primary)' }}>
+              <div style={{ fontSize: '0.6rem', color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: 0.5, marginBottom: 2, fontWeight: 700 }}>Transfer Target</div>
+              <div style={{ fontWeight: 800, fontSize: 'var(--font-size-sm)', color: 'var(--text-primary)', marginBottom: 2 }}>{target.name}</div>
+              <div style={{ fontSize: 'var(--font-size-xs)', color: 'var(--text-muted)', marginBottom: 4 }}>{target.position}</div>
+              <div style={{ fontWeight: 900, fontSize: 'var(--font-size-xl)', color: 'var(--color-primary)', lineHeight: 1 }}>{targetOvr}</div>
+              <div style={{ fontSize: '0.6rem', color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: 0.5 }}>OVR</div>
+            </div>
+
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', fontWeight: 900, fontSize: 'var(--font-size-lg)', color: 'var(--text-muted)' }}>VS</div>
+
+            {/* Your player */}
+            <div style={{ textAlign: 'center', padding: 'var(--space-3)', background: compPlayer ? 'rgba(59,130,246,0.08)' : 'var(--bg-muted)', borderRadius: 'var(--radius-md)', border: `2px solid ${compPlayer ? '#3b82f6' : 'var(--border-color)'}` }}>
+              <div style={{ fontSize: '0.6rem', color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: 0.5, marginBottom: 2, fontWeight: 700 }}>Your Player</div>
+              {compPlayer ? (
+                <>
+                  <div style={{ fontWeight: 800, fontSize: 'var(--font-size-sm)', color: 'var(--text-primary)', marginBottom: 2 }}>{compPlayer.name}</div>
+                  <div style={{ fontSize: 'var(--font-size-xs)', color: 'var(--text-muted)', marginBottom: 4 }}>{compPlayer.position}</div>
+                  <div style={{ fontWeight: 900, fontSize: 'var(--font-size-xl)', color: '#3b82f6', lineHeight: 1 }}>{compOvr}</div>
+                  <div style={{ fontSize: '0.6rem', color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: 0.5 }}>OVR</div>
+                </>
+              ) : (
+                <div style={{ color: 'var(--text-muted)', fontSize: 'var(--font-size-xs)', fontWeight: 600, padding: 'var(--space-2) 0' }}>Select a player</div>
+              )}
+            </div>
+          </div>
+
+          {/* Dropdown */}
+          <div style={{ marginBottom: 'var(--space-4)' }}>
+            <label style={{ fontSize: 'var(--font-size-xs)', fontWeight: 700, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: 0.5, display: 'block', marginBottom: 'var(--space-1)' }}>
+              Compare against
+            </label>
+            <select
+              className="form-select"
+              value={compId}
+              onChange={e => setCompId(e.target.value)}
+              style={{ width: '100%' }}
+            >
+              <option value="">Choose a player...</option>
+              {mySquad.map(p => (
+                <option key={p.id} value={p.id}>{p.name} ({p.position}) — OVR {p.overallRating}</option>
+              ))}
+            </select>
+          </div>
+
+          {/* Improvement summary */}
+          {compPlayer && (
+            <div style={{ marginBottom: 'var(--space-4)', padding: 'var(--space-3)', borderRadius: 'var(--radius-md)', background: ovrDiff > 0 ? 'rgba(34,197,94,0.08)' : ovrDiff < 0 ? 'rgba(239,68,68,0.08)' : 'var(--bg-muted)', border: `1px solid ${ovrDiff > 0 ? 'rgba(34,197,94,0.3)' : ovrDiff < 0 ? 'rgba(239,68,68,0.3)' : 'var(--border-color)'}`, textAlign: 'center' }}>
+              <span style={{ fontWeight: 700, fontSize: 'var(--font-size-sm)', color: ovrDiff > 0 ? 'var(--color-success)' : ovrDiff < 0 ? 'var(--color-danger)' : 'var(--text-muted)' }}>
+                {ovrDiff > 0
+                  ? `${target.name} is ${ovrDiff} OVR point${ovrDiff !== 1 ? 's' : ''} better than your current ${compPlayer.position}`
+                  : ovrDiff < 0
+                  ? `${target.name} is ${Math.abs(ovrDiff)} OVR point${Math.abs(ovrDiff) !== 1 ? 's' : ''} worse than your current ${compPlayer.position}`
+                  : `${target.name} matches your current ${compPlayer.position} rating`}
+              </span>
+            </div>
+          )}
+
+          {/* Legend */}
+          <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 'var(--space-3)' }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+              <div style={{ width: 12, height: 12, borderRadius: 2, background: 'var(--color-primary)' }} />
+              <span style={{ fontSize: 'var(--font-size-xs)', fontWeight: 700, color: 'var(--text-secondary)' }}>{target.name} (Target)</span>
+            </div>
+            {compPlayer && (
+              <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                <span style={{ fontSize: 'var(--font-size-xs)', fontWeight: 700, color: 'var(--text-secondary)' }}>{compPlayer.name} (Yours)</span>
+                <div style={{ width: 12, height: 12, borderRadius: 2, background: '#3b82f6' }} />
+              </div>
+            )}
+          </div>
+
+          {/* Stat bars */}
+          {TRANSFER_COMPARE_STATS.map(stat => (
+            <StatRow key={stat.key} stat={stat} />
+          ))}
+        </div>
+      </div>
+    </div>
+  );
+}
+
 // ── Player Card ────────────────────────────────────────────────
 
-function PlayerCard({ player, team, onBuy, onView, timeLeft, userTeamId, onRemove }) {
-  const isOwn = team?.id === userTeamId;
+function PlayerCard({ player, team, onBuy, onView, timeLeft, userTeamId, onRemove, onCompare, isOwn: isOwnProp }) {
+  const isOwn = isOwnProp !== undefined ? isOwnProp : team?.id === userTeamId;
   const ovr = calcOvr(player);
   const wage = calcPlayerMonthlyWage(player);
   return (
@@ -363,6 +515,15 @@ function PlayerCard({ player, team, onBuy, onView, timeLeft, userTeamId, onRemov
           <button className="btn btn-primary btn-sm flex-1" onClick={() => onBuy(player, team)}>Buy</button>
         )}
       </div>
+      {!isOwn && onCompare && (
+        <button
+          className="btn btn-ghost btn-sm"
+          style={{ marginTop: 6, fontSize: 11, color: 'var(--color-primary)', opacity: 0.85, width: '100%' }}
+          onClick={() => onCompare(player)}
+        >
+          Compare to My Squad
+        </button>
+      )}
     </div>
   );
 }
@@ -380,6 +541,7 @@ export default function Transfer() {
   const [viewPlayer, setViewPlayer] = useState(null);
   const [playerFilters, setPlayerFilters] = useState({ ...DEFAULT_PLAYER_FILTERS });
   const [staffFilters, setStaffFilters] = useState({ ...DEFAULT_STAFF_FILTERS });
+  const [compareTarget, setCompareTarget] = useState(null);
 
   const team = state.userTeam;
   const allTeams = state.allTeams || [];
