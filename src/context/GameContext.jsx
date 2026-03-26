@@ -92,8 +92,12 @@ function buildUserTeam(leagues, userState) {
     momentumBar:    userState.momentumBar    ?? 65,
     reputation:     userState.reputation     ?? 10,
     matchHistory:   userState.matchHistory   ?? [],
-    wins:    userState.seasonRecord?.wins    ?? 0,
-    losses:  userState.seasonRecord?.losses  ?? 0,
+    wins:         userState.seasonRecord?.wins    ?? 0,
+    losses:       userState.seasonRecord?.losses  ?? 0,
+    seasonRecord: {
+      wins:   userState.seasonRecord?.wins   ?? 0,
+      losses: userState.seasonRecord?.losses ?? 0,
+    },
   };
 }
 
