@@ -37,7 +37,10 @@ async function main() {
   const serviceAccount = loadServiceAccount();
   const admin = (await import('firebase-admin')).default;
   admin.initializeApp({ credential: admin.credential.cert(serviceAccount), projectId: 'courtly-660c3' });
+  
   const db = admin.firestore();
+  // השורה שפותרת את השגיאה: מאפשרת ל-Firestore להתעלם מערכים ריקים (undefined)
+  db.settings({ ignoreUndefinedProperties: true });
 
   const { neon } = await import('@neondatabase/serverless');
   const sql = neon(NEON_URL);
@@ -57,12 +60,22 @@ async function main() {
     const leagueItems = [], teamItems = [], playerItems = [], staffItems = [];
 
     for (const league of leagues) {
-      leagueItems.push({ ref: db.collection('leagues').doc(String(league.id)), data: { id: league.id, name: league.name, tier: league.tier } });
+      leagueItems.push({ 
+        ref: db.collection('leagues').doc(String(league.id)), 
+        data: { id: league.id, name: league.name || '', tier: league.tier || null } 
+      });
       
       for (const team of ensureArray(league.teams)) {
         teamItems.push({ 
           ref: db.collection('teams').doc(String(team.id)), 
-          data: { id: team.id, name: team.name, city: team.city, leagueId: league.id, avatar: team.avatar, prestige: team.prestige } 
+          data: { 
+            id: team.id, 
+            name: team.name || '', 
+            city: team.city || '', 
+            leagueId: league.id, 
+            avatar: team.avatar || null, 
+            prestige: team.prestige || 0 
+          } 
         });
 
         for (const player of ensureArray(team.players)) {
@@ -77,15 +90,15 @@ async function main() {
     await batchSet(db, teamItems);
     await batchSet(db, playerItems);
     await batchSet(db, staffItems);
-    log(`Migrated ${leagues.length} leagues and their sub-data.`);
+    log(`Migrated leagues, teams, players, and staff.`);
   }
 
-  // Simple tables
-  await batchSet(db, matches.map(m => ({ ref: db.collection('matches').doc(String(m.id)), data: { ...m, log: m.log || [] } })));
-  await batchSet(db, standings.map(s => ({ ref: db.collection('standings').doc(`${s.league_id}_${s.team_id}`), data: s })));
-  await batchSet(db, users.map(u => ({ ref: db.collection('users').doc(String(u.id)), data: u })));
-  await batchSet(db, userStates.map(s => ({ ref: db.collection('user_team_state').doc(String(s.user_id)), data: s })));
-  await batchSet(db, transferMarket.map(t => ({ ref: db.collection('transfer_market').doc(String(t.id)), data: t })));
+  // Simple tables migration
+  if (matches.length) await batchSet(db, matches.map(m => ({ ref: db.collection('matches').doc(String(m.id)), data: { ...m, log: m.log || [] } })));
+  if (standings.length) await batchSet(db, standings.map(s => ({ ref: db.collection('standings').doc(`${s.league_id}_${s.team_id}`), data: s })));
+  if (users.length) await batchSet(db, users.map(u => ({ ref: db.collection('users').doc(String(u.id)), data: u })));
+  if (userStates.length) await batchSet(db, userStates.map(s => ({ ref: db.collection('user_team_state').doc(String(s.user_id)), data: s })));
+  if (transferMarket.length) await batchSet(db, transferMarket.map(t => ({ ref: db.collection('transfer_market').doc(String(t.id)), data: t })));
 
   log('Migration complete ✓');
   process.exit(0);
