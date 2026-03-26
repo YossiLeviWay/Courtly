@@ -42,7 +42,7 @@ export default function Login() {
     try {
       if (mode === 'login') {
         await apiLogin(form.email, form.password);
-        window.location.href = '/';
+        window.location.href = import.meta.env.BASE_URL;
         return;
       }
 
@@ -72,7 +72,7 @@ export default function Login() {
       );
 
       // 5. Reload page — onAuthStateChanged in GameContext will load all state
-      window.location.href = '/';
+      window.location.href = import.meta.env.BASE_URL;
     } catch (err) {
       addNotification(err.message || 'Something went wrong.', 'error');
       setLoading(false);

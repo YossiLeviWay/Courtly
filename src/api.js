@@ -7,9 +7,74 @@ import {
 } from 'firebase/auth';
 import {
   doc, getDoc, getDocs, setDoc, deleteDoc,
-  collection, query, where, orderBy, writeBatch,
+  collection, query, where, writeBatch,
 } from 'firebase/firestore';
 import { auth, db } from './firebase.js';
+
+// ── Field-name normalizers ────────────────────────────────────────
+// The migration stored PostgreSQL rows verbatim (snake_case).
+// New records written by the app use camelCase.
+// These helpers accept either format and always return camelCase.
+
+function normalizeMatch(m) {
+  return {
+    id:            m.id,
+    leagueId:      m.leagueId      ?? m.league_id      ?? '',
+    homeTeamId:    m.homeTeamId    ?? m.home_team_id    ?? '',
+    awayTeamId:    m.awayTeamId    ?? m.away_team_id    ?? '',
+    homeTeamName:  m.homeTeamName  ?? m.home_team_name  ?? '',
+    awayTeamName:  m.awayTeamName  ?? m.away_team_name  ?? '',
+    scheduledDate: Number(m.scheduledDate ?? m.scheduled_date ?? 0),
+    played:        m.played        ?? false,
+    homeScore:     m.homeScore     ?? m.home_score      ?? null,
+    awayScore:     m.awayScore     ?? m.away_score      ?? null,
+    log:           m.log           ?? [],
+  };
+}
+
+function normalizeStanding(s) {
+  return {
+    leagueId: s.leagueId ?? s.league_id ?? '',
+    teamId:   s.teamId   ?? s.team_id   ?? '',
+    teamName: s.teamName ?? s.team_name ?? '',
+    wins:     Number(s.wins)   || 0,
+    losses:   Number(s.losses) || 0,
+    points:   Number(s.points) || 0,
+  };
+}
+
+function normalizeUserState(s) {
+  if (!s) return null;
+  return {
+    userId:         s.userId         ?? s.user_id,
+    teamId:         s.teamId         ?? s.team_id,
+    budget:         s.budget         ?? 250,
+    facilities:     s.facilities     ?? {},
+    tactics:        s.tactics        ?? {},
+    playersState:   s.playersState   ?? s.players_state  ?? [],
+    fanCount:       s.fanCount       ?? s.fan_count       ?? 250,
+    fanEnthusiasm:  s.fanEnthusiasm  ?? s.fan_enthusiasm  ?? 20,
+    ticketPrice:    s.ticketPrice    ?? s.ticket_price    ?? 20,
+    teamExposure:   s.teamExposure   ?? s.team_exposure   ?? 0,
+    chemistryGauge: s.chemistryGauge ?? s.chemistry_gauge ?? 50,
+    momentumBar:    s.momentumBar    ?? s.momentum_bar    ?? 65,
+    reputation:     s.reputation     ?? 10,
+    matchHistory:   s.matchHistory   ?? s.match_history   ?? [],
+    seasonRecord:   s.seasonRecord   ?? s.season_record   ?? { wins: 0, losses: 0 },
+    profileData:    s.profileData    ?? s.profile_data    ?? {},
+    updatedAt:      s.updatedAt      ?? s.updated_at,
+  };
+}
+
+function normalizeUser(u) {
+  if (!u) return null;
+  return {
+    id:        u.id,
+    email:     u.email    ?? '',
+    username:  u.username ?? '',
+    createdAt: u.createdAt ?? u.created_at ?? Date.now(),
+  };
+}
 
 // ── Auth ─────────────────────────────────────────────────────────
 
@@ -111,10 +176,8 @@ export async function apiGetWorld() {
 
 export async function apiGetMatches() {
   try {
-    const snap = await getDocs(
-      query(collection(db, 'matches'), orderBy('scheduledDate', 'asc'))
-    );
-    return snap.docs.map(d => d.data());
+    const snap = await getDocs(collection(db, 'matches'));
+    return snap.docs.map(d => normalizeMatch(d.data()));
   } catch { return []; }
 }
 
@@ -166,7 +229,7 @@ export async function apiRecordMatchResult({
 export async function apiGetStandings() {
   try {
     const snap = await getDocs(collection(db, 'standings'));
-    return snap.docs.map(d => d.data());
+    return snap.docs.map(d => normalizeStanding(d.data()));
   } catch { return []; }
 }
 
@@ -174,9 +237,7 @@ export async function apiGetStandings() {
 
 export async function apiGetTransferMarket() {
   try {
-    const snap = await getDocs(
-      query(collection(db, 'transfer_market'), orderBy('listedAt', 'desc'))
-    );
+    const snap = await getDocs(collection(db, 'transfer_market'));
     return snap.docs.map(d => d.data());
   } catch { return []; }
 }
@@ -281,8 +342,8 @@ export async function apiGetUserState() {
       getDoc(doc(db, 'users', uid)),
     ]);
     return {
-      state: stateSnap.exists() ? stateSnap.data() : null,
-      user:  userSnap.exists()  ? userSnap.data()  : null,
+      state: stateSnap.exists() ? normalizeUserState(stateSnap.data()) : null,
+      user:  userSnap.exists()  ? normalizeUser(userSnap.data())       : null,
     };
   } catch { return null; }
 }

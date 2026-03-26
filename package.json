@@ -8,7 +8,8 @@
     "build": "vite build",
     "lint": "eslint .",
     "preview": "vite preview",
-    "migrate": "node scripts/migrate-to-firebase.mjs"
+    "migrate": "node scripts/migrate-to-firebase.mjs",
+    "import-users": "node scripts/import-users-to-firebase-auth.mjs"
   },
   "dependencies": {
     "firebase": "^12.11.0",
