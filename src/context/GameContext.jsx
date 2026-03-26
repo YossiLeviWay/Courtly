@@ -1,41 +1,48 @@
 import { createContext, useContext, useReducer, useEffect, useCallback, useRef } from 'react';
+import { onAuthStateChanged, signOut } from 'firebase/auth';
+import { auth } from '../firebase.js';
 import {
-  getToken, clearToken,
   apiGetWorld, apiGetMatches, apiGetStandings, apiGetUserState,
   apiSaveUserState,
 } from '../api.js';
 
-// ── Build game state from structured DB rows ───────────────────
+// ── Build game state from Firestore data ───────────────────────
 
 function buildLeagues(worldLeagues, dbMatches, dbStandings) {
-  // Build a team_id → team_name map from the DB (authoritative, reflects user renames)
   const dbNameMap = {};
-  dbStandings.forEach(s => { if (s.team_id) dbNameMap[s.team_id] = s.team_name; });
+  dbStandings.forEach(s => { if (s.teamId) dbNameMap[s.teamId] = s.teamName; });
 
   return worldLeagues.map(league => {
     const schedule = dbMatches
-      .filter(m => m.league_id === league.id)
+      .filter(m => m.leagueId === league.id)
       .map(m => ({
-        id: m.id,
-        homeTeamId: m.home_team_id,
-        awayTeamId: m.away_team_id,
-        homeTeamName: m.home_team_name,
-        awayTeamName: m.away_team_name,
-        scheduledDate: Number(m.scheduled_date),
-        played: m.played,
-        result: m.played ? { homeScore: m.home_score, awayScore: m.away_score } : null,
-        log: m.log || [],
+        id:            m.id,
+        homeTeamId:    m.homeTeamId,
+        awayTeamId:    m.awayTeamId,
+        homeTeamName:  m.homeTeamName,
+        awayTeamName:  m.awayTeamName,
+        scheduledDate: Number(m.scheduledDate),
+        played:        m.played,
+        result:        m.played ? { homeScore: m.homeScore, awayScore: m.awayScore } : null,
+        log:           m.log || [],
       }));
 
     const standings = dbStandings
-      .filter(s => s.league_id === league.id)
-      .map(s => ({ teamId: s.team_id, teamName: s.team_name, wins: Number(s.wins), losses: Number(s.losses), points: Number(s.points) }));
+      .filter(s => s.leagueId === league.id)
+      .map(s => ({
+        teamId:   s.teamId,
+        teamName: s.teamName,
+        wins:     Number(s.wins),
+        losses:   Number(s.losses),
+        points:   Number(s.points),
+      }));
 
     const finalStandings = standings.length > 0
       ? standings
-      : (league.teams || []).map(t => ({ teamId: t.id, teamName: dbNameMap[t.id] || t.name, wins: 0, losses: 0, points: 0 }));
+      : (league.teams || []).map(t => ({
+          teamId: t.id, teamName: dbNameMap[t.id] || t.name, wins: 0, losses: 0, points: 0,
+        }));
 
-    // Apply DB team names to every team so the league table always reads from world_standings
     const teams = (league.teams || []).map(t => ({
       ...t,
       name: dbNameMap[t.id] || t.name,
@@ -46,65 +53,62 @@ function buildLeagues(worldLeagues, dbMatches, dbStandings) {
 }
 
 function buildUserTeam(leagues, userState) {
-  // leagues is the already-built array (with DB names applied)
   const allTeams = leagues.flatMap(l => l.teams || []);
-  const baseTeam = allTeams.find(t => t.id === userState.team_id);
+  const baseTeam = allTeams.find(t => t.id === userState.teamId);
   if (!baseTeam) return null;
 
-  const profileData = userState.profile_data || {};
-  const evolvedPlayers = Array.isArray(userState.players_state) && userState.players_state.length > 0
-    ? userState.players_state
+  const profileData = userState.profileData || {};
+  const evolvedPlayers = Array.isArray(userState.playersState) && userState.playersState.length > 0
+    ? userState.playersState
     : (baseTeam.players || []);
 
-  // Attach user's fixture schedule so Dashboard/Calendar can show upcoming matches
-  const userLeague = leagues.find(l => l.teams?.some(t => t.id === userState.team_id));
+  const userLeague = leagues.find(l => l.teams?.some(t => t.id === userState.teamId));
   const seasonMatches = (userLeague?.schedule || [])
-    .filter(m => m.homeTeamId === userState.team_id || m.awayTeamId === userState.team_id)
+    .filter(m => m.homeTeamId === userState.teamId || m.awayTeamId === userState.teamId)
     .map(m => ({
       ...m,
-      date: m.scheduledDate,                // Dashboard uses m.date
-      isHome: m.homeTeamId === userState.team_id,
-      opponentName: m.homeTeamId === userState.team_id ? m.awayTeamName : m.homeTeamName,
-      opponentId: m.homeTeamId === userState.team_id ? m.awayTeamId : m.homeTeamId,
+      date:         m.scheduledDate,
+      isHome:       m.homeTeamId === userState.teamId,
+      opponentName: m.homeTeamId === userState.teamId ? m.awayTeamName : m.homeTeamName,
+      opponentId:   m.homeTeamId === userState.teamId ? m.awayTeamId   : m.homeTeamId,
     }));
 
   return {
     ...baseTeam,
-    // Apply user's custom team/stadium names if set
-    name: profileData.teamName?.trim() || baseTeam.name,
-    stadiumName: profileData.stadiumName?.trim() || baseTeam.stadiumName,
-    isUserTeam: true,
-    players: evolvedPlayers,
+    name:          profileData.teamName?.trim()    || baseTeam.name,
+    stadiumName:   profileData.stadiumName?.trim() || baseTeam.stadiumName,
+    isUserTeam:    true,
+    players:       evolvedPlayers,
     seasonMatches,
-    budget: userState.budget ?? 250,
-    facilities: userState.facilities ?? {},
-    tactics: userState.tactics ?? {},
-    training: profileData.training ?? {},
-    fanCount: userState.fan_count ?? 250,
-    fanEnthusiasm: userState.fan_enthusiasm ?? 20,
-    ticketPrice: userState.ticket_price ?? 20,
-    teamExposure: userState.team_exposure ?? 0,
-    chemistryGauge: userState.chemistry_gauge ?? 50,
-    momentumBar: userState.momentum_bar ?? 65,
-    reputation: userState.reputation ?? 10,
-    matchHistory: userState.match_history ?? [],
-    wins: userState.season_record?.wins ?? 0,
-    losses: userState.season_record?.losses ?? 0,
+    budget:         userState.budget         ?? 250,
+    facilities:     userState.facilities     ?? {},
+    tactics:        userState.tactics        ?? {},
+    training:       profileData.training     ?? {},
+    fanCount:       userState.fanCount       ?? 250,
+    fanEnthusiasm:  userState.fanEnthusiasm  ?? 20,
+    ticketPrice:    userState.ticketPrice    ?? 20,
+    teamExposure:   userState.teamExposure   ?? 0,
+    chemistryGauge: userState.chemistryGauge ?? 50,
+    momentumBar:    userState.momentumBar    ?? 65,
+    reputation:     userState.reputation     ?? 10,
+    matchHistory:   userState.matchHistory   ?? [],
+    wins:    userState.seasonRecord?.wins    ?? 0,
+    losses:  userState.seasonRecord?.losses  ?? 0,
   };
 }
 
 function buildUserProfile(dbUser, profileData) {
   return {
-    id: dbUser?.id,
-    username: dbUser?.username || '',
-    email: dbUser?.email || '',
-    bio: profileData?.bio || '',
-    gender: profileData?.gender || '',
-    avatar: profileData?.avatar || { type: 'initials', emoji: null },
+    id:                   dbUser?.id,
+    username:             dbUser?.username             || '',
+    email:                dbUser?.email                || '',
+    bio:                  profileData?.bio             || '',
+    gender:               profileData?.gender          || '',
+    avatar:               profileData?.avatar          || { type: 'initials', emoji: null },
     settingsChangesToday: profileData?.settingsChangesToday || 0,
-    lastSettingsChange: profileData?.lastSettingsChange || null,
-    joinedAt: dbUser?.created_at || Date.now(),
-    records: profileData?.records || { wins: 0, losses: 0, honors: [] },
+    lastSettingsChange:   profileData?.lastSettingsChange   || null,
+    joinedAt:             dbUser?.createdAt            || Date.now(),
+    records:              profileData?.records         || { wins: 0, losses: 0, honors: [] },
   };
 }
 
@@ -112,30 +116,30 @@ function extractUserState(state) {
   const t = state.userTeam;
   if (!t) return null;
   return {
-    teamId: t.id,
-    budget: t.budget ?? 250,
-    facilities: t.facilities ?? {},
-    tactics: t.tactics ?? {},
-    playersState: t.players ?? [],
-    fanCount: t.fanCount ?? 250,
-    fanEnthusiasm: t.fanEnthusiasm ?? 20,
-    ticketPrice: t.ticketPrice ?? 20,
-    teamExposure: t.teamExposure ?? 0,
+    teamId:         t.id,
+    budget:         t.budget         ?? 250,
+    facilities:     t.facilities     ?? {},
+    tactics:        t.tactics        ?? {},
+    playersState:   t.players        ?? [],
+    fanCount:       t.fanCount       ?? 250,
+    fanEnthusiasm:  t.fanEnthusiasm  ?? 20,
+    ticketPrice:    t.ticketPrice    ?? 20,
+    teamExposure:   t.teamExposure   ?? 0,
     chemistryGauge: t.chemistryGauge ?? 50,
-    momentumBar: t.momentumBar ?? 65,
-    reputation: t.reputation ?? 10,
-    matchHistory: t.matchHistory ?? [],
-    seasonRecord: { wins: t.wins ?? 0, losses: t.losses ?? 0 },
+    momentumBar:    t.momentumBar    ?? 65,
+    reputation:     t.reputation     ?? 10,
+    matchHistory:   t.matchHistory   ?? [],
+    seasonRecord:   { wins: t.wins ?? 0, losses: t.losses ?? 0 },
     profileData: {
-      bio: state.user?.bio || '',
-      gender: state.user?.gender || '',
-      avatar: state.user?.avatar || { type: 'initials', emoji: null },
+      bio:                  state.user?.bio                  || '',
+      gender:               state.user?.gender               || '',
+      avatar:               state.user?.avatar               || { type: 'initials', emoji: null },
       settingsChangesToday: state.user?.settingsChangesToday || 0,
-      lastSettingsChange: state.user?.lastSettingsChange || null,
-      records: state.user?.records || { wins: 0, losses: 0, honors: [] },
-      teamName: state.userTeam?.name || '',
-      stadiumName: state.userTeam?.stadiumName || '',
-      training: state.userTeam?.training ?? {},
+      lastSettingsChange:   state.user?.lastSettingsChange   || null,
+      records:              state.user?.records              || { wins: 0, losses: 0, honors: [] },
+      teamName:             state.userTeam?.name             || '',
+      stadiumName:          state.userTeam?.stadiumName      || '',
+      training:             state.userTeam?.training         ?? {},
     },
   };
 }
@@ -145,16 +149,16 @@ function extractUserState(state) {
 const GameContext = createContext(null);
 
 const initialState = {
-  user: null,
-  userTeam: null,
-  leagues: null,
-  allTeams: [],
+  user:          null,
+  userTeam:      null,
+  leagues:       null,
+  allTeams:      [],
   transferMarket: [],
-  currentMatch: null,
-  isMatchLive: false,
+  currentMatch:  null,
+  isMatchLive:   false,
   notifications: [],
-  lastUpdated: null,
-  initialized: false,
+  lastUpdated:   null,
+  initialized:   false,
 };
 
 function gameReducer(state, action) {
@@ -216,76 +220,73 @@ export function GameProvider({ children }) {
   const [state, dispatch] = useReducer(gameReducer, initialState);
   const justLoaded = useRef(false);
 
-  // ── Load from structured DB tables on mount ─────────────────
+  // ── React to Firebase Auth state changes ─────────────────────
   useEffect(() => {
-    const token = getToken();
-    if (!token) {
-      dispatch({ type: 'INIT_GAME', payload: { ...initialState, initialized: true } });
-      return;
-    }
+    const unsubscribe = onAuthStateChanged(auth, (firebaseUser) => {
+      if (!firebaseUser) {
+        dispatch({ type: 'INIT_GAME', payload: { ...initialState, initialized: true } });
+        return;
+      }
 
-    Promise.all([
-      apiGetWorld(),        // { leagues } — teams + players + staff (shared, static)
-      apiGetMatches(),      // world_matches rows (shared, dynamic)
-      apiGetStandings(),    // world_standings rows (shared, dynamic)
-      apiGetUserState(),    // { state, user } (per-user)
-    ]).then(([world, dbMatches, dbStandings, userStateRes]) => {
-      if (!world || !userStateRes?.state) {
-        if (!world) {
-          dispatch({
-            type: 'ADD_NOTIFICATION',
-            payload: {
-              id: Date.now(),
-              message: 'Game world not initialized yet. Ask the admin to seed the world.',
-              type: 'error',
-              timestamp: Date.now(),
-            },
-          });
+      Promise.all([
+        apiGetWorld(),
+        apiGetMatches(),
+        apiGetStandings(),
+        apiGetUserState(),
+      ]).then(([world, dbMatches, dbStandings, userStateRes]) => {
+        if (!world || !userStateRes?.state) {
+          if (!world) {
+            dispatch({
+              type: 'ADD_NOTIFICATION',
+              payload: {
+                id: Date.now(),
+                message: 'Game world not initialized yet. Ask the admin to seed the world.',
+                type: 'error',
+                timestamp: Date.now(),
+              },
+            });
+          }
+          dispatch({ type: 'INIT_GAME', payload: { ...initialState, initialized: true } });
+          return;
         }
-        clearToken();
+
+        const leagues  = buildLeagues(world.leagues, dbMatches, dbStandings);
+        const userTeam = buildUserTeam(leagues, userStateRes.state);
+        const user     = buildUserProfile(userStateRes.user, userStateRes.state.profileData || {});
+
+        if (!userTeam) {
+          dispatch({ type: 'INIT_GAME', payload: { ...initialState, initialized: true } });
+          return;
+        }
+
+        const updatedLeagues = leagues.map(l => ({
+          ...l,
+          teams: (l.teams || []).map(t => t.id === userTeam.id ? userTeam : t),
+        }));
+
+        justLoaded.current = true;
+        dispatch({
+          type: 'INIT_GAME',
+          payload: {
+            user,
+            userTeam,
+            leagues: updatedLeagues,
+            allTeams: updatedLeagues.flatMap(l => l.teams || []),
+            lastUpdated: Date.now(),
+          },
+        });
+      }).catch(() => {
         dispatch({ type: 'INIT_GAME', payload: { ...initialState, initialized: true } });
-        return;
-      }
-
-      const leagues = buildLeagues(world.leagues, dbMatches, dbStandings);
-      const userTeam = buildUserTeam(leagues, userStateRes.state);
-      const user = buildUserProfile(
-        { ...userStateRes.user, id: userStateRes.state.user_id },
-        userStateRes.state.profile_data || {}
-      );
-
-      if (!userTeam) {
-        clearToken();
-        dispatch({ type: 'INIT_GAME', payload: { ...initialState, initialized: true } });
-        return;
-      }
-
-      const updatedLeagues = leagues.map(l => ({
-        ...l,
-        teams: (l.teams || []).map(t => t.id === userTeam.id ? userTeam : t),
-      }));
-
-      justLoaded.current = true;
-      dispatch({
-        type: 'INIT_GAME',
-        payload: {
-          user,
-          userTeam,
-          leagues: updatedLeagues,
-          allTeams: updatedLeagues.flatMap(l => l.teams || []),
-          lastUpdated: Date.now(),
-        },
       });
-    }).catch(() => {
-      clearToken();
-      dispatch({ type: 'INIT_GAME', payload: { ...initialState, initialized: true } });
     });
+
+    return () => unsubscribe();
   }, []);
 
   // ── Auto-save per-user state on change ──────────────────────
   useEffect(() => {
     if (!state.initialized || !state.user || !state.userTeam) return;
-    if (!getToken()) return;
+    if (!auth.currentUser) return;
     if (justLoaded.current) { justLoaded.current = false; return; }
 
     const payload = extractUserState(state);
@@ -298,8 +299,8 @@ export function GameProvider({ children }) {
     setTimeout(() => dispatch({ type: 'CLEAR_NOTIFICATION', payload: note.id }), 5000);
   }, []);
 
-  const logout = useCallback(() => {
-    clearToken();
+  const logout = useCallback(async () => {
+    await signOut(auth);
     dispatch({ type: 'INIT_GAME', payload: { ...initialState, initialized: true } });
   }, []);
 

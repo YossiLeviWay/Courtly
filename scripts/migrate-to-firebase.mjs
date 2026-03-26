@@ -32,9 +32,11 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
 // ── Config ────────────────────────────────────────────────────────────────────
 
-const NEON_URL =
-  process.env.NEON_URL ||
-  'postgresql://neondb_owner:npg_qXTYNyW2Sj8E@ep-muddy-recipe-ajzg2bkg-pooler.c-3.us-east-2.aws.neon.tech/neondb?sslmode=require&channel_binding=require';
+const NEON_URL = process.env.NEON_URL;
+if (!NEON_URL) {
+  console.error('ERROR: NEON_URL environment variable is required.');
+  process.exit(1);
+}
 
 /**
  * Load the Firebase service account object.

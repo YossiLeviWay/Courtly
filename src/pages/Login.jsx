@@ -3,7 +3,7 @@ import { useNavigate } from 'react-router-dom';
 import { useGame } from '../context/GameContext.jsx';
 import { useTheme } from '../context/ThemeContext.jsx';
 import { Sun, Moon, Eye, EyeOff } from 'lucide-react';
-import { apiLogin, apiRegister, apiGetWorld, setToken } from '../api.js';
+import { apiLogin, apiRegister, apiGetWorld } from '../api.js';
 import ToastContainer from '../components/ui/ToastContainer.jsx';
 
 export default function Login() {
@@ -41,9 +41,7 @@ export default function Login() {
 
     try {
       if (mode === 'login') {
-        const { token } = await apiLogin(form.email, form.password);
-        setToken(token);
-        // Reload so GameContext re-runs its mount effect and loads game state from DB
+        await apiLogin(form.email, form.password);
         window.location.href = '/';
         return;
       }
@@ -63,18 +61,17 @@ export default function Login() {
       const league0Teams = leagues[0]?.teams || allTeams.slice(0, 10);
       const baseTeam = league0Teams[Math.floor(Math.random() * league0Teams.length)];
 
-      // 4. Register with teamId so the server creates user_team_state immediately
-      const { token } = await apiRegister(
+      // 4. Register — Firebase Auth + Firestore records created in apiRegister
+      await apiRegister(
         form.email,
         form.password,
         form.username,
         baseTeam.id,
         { players: baseTeam.players || [] },
-        form.teamName  // user's chosen team name — stored in profile_data and propagated to world tables
+        form.teamName
       );
-      setToken(token);
 
-      // 5. Reload page — GameContext will load all state fresh from DB
+      // 5. Reload page — onAuthStateChanged in GameContext will load all state
       window.location.href = '/';
     } catch (err) {
       addNotification(err.message || 'Something went wrong.', 'error');

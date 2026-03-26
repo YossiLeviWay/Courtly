@@ -1,154 +1,211 @@
-// ── Auth ────────────────────────────────────────────────────────
+import {
+  createUserWithEmailAndPassword,
+  signInWithEmailAndPassword,
+  updatePassword,
+  reauthenticateWithCredential,
+  EmailAuthProvider,
+} from 'firebase/auth';
+import {
+  doc, getDoc, getDocs, setDoc, deleteDoc,
+  collection, query, where, orderBy, writeBatch,
+} from 'firebase/firestore';
+import { auth, db } from './firebase.js';
 
-export function getToken() { return localStorage.getItem('courtly_token'); }
-export function setToken(t) { localStorage.setItem('courtly_token', t); }
-export function clearToken() { localStorage.removeItem('courtly_token'); }
-
-function authHeaders() {
-  const t = getToken();
-  return t ? { Authorization: `Bearer ${t}` } : {};
-}
+// ── Auth ─────────────────────────────────────────────────────────
 
 export async function apiRegister(email, password, username, teamId, teamData, teamName) {
-  const res = await fetch('/api/auth/register', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ email, password, username, teamId, teamData, teamName }),
+  const cred = await createUserWithEmailAndPassword(auth, email, password);
+  const uid = cred.user.uid;
+
+  const batch = writeBatch(db);
+
+  batch.set(doc(db, 'users', uid), {
+    id: uid,
+    email: email.toLowerCase(),
+    username: username || '',
+    createdAt: Date.now(),
   });
-  const data = await res.json();
-  if (!res.ok) throw Object.assign(new Error(data.error || 'Registration failed'), { status: res.status });
-  return data; // { token, userId, username }
+
+  const customName = teamName?.trim() || '';
+  batch.set(doc(db, 'user_team_state', uid), {
+    userId: uid,
+    teamId: teamId || null,
+    budget: 250,
+    facilities: {},
+    tactics: {},
+    playersState: teamData?.players ?? [],
+    fanCount: 250,
+    fanEnthusiasm: 20,
+    ticketPrice: 20,
+    teamExposure: 0,
+    chemistryGauge: 50,
+    momentumBar: 65,
+    reputation: 10,
+    matchHistory: [],
+    seasonRecord: { wins: 0, losses: 0 },
+    profileData: {
+      bio: '', avatar: { type: 'initials', emoji: null },
+      gender: '', teamName: customName, stadiumName: '',
+    },
+    updatedAt: Date.now(),
+  });
+
+  await batch.commit();
+
+  if (customName && teamId) await _propagateTeamName(teamId, customName);
+
+  return { userId: uid, username };
 }
 
 export async function apiLogin(email, password) {
-  const res = await fetch('/api/auth/login', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ email, password }),
-  });
-  const data = await res.json();
-  if (!res.ok) throw Object.assign(new Error(data.error || 'Login failed'), { status: res.status });
-  return data; // { token, userId, username, gameState }
+  const cred = await signInWithEmailAndPassword(auth, email, password);
+  const snap = await getDoc(doc(db, 'users', cred.user.uid));
+  return { userId: cred.user.uid, username: snap.data()?.username || '' };
 }
 
-// ── Legacy game state (kept for compatibility) ──────────────────
-export async function apiSaveGame(state) {
-  const token = getToken();
-  if (!token) return;
-  try {
-    await fetch('/api/game/save', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json', ...authHeaders() },
-      body: JSON.stringify({ state }),
-    });
-  } catch (err) {
-    console.error('Auto-save error:', err);
-  }
-}
-
-export async function apiLoadGame() {
-  if (!getToken()) return null;
-  try {
-    const res = await fetch('/api/game/load', { headers: authHeaders() });
-    if (!res.ok) return null;
-    const { state } = await res.json();
-    return state;
-  } catch { return null; }
-}
-
-// ── Shared World ────────────────────────────────────────────────
+// ── Shared World ─────────────────────────────────────────────────
 
 export async function apiGetWorld() {
   try {
-    const res = await fetch('/api/world/get');
-    if (!res.ok) return null;
-    const { world } = await res.json();
-    return world; // { leagues: [...] } or null
+    const [leagueSnap, teamSnap, playerSnap, staffSnap] = await Promise.all([
+      getDocs(collection(db, 'leagues')),
+      getDocs(collection(db, 'teams')),
+      getDocs(collection(db, 'players')),
+      getDocs(collection(db, 'staff')),
+    ]);
+
+    const leagues = leagueSnap.docs.map(d => d.data());
+    const teams   = teamSnap.docs.map(d => d.data());
+    const players = playerSnap.docs.map(d => d.data());
+    const staff   = staffSnap.docs.map(d => d.data());
+
+    const playersByTeam = {};
+    players.forEach(p => {
+      if (!playersByTeam[p.teamId]) playersByTeam[p.teamId] = [];
+      playersByTeam[p.teamId].push(p);
+    });
+
+    const staffByTeam = {};
+    staff.forEach(s => {
+      if (!staffByTeam[s.teamId]) staffByTeam[s.teamId] = [];
+      staffByTeam[s.teamId].push(s);
+    });
+
+    const teamsByLeague = {};
+    teams.forEach(t => {
+      if (!teamsByLeague[t.leagueId]) teamsByLeague[t.leagueId] = [];
+      teamsByLeague[t.leagueId].push({
+        ...t,
+        players: playersByTeam[t.id] || [],
+        staff:   staffByTeam[t.id]   || [],
+      });
+    });
+
+    return {
+      leagues: leagues.map(l => ({ ...l, teams: teamsByLeague[l.id] || [] })),
+    };
   } catch { return null; }
 }
 
-export async function apiSeedWorld(leagues) {
-  const res = await fetch('/api/db/seed', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ leagues }),
-  });
-  const data = await res.json();
-  if (!res.ok) throw new Error(data.error || 'Seed failed');
-  return data.world; // { leagues }
-}
-
-// Kept for backward compat
-export async function apiInitWorld(world) {
-  return apiSeedWorld(world.leagues);
-}
-
-// Admin: generate + seed world server-side (deterministic, one-time)
-export async function apiAdminSeed(secret, reset = false) {
-  const res = await fetch('/api/db/admin-seed', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ secret, reset }),
-  });
-  const data = await res.json();
-  if (!res.ok) throw new Error(data.error || 'Admin seed failed');
-  return data;
-}
-
-// ── Matches (shared, all users see same results) ────────────────
+// ── Matches ──────────────────────────────────────────────────────
 
 export async function apiGetMatches() {
   try {
-    const res = await fetch('/api/world/matches');
-    if (!res.ok) return [];
-    const { matches } = await res.json();
-    return matches || [];
+    const snap = await getDocs(
+      query(collection(db, 'matches'), orderBy('scheduledDate', 'asc'))
+    );
+    return snap.docs.map(d => d.data());
   } catch { return []; }
 }
 
-export async function apiRecordMatchResult({ matchId, leagueId, homeTeamId, awayTeamId, homeTeamName, awayTeamName, homeScore, awayScore, log }) {
+export async function apiRecordMatchResult({
+  matchId, leagueId,
+  homeTeamId, awayTeamId,
+  homeTeamName, awayTeamName,
+  homeScore, awayScore, log,
+}) {
   try {
-    await fetch('/api/world/matches', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json', ...authHeaders() },
-      body: JSON.stringify({ matchId, leagueId, homeTeamId, awayTeamId, homeTeamName, awayTeamName, homeScore, awayScore, log }),
+    // 1. Mark match as played
+    const matchBatch = writeBatch(db);
+    matchBatch.update(doc(db, 'matches', matchId), {
+      played: true, homeScore, awayScore, log: log || [],
     });
+    await matchBatch.commit();
+
+    // 2. Increment standings (requires a read first)
+    const homeRef = doc(db, 'standings', `${leagueId}_${homeTeamId}`);
+    const awayRef = doc(db, 'standings', `${leagueId}_${awayTeamId}`);
+    const [homeSnap, awaySnap] = await Promise.all([getDoc(homeRef), getDoc(awayRef)]);
+
+    const hd = homeSnap.data() || { wins: 0, losses: 0, points: 0 };
+    const ad = awaySnap.data() || { wins: 0, losses: 0, points: 0 };
+    const homeWon = homeScore > awayScore;
+    const awayWon = awayScore > homeScore;
+
+    const standBatch = writeBatch(db);
+    standBatch.set(homeRef, {
+      leagueId, teamId: homeTeamId, teamName: homeTeamName || hd.teamName || '',
+      wins:   (hd.wins   || 0) + (homeWon ? 1 : 0),
+      losses: (hd.losses || 0) + (homeWon ? 0 : 1),
+      points: (hd.points || 0) + (homeWon ? 3 : 0),
+    });
+    standBatch.set(awayRef, {
+      leagueId, teamId: awayTeamId, teamName: awayTeamName || ad.teamName || '',
+      wins:   (ad.wins   || 0) + (awayWon ? 1 : 0),
+      losses: (ad.losses || 0) + (awayWon ? 0 : 1),
+      points: (ad.points || 0) + (awayWon ? 3 : 0),
+    });
+    await standBatch.commit();
   } catch (err) {
     console.error('Record match error:', err);
   }
 }
 
-// ── Standings (shared) ──────────────────────────────────────────
+// ── Standings ────────────────────────────────────────────────────
 
 export async function apiGetStandings() {
   try {
-    const res = await fetch('/api/world/standings');
-    if (!res.ok) return [];
-    const { standings } = await res.json();
-    return standings || [];
+    const snap = await getDocs(collection(db, 'standings'));
+    return snap.docs.map(d => d.data());
   } catch { return []; }
 }
 
-// ── Transfer Market (shared) ────────────────────────────────────
+// ── Transfer Market ──────────────────────────────────────────────
 
 export async function apiGetTransferMarket() {
   try {
-    const res = await fetch('/api/world/transfer');
-    if (!res.ok) return [];
-    const { listings } = await res.json();
-    return listings || [];
+    const snap = await getDocs(
+      query(collection(db, 'transfer_market'), orderBy('listedAt', 'desc'))
+    );
+    return snap.docs.map(d => d.data());
   } catch { return []; }
 }
 
 export async function apiListPlayerForTransfer(playerData) {
   try {
-    const res = await fetch('/api/world/transfer', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json', ...authHeaders() },
-      body: JSON.stringify(playerData),
+    const existing = await getDocs(
+      query(collection(db, 'transfer_market'), where('playerId', '==', playerData.playerId))
+    );
+    const batch = writeBatch(db);
+    existing.docs.forEach(d => batch.delete(d.ref));
+
+    const newRef = doc(collection(db, 'transfer_market'));
+    batch.set(newRef, {
+      id:              newRef.id,
+      playerId:        playerData.playerId,
+      playerName:      playerData.playerName      || '',
+      position:        playerData.position        || '',
+      overallRating:   playerData.overallRating   || 0,
+      age:             playerData.age             || 0,
+      nationality:     playerData.nationality     || '',
+      askingPrice:     playerData.askingPrice,
+      sellingTeamId:   playerData.sellingTeamId,
+      sellingTeamName: playerData.sellingTeamName || '',
+      listedAt:        Date.now(),
+      playerData:      playerData.playerData      || {},
     });
-    const data = await res.json();
-    return data.id;
+    await batch.commit();
+    return newRef.id;
   } catch (err) {
     console.error('List transfer error:', err);
   }
@@ -156,59 +213,122 @@ export async function apiListPlayerForTransfer(playerData) {
 
 export async function apiDelistPlayer(listingId) {
   try {
-    await fetch(`/api/world/transfer?id=${listingId}`, {
-      method: 'DELETE',
-      headers: authHeaders(),
-    });
+    await deleteDoc(doc(db, 'transfer_market', listingId));
   } catch (err) {
     console.error('Delist error:', err);
   }
 }
 
-// ── User profile (team name, avatar, bio, etc.) ─────────────────
+// ── User profile ─────────────────────────────────────────────────
 
 export async function apiUpdateProfile(fields) {
-  const res = await fetch('/api/user/profile', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json', ...authHeaders() },
-    body: JSON.stringify(fields),
-  });
-  const data = await res.json();
-  if (!res.ok) throw new Error(data.error || 'Profile update failed');
-  return data;
+  const uid = auth.currentUser?.uid;
+  if (!uid) throw new Error('Not authenticated');
+
+  const stateRef = doc(db, 'user_team_state', uid);
+  const snap = await getDoc(stateRef);
+  if (!snap.exists()) throw new Error('User state not found');
+
+  const current = snap.data();
+  const updatedProfile = {
+    ...(current.profileData || {}),
+    ...(fields.bio                  !== undefined && { bio:                   fields.bio }),
+    ...(fields.gender               !== undefined && { gender:                fields.gender }),
+    ...(fields.avatar               !== undefined && { avatar:                fields.avatar }),
+    ...(fields.teamName             !== undefined && { teamName:              fields.teamName }),
+    ...(fields.stadiumName          !== undefined && { stadiumName:           fields.stadiumName }),
+    ...(fields.settingsChangesToday !== undefined && { settingsChangesToday:  fields.settingsChangesToday }),
+    ...(fields.lastSettingsChange   !== undefined && { lastSettingsChange:    fields.lastSettingsChange }),
+  };
+
+  const batch = writeBatch(db);
+  batch.update(stateRef, { profileData: updatedProfile, updatedAt: Date.now() });
+
+  if (fields.username !== undefined || fields.email !== undefined) {
+    const userRef = doc(db, 'users', uid);
+    const userUpdate = {};
+    if (fields.username !== undefined) userUpdate.username = fields.username;
+    if (fields.email    !== undefined) userUpdate.email    = fields.email.toLowerCase();
+    batch.update(userRef, userUpdate);
+  }
+
+  await batch.commit();
+
+  if (fields.teamName?.trim()) {
+    await _propagateTeamName(current.teamId, fields.teamName.trim());
+  }
+
+  return { success: true };
 }
 
 export async function apiChangePassword(currentPassword, newPassword) {
-  const res = await fetch('/api/auth/change-password', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json', ...authHeaders() },
-    body: JSON.stringify({ currentPassword, newPassword }),
-  });
-  const data = await res.json();
-  if (!res.ok) throw new Error(data.error || 'Password change failed');
-  return data;
+  const user = auth.currentUser;
+  if (!user) throw new Error('Not authenticated');
+  const credential = EmailAuthProvider.credential(user.email, currentPassword);
+  await reauthenticateWithCredential(user, credential);
+  await updatePassword(user, newPassword);
+  return { success: true };
 }
 
-// ── Per-user team state ─────────────────────────────────────────
+// ── Per-user team state ──────────────────────────────────────────
 
 export async function apiGetUserState() {
-  if (!getToken()) return null;
+  const uid = auth.currentUser?.uid;
+  if (!uid) return null;
   try {
-    const res = await fetch('/api/user/state', { headers: authHeaders() });
-    if (!res.ok) return null;
-    return await res.json(); // { state, user }
+    const [stateSnap, userSnap] = await Promise.all([
+      getDoc(doc(db, 'user_team_state', uid)),
+      getDoc(doc(db, 'users', uid)),
+    ]);
+    return {
+      state: stateSnap.exists() ? stateSnap.data() : null,
+      user:  userSnap.exists()  ? userSnap.data()  : null,
+    };
   } catch { return null; }
 }
 
 export async function apiSaveUserState(payload) {
-  if (!getToken()) return;
+  const uid = auth.currentUser?.uid;
+  if (!uid) return;
   try {
-    await fetch('/api/user/state', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json', ...authHeaders() },
-      body: JSON.stringify(payload),
-    });
+    await setDoc(doc(db, 'user_team_state', uid), {
+      userId:         uid,
+      teamId:         payload.teamId,
+      budget:         payload.budget         ?? 250,
+      facilities:     payload.facilities     ?? {},
+      tactics:        payload.tactics        ?? {},
+      playersState:   payload.playersState   ?? [],
+      fanCount:       payload.fanCount       ?? 250,
+      fanEnthusiasm:  payload.fanEnthusiasm  ?? 20,
+      ticketPrice:    payload.ticketPrice    ?? 20,
+      teamExposure:   payload.teamExposure   ?? 0,
+      chemistryGauge: payload.chemistryGauge ?? 50,
+      momentumBar:    payload.momentumBar    ?? 65,
+      reputation:     payload.reputation     ?? 10,
+      matchHistory:   payload.matchHistory   ?? [],
+      seasonRecord:   payload.seasonRecord   ?? { wins: 0, losses: 0 },
+      profileData:    payload.profileData    ?? {},
+      updatedAt:      Date.now(),
+    }, { merge: true });
   } catch (err) {
     console.error('Save user state error:', err);
   }
+}
+
+// ── Internal helper ──────────────────────────────────────────────
+
+async function _propagateTeamName(teamId, name) {
+  if (!teamId || !name) return;
+  const [standSnap, homeSnap, awaySnap] = await Promise.all([
+    getDocs(query(collection(db, 'standings'),    where('teamId',     '==', teamId))),
+    getDocs(query(collection(db, 'matches'),      where('homeTeamId', '==', teamId))),
+    getDocs(query(collection(db, 'matches'),      where('awayTeamId', '==', teamId))),
+  ]);
+
+  const batch = writeBatch(db);
+  standSnap.docs.forEach(d => batch.update(d.ref, { teamName:     name }));
+  homeSnap.docs.forEach(d  => batch.update(d.ref, { homeTeamName: name }));
+  awaySnap.docs.forEach(d  => batch.update(d.ref, { awayTeamName: name }));
+  batch.update(doc(db, 'teams', teamId), { name });
+  await batch.commit();
 }
