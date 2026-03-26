@@ -3,7 +3,7 @@ import { onAuthStateChanged, signOut } from 'firebase/auth';
 import { auth } from '../firebase.js';
 import {
   apiGetWorld, apiGetMatches, apiGetStandings, apiGetUserState,
-  apiSaveUserState,
+  apiGetTransferMarket, apiSaveUserState,
 } from '../api.js';
 
 // ── Build game state from Firestore data ───────────────────────
@@ -237,7 +237,8 @@ export function GameProvider({ children }) {
         apiGetMatches(),
         apiGetStandings(),
         apiGetUserState(),
-      ]).then(([world, dbMatches, dbStandings, userStateRes]) => {
+        apiGetTransferMarket(),
+      ]).then(([world, dbMatches, dbStandings, userStateRes, transferMarket]) => {
         if (!world || !userStateRes?.state) {
           if (!world) {
             dispatch({
@@ -276,6 +277,7 @@ export function GameProvider({ children }) {
             userTeam,
             leagues: updatedLeagues,
             allTeams: updatedLeagues.flatMap(l => l.teams || []),
+            transferMarket: transferMarket || [],
             lastUpdated: Date.now(),
           },
         });

@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useGame } from '../context/GameContext.jsx';
+import { apiFreeAgentRelease } from '../api.js';
 import GaugeBar from '../components/ui/GaugeBar.jsx';
 import AttrBar from '../components/ui/AttrBar.jsx';
 import PlayerAvatar from '../components/ui/PlayerAvatar.jsx';
@@ -483,10 +484,11 @@ export default function Squad() {
     dispatch({ type: 'UPDATE_TEAM', payload: { ...userTeam, players: updated } });
   }
 
-  function handleReleasePlayer(player) {
+  async function handleReleasePlayer(player) {
     const updatedPlayers = (userTeam.players || []).filter(p => p.id !== player.id);
     dispatch({ type: 'UPDATE_TEAM', payload: { ...userTeam, players: updatedPlayers } });
-    addNotification(`${player.name} has been released from the squad.`, 'info');
+    await apiFreeAgentRelease(player);
+    addNotification(`${player.name} released — now available as a free agent.`, 'info');
     setReleaseConfirm(null);
   }
 

@@ -318,7 +318,8 @@ function generateHighlightEvents(homeTeam, awayTeam, quarterScores) {
           playerId: player.id,
           team: team.name,
           teamId: team.id,
-          score: { home: homeRunning, away: awayRunning },
+          score: `${homeRunning}-${awayRunning}`,
+          quarter: q + 1,
         };
       } else if (roll < 0.42) {
         // Dunk
@@ -333,7 +334,8 @@ function generateHighlightEvents(homeTeam, awayTeam, quarterScores) {
           playerId: player.id,
           team: team.name,
           teamId: team.id,
-          score: { home: homeRunning, away: awayRunning },
+          score: `${homeRunning}-${awayRunning}`,
+          quarter: q + 1,
         };
       } else if (roll < 0.55) {
         // Layup
@@ -348,7 +350,8 @@ function generateHighlightEvents(homeTeam, awayTeam, quarterScores) {
           playerId: player.id,
           team: team.name,
           teamId: team.id,
-          score: { home: homeRunning, away: awayRunning },
+          score: `${homeRunning}-${awayRunning}`,
+          quarter: q + 1,
         };
       } else if (roll < 0.63) {
         // Foul
@@ -365,7 +368,8 @@ function generateHighlightEvents(homeTeam, awayTeam, quarterScores) {
           playerId: player.id,
           team: team.name,
           teamId: team.id,
-          score: { home: homeRunning, away: awayRunning },
+          score: `${homeRunning}-${awayRunning}`,
+          quarter: q + 1,
         };
       } else if (roll < 0.70) {
         // Turnover
@@ -380,7 +384,8 @@ function generateHighlightEvents(homeTeam, awayTeam, quarterScores) {
           playerId: player.id,
           team: team.name,
           teamId: team.id,
-          score: { home: homeRunning, away: awayRunning },
+          score: `${homeRunning}-${awayRunning}`,
+          quarter: q + 1,
         };
       } else if (roll < 0.75) {
         // Steal
@@ -395,7 +400,8 @@ function generateHighlightEvents(homeTeam, awayTeam, quarterScores) {
           playerId: player.id,
           team: team.name,
           teamId: team.id,
-          score: { home: homeRunning, away: awayRunning },
+          score: `${homeRunning}-${awayRunning}`,
+          quarter: q + 1,
         };
       } else if (roll < 0.79) {
         // Block
@@ -410,7 +416,8 @@ function generateHighlightEvents(homeTeam, awayTeam, quarterScores) {
           playerId: player.id,
           team: team.name,
           teamId: team.id,
-          score: { home: homeRunning, away: awayRunning },
+          score: `${homeRunning}-${awayRunning}`,
+          quarter: q + 1,
         };
       } else if (roll < 0.84) {
         // Timeout
@@ -432,7 +439,8 @@ function generateHighlightEvents(homeTeam, awayTeam, quarterScores) {
           playerId: null,
           team: team.name,
           teamId: team.id,
-          score: { home: homeRunning, away: awayRunning },
+          score: `${homeRunning}-${awayRunning}`,
+          quarter: q + 1,
         };
       } else if (roll < 0.87) {
         // Substitution
@@ -448,7 +456,8 @@ function generateHighlightEvents(homeTeam, awayTeam, quarterScores) {
           playerId: inPlayer.id,
           team: team.name,
           teamId: team.id,
-          score: { home: homeRunning, away: awayRunning },
+          score: `${homeRunning}-${awayRunning}`,
+          quarter: q + 1,
         };
       } else if (roll < 0.90) {
         // Technical foul (rare)
@@ -463,7 +472,8 @@ function generateHighlightEvents(homeTeam, awayTeam, quarterScores) {
           playerId: player.id,
           team: team.name,
           teamId: team.id,
-          score: { home: homeRunning, away: awayRunning },
+          score: `${homeRunning}-${awayRunning}`,
+          quarter: q + 1,
         };
       } else if (roll < 0.93) {
         // Comeback moment
@@ -478,7 +488,8 @@ function generateHighlightEvents(homeTeam, awayTeam, quarterScores) {
           playerId: null,
           team: trailingTeam.name,
           teamId: trailingTeam.id,
-          score: { home: homeRunning, away: awayRunning },
+          score: `${homeRunning}-${awayRunning}`,
+          quarter: q + 1,
         };
       } else if (roll < 0.96) {
         // Injury (rare)
@@ -493,7 +504,8 @@ function generateHighlightEvents(homeTeam, awayTeam, quarterScores) {
           playerId: player.id,
           team: team.name,
           teamId: team.id,
-          score: { home: homeRunning, away: awayRunning },
+          score: `${homeRunning}-${awayRunning}`,
+          quarter: q + 1,
         };
       } else {
         // Fight (very rare)
@@ -508,7 +520,8 @@ function generateHighlightEvents(homeTeam, awayTeam, quarterScores) {
           playerId: player.id,
           team: team.name,
           teamId: team.id,
-          score: { home: homeRunning, away: awayRunning },
+          score: `${homeRunning}-${awayRunning}`,
+          quarter: q + 1,
         };
       }
 
@@ -521,6 +534,7 @@ function generateHighlightEvents(homeTeam, awayTeam, quarterScores) {
     events.push({
       id: eventId,
       time: qStart + quarterLength,
+      quarter: q + 1,
       type: isHalfTime ? 'half_time' : 'quarter_end',
       description: isHalfTime
         ? `HALF TIME: ${homeTeam.name} ${homeRunning} – ${awayRunning} ${awayTeam.name}`
@@ -529,7 +543,7 @@ function generateHighlightEvents(homeTeam, awayTeam, quarterScores) {
       playerId: null,
       team: null,
       teamId: null,
-      score: { home: homeRunning, away: awayRunning },
+      score: `${homeRunning}-${awayRunning}`,
     });
   }
 
@@ -739,12 +753,20 @@ export function updateTeamAfterMatch(team, matchResult, isHome) {
 
   // Add to match history (keep last 20)
   const historyEntry = {
-    matchDate: matchResult.matchDate,
-    opponent: isHome ? matchResult.awayTeamName : matchResult.homeTeamName,
+    matchDate:    matchResult.matchDate,
+    opponent:     isHome ? matchResult.awayTeamName : matchResult.homeTeamName,
+    opponentId:   isHome ? matchResult.awayTeamId   : matchResult.homeTeamId,
     teamScore,
     oppScore,
-    result: won ? 'W' : 'L',
+    result:       won ? 'W' : 'L',
     isHome,
+    homeTeam:     matchResult.homeTeamName,
+    awayTeam:     matchResult.awayTeamName,
+    homeScore:    matchResult.homeScore,
+    awayScore:    matchResult.awayScore,
+    quarterScores: matchResult.quarterScores || [],
+    log:          matchResult.log          || [],
+    playerStats:  matchResult.playerStats  || {},
   };
   team.matchHistory = [historyEntry, ...(team.matchHistory ?? [])].slice(0, 20);
 

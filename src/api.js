@@ -128,6 +128,71 @@ export async function apiLogin(email, password) {
   return { userId: cred.user.uid, username: snap.data()?.username || '' };
 }
 
+// ── Player contract normalization ─────────────────────────────────
+// Migrated players may lack contractYears/salary. Derive them
+// deterministically from player id so the same player always gets
+// the same values across sessions.
+
+function _idHash(id) {
+  let h = 5381;
+  for (let i = 0; i < (id?.length ?? 0); i++) {
+    h = ((h << 5) + h + id.charCodeAt(i)) | 0;
+  }
+  return Math.abs(h);
+}
+
+function _salaryFromOvr(ovr, hash) {
+  if (ovr >= 85) return 18 + (hash % 12);   // $18–29k/yr
+  if (ovr >= 75) return 10 + (hash % 8);    // $10–17k/yr
+  if (ovr >= 65) return 5  + (hash % 5);    // $5–9k/yr
+  if (ovr >= 55) return 2  + (hash % 3);    // $2–4k/yr
+  return 1 + (hash % 2);                    // $1–2k/yr
+}
+
+function _contractYearsFromOvr(ovr, hash) {
+  if (ovr >= 80) return 2 + (hash % 3);     // 2–4 yrs
+  if (ovr >= 65) return 1 + (hash % 3);     // 1–3 yrs
+  return 1 + (hash % 2);                    // 1–2 yrs
+}
+
+function normalizePlayerForClient(p) {
+  const ovr  = p.overallRating || 60;
+  const hash = _idHash(p.id);
+  return {
+    injuryStatus:    'healthy',
+    fatigue:         10,
+    motivation:      70,
+    lastFormRating:  65,
+    seasonsInClub:   0,
+    ...p,
+    salary:        p.salary        ?? _salaryFromOvr(ovr, hash),
+    contractYears: p.contractYears ?? _contractYearsFromOvr(ovr, hash),
+    seasonsInClub: p.seasonsInClub ?? 0,
+  };
+}
+
+// ── Free-agent demand calculation (public helper) ─────────────────
+
+export function calcFreeAgentDemand(player) {
+  const ovr  = player.overallRating || 60;
+  const hash = _idHash(player.id);
+  const baseSalary = player.salary ?? _salaryFromOvr(ovr, hash);
+  const age  = player.age || 25;
+
+  // High-form players demand a premium; older players are more flexible
+  const formBonus   = ((player.lastFormRating ?? 65) - 65) / 100; // –0.35 … +0.34
+  const ageFactor   = age >= 33 ? 0.85 : age >= 30 ? 0.92 : 1.0;
+  const salaryDemand = Math.max(1, Math.round(baseSalary * (1.1 + formBonus * 0.25) * ageFactor));
+
+  const contractDemand = age >= 33 ? 1
+    : age >= 30 ? 1 + (hash % 2)
+    : ovr >= 80 ? 2 + (hash % 2)
+    : ovr >= 65 ? 1 + (hash % 2)
+    : 1;
+
+  return { salaryDemand, contractDemand };
+}
+
 // ── Shared World ─────────────────────────────────────────────────
 
 export async function apiGetWorld() {
@@ -141,7 +206,7 @@ export async function apiGetWorld() {
 
     const leagues = leagueSnap.docs.map(d => d.data());
     const teams   = teamSnap.docs.map(d => d.data());
-    const players = playerSnap.docs.map(d => d.data());
+    const players = playerSnap.docs.map(d => normalizePlayerForClient(d.data()));
     const staff   = staffSnap.docs.map(d => d.data());
 
     const playersByTeam = {};
@@ -170,6 +235,42 @@ export async function apiGetWorld() {
       leagues: leagues.map(l => ({ ...l, teams: teamsByLeague[l.id] || [] })),
     };
   } catch { return null; }
+}
+
+// ── Free Agent Market ─────────────────────────────────────────────
+
+export async function apiFreeAgentRelease(player) {
+  try {
+    const { salaryDemand, contractDemand } = calcFreeAgentDemand(player);
+    const ref = doc(collection(db, 'transfer_market'));
+    await setDoc(ref, {
+      id:             ref.id,
+      isFreeAgent:    true,
+      playerId:       player.id,
+      playerName:     player.name,
+      position:       player.position,
+      overallRating:  player.overallRating || 60,
+      age:            player.age || 25,
+      nationality:    player.nationality || '',
+      salaryDemand,    // $k / year
+      contractDemand,  // seasons
+      playerData:     player,
+      releasedAt:     Date.now(),
+    });
+  } catch (err) {
+    console.error('Free agent release error:', err);
+  }
+}
+
+export async function apiBuyFreeAgent(listingId, player, contractYears, salaryPerYear) {
+  try {
+    await deleteDoc(doc(db, 'transfer_market', listingId));
+    // Return the player object with the signed contract
+    return { ...player, contractYears, salary: salaryPerYear, seasonsInClub: 0, isOnTransferMarket: false };
+  } catch (err) {
+    console.error('Buy free agent error:', err);
+    return null;
+  }
 }
 
 // ── Matches ──────────────────────────────────────────────────────

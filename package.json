@@ -9,7 +9,8 @@
     "lint": "eslint .",
     "preview": "vite preview",
     "migrate": "node scripts/migrate-to-firebase.mjs",
-    "import-users": "node scripts/import-users-to-firebase-auth.mjs"
+    "import-users": "node scripts/import-users-to-firebase-auth.mjs",
+    "regenerate-schedule": "node scripts/regenerate-schedule.mjs"
   },
   "dependencies": {
     "firebase": "^12.11.0",
