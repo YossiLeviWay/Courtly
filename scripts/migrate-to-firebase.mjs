@@ -1,13 +1,19 @@
 /**
  * Courtly — One-time migration script: Neon PostgreSQL → Firebase Firestore
  *
- * Prerequisites:
- *   1. Download your Firebase service account key:
- *      Firebase Console → Project Settings → Service Accounts → Generate new private key
- *      Save the file as:  scripts/serviceAccountKey.json
+ * Credentials (pick one):
+ *   A) Environment variable (CI / GitHub Actions):
+ *        FIREBASE_SERVICE_ACCOUNT_KEY='{"type":"service_account",...}'
  *
- *   2. Run:
- *      node scripts/migrate-to-firebase.mjs
+ *   B) Local file (for running on your machine):
+ *        Save scripts/serviceAccountKey.json  (already in .gitignore)
+ *
+ * Run locally:
+ *   node scripts/migrate-to-firebase.mjs
+ *
+ * Run via GitHub Actions:
+ *   Trigger the "Migrate to Firebase" workflow manually from the Actions tab.
+ *   (Requires FIREBASE_SERVICE_ACCOUNT_KEY and NEON_URL secrets.)
  *
  * What this script does:
  *   - Reads world_data, world_matches, world_standings, users,
@@ -18,12 +24,10 @@
  *   - Uses batched writes (≤ 500 ops/batch) to stay within Firestore limits
  */
 
-import { createRequire } from 'module';
 import { readFileSync, existsSync } from 'fs';
 import { fileURLToPath } from 'url';
 import path from 'path';
 
-const require = createRequire(import.meta.url);
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
 // ── Config ────────────────────────────────────────────────────────────────────
@@ -32,7 +36,37 @@ const NEON_URL =
   process.env.NEON_URL ||
   'postgresql://neondb_owner:npg_qXTYNyW2Sj8E@ep-muddy-recipe-ajzg2bkg-pooler.c-3.us-east-2.aws.neon.tech/neondb?sslmode=require&channel_binding=require';
 
-const SERVICE_ACCOUNT_PATH = path.join(__dirname, 'serviceAccountKey.json');
+/**
+ * Load the Firebase service account object.
+ * Priority: FIREBASE_SERVICE_ACCOUNT_KEY env var → local serviceAccountKey.json file.
+ */
+function loadServiceAccount() {
+  if (process.env.FIREBASE_SERVICE_ACCOUNT_KEY) {
+    try {
+      return JSON.parse(process.env.FIREBASE_SERVICE_ACCOUNT_KEY);
+    } catch {
+      console.error('ERROR: FIREBASE_SERVICE_ACCOUNT_KEY is not valid JSON.');
+      process.exit(1);
+    }
+  }
+
+  const filePath = path.join(__dirname, 'serviceAccountKey.json');
+  if (existsSync(filePath)) {
+    return JSON.parse(readFileSync(filePath, 'utf8'));
+  }
+
+  console.error(`
+ERROR: No Firebase credentials found.
+
+Provide one of:
+  A) Set the FIREBASE_SERVICE_ACCOUNT_KEY environment variable with the JSON content.
+  B) Save the key file as: scripts/serviceAccountKey.json
+
+To get the key:
+  Firebase Console → Project Settings → Service Accounts → Generate new private key
+`);
+  process.exit(1);
+}
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -62,26 +96,9 @@ async function batchSet(db, items) {
 // ── Main ──────────────────────────────────────────────────────────────────────
 
 async function main() {
-  // 1. Validate service account key
-  if (!existsSync(SERVICE_ACCOUNT_PATH)) {
-    console.error(`
-ERROR: Service account key not found at:
-  ${SERVICE_ACCOUNT_PATH}
-
-Steps to get it:
-  1. Open https://console.firebase.google.com/
-  2. Select project "courtly-660c3"
-  3. Go to Project Settings → Service Accounts
-  4. Click "Generate new private key"
-  5. Save the downloaded file as: scripts/serviceAccountKey.json
-  6. Re-run: node scripts/migrate-to-firebase.mjs
-`);
-    process.exit(1);
-  }
-
-  // 2. Init Firebase Admin
+  // 1. Load credentials and init Firebase Admin
+  const serviceAccount = loadServiceAccount();
   const admin = (await import('firebase-admin')).default;
-  const serviceAccount = JSON.parse(readFileSync(SERVICE_ACCOUNT_PATH, 'utf8'));
   admin.initializeApp({
     credential: admin.credential.cert(serviceAccount),
     projectId: 'courtly-660c3',
