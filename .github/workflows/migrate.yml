@@ -3,29 +3,28 @@ name: Migrate to Firebase
 on:
   workflow_dispatch:
     inputs:
-      confirm:
-        description: 'Type "migrate" to confirm you want to run the migration'
+      action:
+        description: 'Type "migrate" to confirm'
         required: true
 
 jobs:
   migrate:
     runs-on: ubuntu-latest
-    if: ${{ github.event.inputs.confirm == 'migrate' }}
-
+    if: github.event.inputs.action == 'migrate'
     steps:
       - uses: actions/checkout@v4
-
-      - name: Setup Node
-        uses: actions/setup-node@v4
+      
+      - uses: actions/setup-node@v4
         with:
-          node-version: 20
-          cache: npm
+          node-version: '22'
+          # הסרנו את ה-cache שגרם לשגיאה
 
       - name: Install dependencies
-        run: npm ci
+        # משתמשים ב-install רגיל במקום ci כדי לעקוף את בעיית ה-lock file
+        run: npm install --no-package-lock
 
-      - name: Run migration
+      - name: Run Migration Script
         env:
-          FIREBASE_SERVICE_ACCOUNT_KEY: ${{ secrets.FIREBASE_SERVICE_ACCOUNT_KEY }}
           NEON_URL: ${{ secrets.NEON_URL }}
-        run: npm run migrate
+          FIREBASE_SERVICE_ACCOUNT_KEY: ${{ secrets.FIREBASE_SERVICE_ACCOUNT_KEY }}
+        run: node scripts/migrate-to-firebase.mjs
