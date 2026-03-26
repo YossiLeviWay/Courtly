@@ -47,7 +47,7 @@ function ProtectedRoute({ children }) {
 
 export default function App() {
   return (
-    <BrowserRouter>
+    <BrowserRouter basename="/Courtly">
       <Routes>
         <Route path="/login" element={<Login />} />
         <Route path="/" element={

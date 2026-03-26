@@ -4,6 +4,7 @@ on:
   push:
     branches:
       - main
+      - claude/create-courtly-game-app-K0miF
 
 permissions:
   contents: read
