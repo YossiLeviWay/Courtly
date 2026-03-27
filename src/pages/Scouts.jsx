@@ -158,12 +158,111 @@ function daysRemaining(scout) {
   return Math.max(0, 14 - missionElapsedDays(scout.missionStarted));
 }
 
+// ── Staff Scout level from playerEvaluation ability (0–100) → 1–3 ──
+
+function staffScoutLevel(staffMember) {
+  const ability = staffMember?.playerEvaluation ?? staffMember?.abilities?.playerEvaluation ?? 50;
+  if (ability >= 80) return 3;
+  if (ability >= 55) return 2;
+  return 1;
+}
+
+// ── Staff Scout Card ──────────────────────────────────────────────
+
+function StaffScoutCard({ staffMember, onPickRegion, onRecall, isPicking, tick }) {
+  const level       = staffScoutLevel(staffMember);
+  const isOnMission = staffMember.missionStatus === 'scouting';
+  const isDone      = isOnMission && missionComplete(staffMember);
+  const progress    = missionProgress(staffMember);
+  const remaining   = daysRemaining(staffMember);
+
+  return (
+    <div className="card" style={{ position: 'relative', borderTop: '3px solid var(--color-primary)' }}>
+      <div style={{
+        position: 'absolute', top: -10, right: 12,
+        background: 'var(--color-primary)', color: 'white',
+        fontSize: '0.55rem', fontWeight: 800, letterSpacing: 0.5,
+        padding: '2px 7px', borderRadius: 99, textTransform: 'uppercase',
+      }}>Club Staff</div>
+
+      <div style={{ display: 'flex', gap: 12, alignItems: 'flex-start', marginBottom: 12, marginTop: 6 }}>
+        <div style={{
+          width: 44, height: 44, borderRadius: '50%',
+          background: 'var(--color-primary-100)',
+          display: 'flex', alignItems: 'center', justifyContent: 'center',
+          fontSize: 22, flexShrink: 0,
+        }}>🔭</div>
+        <div style={{ flex: 1 }}>
+          <div style={{ fontWeight: 700, marginBottom: 2 }}>{staffMember.name}</div>
+          <div style={{ display: 'flex', gap: 4, marginBottom: 4 }}>{renderStars(level)}</div>
+          <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
+            <span className="badge" style={{ background: 'var(--bg-muted)', fontSize: '0.6rem' }}>Staff Scout</span>
+            <span className="badge" style={{ background: 'var(--bg-muted)', fontSize: '0.6rem' }}>
+              Eval: {staffMember.playerEvaluation ?? staffMember.abilities?.playerEvaluation ?? '?'}
+            </span>
+          </div>
+        </div>
+      </div>
+
+      {isOnMission && !isDone && (
+        <div style={{ marginBottom: 10 }}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 4, fontSize: 'var(--font-size-sm)' }}>
+            <span style={{ color: 'var(--text-muted)' }}><Send size={12} style={{ marginRight: 4 }} />Scouting {staffMember.missionTarget}</span>
+            <span style={{ fontWeight: 600 }}><Clock size={12} style={{ marginRight: 3 }} />{remaining.toFixed(1)}d left</span>
+          </div>
+          <div style={{ height: 6, borderRadius: 99, background: 'var(--border-color)', overflow: 'hidden' }}>
+            <div style={{ height: '100%', borderRadius: 99, background: 'var(--color-primary)', width: `${progress}%`, transition: 'width 0.3s' }} />
+          </div>
+        </div>
+      )}
+
+      {isDone ? (
+        <>
+          <div style={{ padding: '8px 12px', borderRadius: 'var(--radius)', background: 'rgba(34,197,94,0.1)', border: '1px solid rgba(34,197,94,0.3)', marginBottom: 10, display: 'flex', alignItems: 'center', gap: 6 }}>
+            <CheckCircle size={14} color="#22c55e" />
+            <span style={{ fontSize: 'var(--font-size-sm)', fontWeight: 600, color: '#22c55e' }}>Mission complete — report ready!</span>
+          </div>
+          <button className="btn btn-primary" style={{ width: '100%' }} onClick={() => onRecall(staffMember.id, true)}>
+            <CheckCircle size={14} /> Collect Report
+          </button>
+        </>
+      ) : isOnMission ? (
+        <button className="btn" style={{ width: '100%', fontSize: 'var(--font-size-sm)' }} onClick={() => onRecall(staffMember.id, false)}>
+          <X size={13} /> Recall Scout
+        </button>
+      ) : isPicking ? (
+        <div>
+          <div style={{ fontSize: 'var(--font-size-sm)', fontWeight: 600, marginBottom: 8 }}>Select region to scout:</div>
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 6, marginBottom: 8 }}>
+            {REGIONS.map(r => (
+              <button key={r} className="btn" style={{ fontSize: 'var(--font-size-xs)', padding: '6px 8px' }} onClick={() => onPickRegion(staffMember.id, r)}>
+                {r}
+              </button>
+            ))}
+          </div>
+          <button className="btn" style={{ width: '100%', fontSize: 'var(--font-size-sm)' }} onClick={() => onPickRegion(null, null)}>Cancel</button>
+        </div>
+      ) : (
+        <button className="btn btn-primary" style={{ width: '100%' }} onClick={() => onPickRegion(staffMember.id, null)}>
+          <Send size={14} /> Send on Mission
+        </button>
+      )}
+    </div>
+  );
+}
+
 // ── Main Page ────────────────────────────────────────────────────
 
 export default function Scouts() {
   const { state, dispatch, addNotification } = useGame();
   const userTeam = state.userTeam;
   const scouts = useMemo(() => userTeam?.scouts ?? [], [userTeam]);
+
+  // Staff members with Scout role
+  const staffScouts = useMemo(() =>
+    (userTeam?.staff ?? []).filter(s => s.role === 'Scout' || s.position === 'Scout'),
+    [userTeam]
+  );
 
   // Tick state to refresh mission timers
   const [tick, setTick] = useState(0);
@@ -172,8 +271,9 @@ export default function Scouts() {
     return () => clearInterval(id);
   }, []);
 
-  // Pending mission-target selection: scoutId -> region string
-  const [pendingMission, setPendingMission] = useState(null); // { scoutId }
+  // Pending mission-target selection (hired scouts and staff scouts)
+  const [pendingMission, setPendingMission]       = useState(null); // { scoutId }
+  const [pendingStaffMission, setPendingStaffMission] = useState(null); // staffMember.id
 
   // Scouting reports: array of { scoutId, prospects, dismissed }
   // Derived from scouts that have completed missions
@@ -298,12 +398,62 @@ export default function Scouts() {
     setDismissedProspects(prev => new Set([...prev, prospectId]));
   }
 
+  // ── Staff scout mission handlers ────────────────────────────
+
+  function handleStaffPickRegion(staffId, region) {
+    if (!staffId) { setPendingStaffMission(null); return; }
+    if (!region)  { setPendingStaffMission(staffId); return; }
+    // Send the staff scout on mission
+    const updatedStaff = (userTeam.staff ?? []).map(s =>
+      s.id === staffId
+        ? { ...s, missionStatus: 'scouting', missionTarget: region, missionDaysLeft: 14, missionStarted: Date.now() }
+        : s
+    );
+    dispatch({ type: 'UPDATE_TEAM', payload: { ...userTeam, staff: updatedStaff } });
+    setPendingStaffMission(null);
+    addNotification(`Staff scout sent to ${region} on a 14-day mission!`, 'success');
+  }
+
+  function handleStaffRecall(staffId, collectReport) {
+    const updatedStaff = (userTeam.staff ?? []).map(s =>
+      s.id === staffId
+        ? { ...s, missionStatus: 'idle', missionTarget: null, missionDaysLeft: 0, missionStarted: null }
+        : s
+    );
+    dispatch({ type: 'UPDATE_TEAM', payload: { ...userTeam, staff: updatedStaff } });
+    addNotification(collectReport ? 'Staff scout report collected!' : 'Staff scout recalled from mission.', 'info');
+  }
+
   return (
     <div className="animate-fade-in">
       <div className="page-header">
         <h1>🔭 Scout System</h1>
         <p>Send scouts on missions to find prospects from around the world</p>
       </div>
+
+      {/* ── Club Staff Scouts ─────────────────────────────────── */}
+      {staffScouts.length > 0 && (
+        <div style={{ marginBottom: 32 }}>
+          <h2 style={{ margin: '0 0 8px', fontSize: 'var(--font-size-lg)', fontWeight: 700 }}>
+            Club Staff Scouts
+          </h2>
+          <p style={{ color: 'var(--text-muted)', fontSize: 'var(--font-size-sm)', marginBottom: 16, marginTop: 0 }}>
+            Staff members with a Scout role — managed via the Staff page
+          </p>
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(300px, 1fr))', gap: 16 }}>
+            {staffScouts.map(s => (
+              <StaffScoutCard
+                key={s.id}
+                staffMember={s}
+                isPicking={pendingStaffMission === s.id}
+                onPickRegion={handleStaffPickRegion}
+                onRecall={handleStaffRecall}
+                tick={tick}
+              />
+            ))}
+          </div>
+        </div>
+      )}
 
       {/* ── Scout Roster ──────────────────────────────────────── */}
       <div style={{ marginBottom: 32 }}>

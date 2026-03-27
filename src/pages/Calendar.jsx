@@ -1,6 +1,6 @@
 import { useState, useMemo } from 'react';
 import { useGame } from '../context/GameContext.jsx';
-import { Calendar as CalendarIcon, Clock, MapPin, Plus, ChevronLeft, ChevronRight, Zap } from 'lucide-react';
+import { Calendar as CalendarIcon, Clock, MapPin, Plus, ChevronLeft, ChevronRight, Zap, X } from 'lucide-react';
 import { getNextMatch, formatMatchDate, getTimeUntilMatch } from '../engine/gameScheduler.js';
 import { useNavigate } from 'react-router-dom';
 
@@ -10,47 +10,193 @@ const DAYS = ['Su','Mo','Tu','We','Th','Fr','Sa'];
 function getDaysInMonth(year, month) {
   return new Date(year, month + 1, 0).getDate();
 }
-
 function getFirstDayOfMonth(year, month) {
   return new Date(year, month, 1).getDay();
 }
+
+// ── Opponent Fixture Modal ─────────────────────────────────────
+
+function OpponentModal({ team, opponentId, userTeam, allMatches, scouts, onClose }) {
+  const opponentMatches = useMemo(() =>
+    allMatches
+      .filter(m => m.homeTeamId === opponentId || m.awayTeamId === opponentId)
+      .sort((a, b) => a.scheduledDate - b.scheduledDate),
+    [allMatches, opponentId]
+  );
+
+  const nextUserMatch = useMemo(() =>
+    allMatches
+      .filter(m => !m.played && (m.homeTeamId === userTeam?.id || m.awayTeamId === userTeam?.id))
+      .sort((a, b) => a.scheduledDate - b.scheduledDate)[0] || null,
+    [allMatches, userTeam]
+  );
+
+  const isNextOpponent =
+    nextUserMatch &&
+    (nextUserMatch.homeTeamId === opponentId || nextUserMatch.awayTeamId === opponentId);
+
+  // Scout intel: show if user has any active scout and this is the next opponent
+  const activeScout = scouts?.find(s => s.missionStatus === 'scouting');
+  const showScoutIntel = isNextOpponent && activeScout;
+
+  // Build opponent intel from match history
+  const opponentWins   = opponentMatches.filter(m => m.played && ((m.homeTeamId === opponentId && m.result?.homeScore > m.result?.awayScore) || (m.awayTeamId === opponentId && m.result?.awayScore > m.result?.homeScore))).length;
+  const opponentLosses = opponentMatches.filter(m => m.played).length - opponentWins;
+
+  const upcoming = opponentMatches.filter(m => !m.played);
+  const past     = opponentMatches.filter(m =>  m.played);
+
+  return (
+    <div className="modal-overlay" onClick={onClose}>
+      <div className="modal" onClick={e => e.stopPropagation()} style={{ maxWidth: 560 }}>
+        <div className="modal-header">
+          <h3 className="card-title">{team?.name || 'Opponent'} — Fixtures</h3>
+          <button className="btn btn-ghost btn-sm" onClick={onClose}><X size={16} /></button>
+        </div>
+
+        <div className="modal-body" style={{ maxHeight: '70vh', overflowY: 'auto' }}>
+          {/* Scout Intel Banner */}
+          {showScoutIntel && (
+            <div style={{
+              marginBottom: 16, padding: '12px 16px', borderRadius: 'var(--radius)',
+              background: 'rgba(232,98,26,0.06)', border: '1px solid rgba(232,98,26,0.2)',
+            }}>
+              <div style={{ fontWeight: 700, fontSize: 'var(--font-size-sm)', marginBottom: 6, display: 'flex', alignItems: 'center', gap: 6 }}>
+                🔭 Scout Intel — {activeScout.name} reporting from {activeScout.missionTarget}
+              </div>
+              <div style={{ fontSize: 'var(--font-size-xs)', color: 'var(--text-muted)', lineHeight: 1.6 }}>
+                Your scout is active and has flagged this as your next opponent. Based on available data:
+              </div>
+              <div style={{ marginTop: 8, display: 'flex', gap: 12, flexWrap: 'wrap' }}>
+                <div style={{ padding: '6px 10px', background: 'var(--bg-muted)', borderRadius: 'var(--radius-sm)', fontSize: 'var(--font-size-xs)', fontWeight: 600 }}>
+                  📊 Season: {opponentWins}W–{opponentLosses}L
+                </div>
+                <div style={{ padding: '6px 10px', background: 'var(--bg-muted)', borderRadius: 'var(--radius-sm)', fontSize: 'var(--font-size-xs)', fontWeight: 600 }}>
+                  🏀 {upcoming.length} games remaining
+                </div>
+                {past.length > 0 && (
+                  <div style={{ padding: '6px 10px', background: past[past.length-1]?.result ? 'rgba(34,197,94,0.1)' : 'var(--bg-muted)', borderRadius: 'var(--radius-sm)', fontSize: 'var(--font-size-xs)', fontWeight: 600 }}>
+                    Last result: {(() => {
+                      const m = past[past.length-1];
+                      if (!m?.result) return '—';
+                      const won = m.homeTeamId === opponentId ? m.result.homeScore > m.result.awayScore : m.result.awayScore > m.result.homeScore;
+                      return (won ? '✓ Win' : '✗ Loss') + ` ${m.result.homeScore}–${m.result.awayScore}`;
+                    })()}
+                  </div>
+                )}
+              </div>
+            </div>
+          )}
+
+          {/* Upcoming matches */}
+          {upcoming.length > 0 && (
+            <div style={{ marginBottom: 16 }}>
+              <div style={{ fontSize: 'var(--font-size-xs)', fontWeight: 700, textTransform: 'uppercase', letterSpacing: 1, color: 'var(--text-muted)', marginBottom: 8 }}>
+                Upcoming ({upcoming.length})
+              </div>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+                {upcoming.slice(0, 6).map(m => {
+                  const isHome = m.homeTeamId === opponentId;
+                  const opp = isHome ? m.awayTeamName : m.homeTeamName;
+                  return (
+                    <div key={m.id} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '8px 12px', background: 'var(--bg-muted)', borderRadius: 'var(--radius-sm)', fontSize: 'var(--font-size-sm)' }}>
+                      <div>
+                        <span className={`badge ${isHome ? 'badge-orange' : 'badge-gray'}`} style={{ fontSize: '0.55rem', marginRight: 6 }}>
+                          {isHome ? 'H' : 'A'}
+                        </span>
+                        vs {opp}
+                      </div>
+                      <span style={{ color: 'var(--text-muted)', fontSize: 'var(--font-size-xs)' }}>
+                        {formatMatchDate(m.scheduledDate)}
+                      </span>
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+          )}
+
+          {/* Past results */}
+          {past.length > 0 && (
+            <div>
+              <div style={{ fontSize: 'var(--font-size-xs)', fontWeight: 700, textTransform: 'uppercase', letterSpacing: 1, color: 'var(--text-muted)', marginBottom: 8 }}>
+                Results ({past.length})
+              </div>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+                {[...past].reverse().slice(0, 6).map(m => {
+                  const isHome = m.homeTeamId === opponentId;
+                  const opp = isHome ? m.awayTeamName : m.homeTeamName;
+                  const won = isHome
+                    ? m.result?.homeScore > m.result?.awayScore
+                    : m.result?.awayScore > m.result?.homeScore;
+                  return (
+                    <div key={m.id} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '8px 12px', background: 'var(--bg-muted)', borderRadius: 'var(--radius-sm)', fontSize: 'var(--font-size-sm)' }}>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                        <span className={`badge ${won ? 'badge-green' : 'badge-red'}`} style={{ fontSize: '0.55rem' }}>{won ? 'W' : 'L'}</span>
+                        vs {opp}
+                      </div>
+                      <span style={{ fontWeight: 700 }}>{m.result?.homeScore}–{m.result?.awayScore}</span>
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+          )}
+
+          {opponentMatches.length === 0 && (
+            <div className="empty-state">
+              <div className="empty-state-icon">🏀</div>
+              <div className="empty-state-title">No fixtures found</div>
+            </div>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ── Main Calendar Page ────────────────────────────────────────
 
 export default function Calendar() {
   const { state, dispatch } = useGame();
   const navigate = useNavigate();
   const team = state.userTeam;
-  const [activeTab, setActiveTab] = useState('all');
+  const [activeTab, setActiveTab]     = useState('all');
   const [currentDate, setCurrentDate] = useState(new Date());
   const [showAddEvent, setShowAddEvent] = useState(false);
-  const [newEvent, setNewEvent] = useState({ title: '', date: '', description: '' });
+  const [newEvent, setNewEvent]       = useState({ title: '', date: '', description: '' });
+  const [selectedOpponent, setSelectedOpponent] = useState(null); // { id, name }
 
-  // Use the Firestore-backed schedule from state (never generate locally)
-  // This ensures the schedule is stable across refreshes
+  // Firestore-backed schedule from state (stable across refreshes)
   const schedule = useMemo(() => {
     if (!team || !state.leagues?.length) return [];
-    // Find user's league and return its full schedule
     const userLeague = state.leagues.find(l => l.teams?.some(t => t.id === team.id));
     return userLeague?.schedule || [];
   }, [team, state.leagues]);
+
+  // All league matches (for opponent modal)
+  const allLeagueMatches = useMemo(() =>
+    (state.leagues || []).flatMap(l => l.schedule || []),
+    [state.leagues]
+  );
 
   const teamMatches = useMemo(() =>
     schedule.filter(m => m.homeTeamId === team?.id || m.awayTeamId === team?.id),
     [schedule, team]
   );
 
-  const nextMatch = useMemo(() => teamMatches.find(m => !m.played && m.scheduledDate > Date.now()), [teamMatches]);
-  const pastMatches = useMemo(() => teamMatches.filter(m => m.played).sort((a,b) => b.scheduledDate - a.scheduledDate), [teamMatches]);
+  const nextMatch   = useMemo(() => teamMatches.find(m => !m.played && m.scheduledDate > Date.now()), [teamMatches]);
+  const pastMatches = useMemo(() => teamMatches.filter(m =>  m.played).sort((a,b) => b.scheduledDate - a.scheduledDate), [teamMatches]);
   const upcomingMatches = useMemo(() => teamMatches.filter(m => !m.played).sort((a,b) => a.scheduledDate - b.scheduledDate), [teamMatches]);
 
   const events = team?.calendarEvents || [];
+  const scouts = team?.scouts || [];
 
-  // Calendar grid
   const year = currentDate.getFullYear();
   const month = currentDate.getMonth();
   const daysInMonth = getDaysInMonth(year, month);
   const firstDay = getFirstDayOfMonth(year, month);
 
-  // Match dates in current month (as day numbers)
   const matchDays = new Set(
     teamMatches
       .filter(m => {
@@ -60,10 +206,8 @@ export default function Calendar() {
       .map(m => new Date(m.scheduledDate).getDate())
   );
 
-  const getTeamName = (id) => {
-    const t = state.allTeams?.find(t => t.id === id);
-    return t?.name || 'Unknown';
-  };
+  const getTeamById = id => state.allTeams?.find(t => t.id === id);
+  const getTeamName = id => getTeamById(id)?.name || 'Unknown';
 
   const filteredMatches = activeTab === 'past' ? pastMatches
     : activeTab === 'upcoming' ? upcomingMatches
@@ -78,6 +222,13 @@ export default function Calendar() {
     setNewEvent({ title: '', date: '', description: '' });
     setShowAddEvent(false);
   };
+
+  function handleOpponentClick(match) {
+    const isHome = match.homeTeamId === team?.id;
+    const oppId   = isHome ? match.awayTeamId : match.homeTeamId;
+    const oppName = isHome ? match.awayTeamName : match.homeTeamName;
+    setSelectedOpponent({ id: oppId, name: oppName });
+  }
 
   return (
     <div className="animate-fade-in">
@@ -154,17 +305,26 @@ export default function Calendar() {
             </div>
           ) : (
             <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-              {filteredMatches.slice(0, 18).map((match, i) => {
+              {filteredMatches.slice(0, 18).map((match) => {
                 const isHome = match.homeTeamId === team?.id;
-                const opponent = getTeamName(isHome ? match.awayTeamId : match.homeTeamId);
+                const oppId  = isHome ? match.awayTeamId : match.homeTeamId;
+                const opponent = getTeamName(oppId);
                 const isPast = match.played;
                 const result = match.result;
                 const userScore = result ? (isHome ? result.homeScore : result.awayScore) : null;
-                const oppScore = result ? (isHome ? result.awayScore : result.homeScore) : null;
+                const oppScore  = result ? (isHome ? result.awayScore  : result.homeScore) : null;
                 const won = userScore > oppScore;
+                const isNextOpponent = nextMatch && (nextMatch.homeTeamId === oppId || nextMatch.awayTeamId === oppId) && !isPast;
+                const hasScout = scouts.some(s => s.missionStatus === 'scouting');
 
                 return (
-                  <div key={match.id} className="card" style={{ padding: '12px 16px' }}>
+                  <div
+                    key={match.id}
+                    className="card"
+                    style={{ padding: '12px 16px', cursor: 'pointer', transition: 'box-shadow 0.15s' }}
+                    onClick={() => handleOpponentClick(match)}
+                    title="Click to see this team's fixtures"
+                  >
                     <div className="flex items-center justify-between">
                       <div>
                         <div className="flex items-center gap-2 mb-1">
@@ -173,7 +333,12 @@ export default function Calendar() {
                           </span>
                           <span className="text-xs text-muted">{formatMatchDate(match.scheduledDate)}</span>
                         </div>
-                        <div className="font-semibold text-sm">vs {opponent}</div>
+                        <div className="flex items-center gap-2">
+                          <div className="font-semibold text-sm">vs {opponent}</div>
+                          {isNextOpponent && hasScout && (
+                            <span className="badge badge-orange" style={{ fontSize: '0.55rem' }}>🔭 Scout</span>
+                          )}
+                        </div>
                       </div>
                       <div className="text-right">
                         {isPast && result ? (
@@ -201,11 +366,16 @@ export default function Calendar() {
                   <div className="empty-state-title">No matches found</div>
                 </div>
               )}
+              {filteredMatches.length > 0 && (
+                <div style={{ fontSize: 'var(--font-size-xs)', color: 'var(--text-muted)', textAlign: 'center', marginTop: 4 }}>
+                  Click any fixture to view that team's schedule
+                </div>
+              )}
             </div>
           )}
         </div>
 
-        {/* Mini Calendar + Deadlines */}
+        {/* Mini Calendar + Season Summary + Deadlines */}
         <div>
           <div className="card mb-4">
             <div className="card-header">
@@ -228,8 +398,7 @@ export default function Calendar() {
                 const hasMatch = matchDays.has(day);
                 return (
                   <div key={day} style={{
-                    padding: '6px 2px',
-                    borderRadius: 6,
+                    padding: '6px 2px', borderRadius: 6,
                     fontSize: 'var(--font-size-xs)',
                     fontWeight: isToday || hasMatch ? 700 : 400,
                     background: isToday ? 'var(--color-primary)' : hasMatch ? 'var(--color-primary-100)' : 'transparent',
@@ -263,7 +432,6 @@ export default function Calendar() {
                 <div style={{ fontSize: 'var(--font-size-xs)', color: 'var(--text-muted)', fontWeight: 700 }}>PLAYED</div>
               </div>
             </div>
-            {/* Form (last 5) */}
             {pastMatches.length > 0 && (
               <div>
                 <div style={{ fontSize: 'var(--font-size-xs)', color: 'var(--text-muted)', fontWeight: 700, marginBottom: 6, textTransform: 'uppercase', letterSpacing: 1 }}>Form (last 5)</div>
@@ -292,9 +460,9 @@ export default function Calendar() {
             <div className="card-title mb-3">Key Deadlines</div>
             {[
               { label: 'Youth Academy Draft', desc: '1st of every month', icon: '🌱', color: 'badge-green' },
-              { label: 'Training Reset', desc: 'Every 7 days', icon: '🏋️', color: 'badge-blue' },
-              { label: 'Transfer Window', desc: 'Pre-season & mid-season', icon: '🔄', color: 'badge-orange' },
-              { label: 'Season End', desc: '18 matches played', icon: '🏆', color: 'badge-yellow' },
+              { label: 'Training Reset',      desc: 'Every 7 days',       icon: '🏋️', color: 'badge-blue'  },
+              { label: 'Transfer Window',     desc: 'Pre-season & mid-season', icon: '🔄', color: 'badge-orange' },
+              { label: 'Season End',          desc: '18 matches played',  icon: '🏆', color: 'badge-yellow' },
             ].map(item => (
               <div key={item.label} className="flex items-center gap-3" style={{ marginBottom: 12 }}>
                 <span style={{ fontSize: '1.2rem' }}>{item.icon}</span>
@@ -337,6 +505,18 @@ export default function Calendar() {
             </div>
           </div>
         </div>
+      )}
+
+      {/* Opponent Fixture Modal */}
+      {selectedOpponent && (
+        <OpponentModal
+          team={getTeamById(selectedOpponent.id)}
+          opponentId={selectedOpponent.id}
+          userTeam={team}
+          allMatches={allLeagueMatches}
+          scouts={scouts}
+          onClose={() => setSelectedOpponent(null)}
+        />
       )}
     </div>
   );

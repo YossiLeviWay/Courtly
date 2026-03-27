@@ -72,6 +72,7 @@ function normalizeUser(u) {
     id:        u.id,
     email:     u.email    ?? '',
     username:  u.username ?? '',
+    isAdmin:   u.isAdmin  ?? false,
     createdAt: u.createdAt ?? u.created_at ?? Date.now(),
   };
 }
@@ -522,6 +523,37 @@ export async function apiSaveUserState(payload) {
     }, { merge: true });
   } catch (err) {
     console.error('Save user state error:', err);
+  }
+}
+
+// ── Admin APIs ───────────────────────────────────────────────
+
+/** Batch-update the scheduledDate of a set of match documents (one round). */
+export async function apiUpdateRoundDates(matchIds, newTimestampMs) {
+  if (!matchIds?.length) return;
+  const batch = writeBatch(db);
+  for (const matchId of matchIds) {
+    batch.update(doc(db, 'matches', matchId), { scheduledDate: newTimestampMs });
+  }
+  await batch.commit();
+}
+
+/** Get all user profiles + team states (admin only). */
+export async function apiGetAllUserStates() {
+  try {
+    const [statesSnap, usersSnap] = await Promise.all([
+      getDocs(collection(db, 'user_team_state')),
+      getDocs(collection(db, 'users')),
+    ]);
+    const users = {};
+    usersSnap.docs.forEach(d => { users[d.id] = normalizeUser(d.data()); });
+    return statesSnap.docs.map(d => ({
+      state: normalizeUserState(d.data()),
+      user:  users[d.id] || null,
+    }));
+  } catch (err) {
+    console.error('Get all user states error:', err);
+    return [];
   }
 }
 

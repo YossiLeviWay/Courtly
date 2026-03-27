@@ -3,7 +3,7 @@ import { useGame } from '../../context/GameContext.jsx';
 import {
   LayoutDashboard, Users, Target, UserCheck, Dumbbell,
   Building2, Heart, Calendar, Trophy, ArrowLeftRight,
-  BarChart2, Settings, User, LogOut, Zap, TrendingUp, X
+  BarChart2, Settings, User, LogOut, Zap, TrendingUp, X, Shield
 } from 'lucide-react';
 
 function YouthAcademyIcon({ size = 18 }) {
@@ -116,6 +116,12 @@ export default function Sidebar({ isOpen, onClose }) {
           <NavLink to="/match/live" className="sidebar-nav-item" style={{marginBottom: '8px', background: 'rgba(198,40,40,0.1)', borderLeftColor: '#C62828'}}>
             <Zap size={18} color="#C62828" />
             <span style={{color:'#C62828', fontWeight:700}}>Live Match!</span>
+          </NavLink>
+        )}
+        {state.user?.isAdmin && (
+          <NavLink to="/admin" className={({ isActive }) => `sidebar-nav-item${isActive ? ' active' : ''}`} style={{ marginBottom: '4px', background: 'rgba(232,98,26,0.08)' }}>
+            <Shield size={18} color="var(--color-primary)" />
+            <span style={{ fontWeight: 700, color: 'var(--color-primary)' }}>Admin Panel</span>
           </NavLink>
         )}
         <button className="sidebar-nav-item w-full" onClick={handleLogout} style={{width:'100%'}}>

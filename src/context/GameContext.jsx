@@ -108,6 +108,7 @@ function buildUserProfile(dbUser, profileData) {
     id:                   dbUser?.id,
     username:             dbUser?.username             || '',
     email:                dbUser?.email                || '',
+    isAdmin:              dbUser?.isAdmin              ?? false,
     bio:                  profileData?.bio             || '',
     gender:               profileData?.gender          || '',
     avatar:               profileData?.avatar          || { type: 'initials', emoji: null },
