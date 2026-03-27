@@ -291,9 +291,13 @@ export function GameProvider({ children }) {
           return;
         }
 
-        // Merge any new matchHistory from simulation into userTeam
+        // Merge any new matchHistory from simulation into userTeam.
+        // buildUserTeam() uses userState.matchHistory (Firestore) which doesn't yet contain
+        // the freshly simulated matches, so we pull them from the updated simulatedLeagues.
         if (processedMatchData.length > 0) {
-          const updatedUserTeam = updatedTeams.find(t => t.id === userTeam.id);
+          const updatedUserTeam = simulatedLeagues
+            .flatMap(l => l.teams || [])
+            .find(t => t.id === userTeam.id);
           if (updatedUserTeam?.matchHistory?.length) {
             userTeam.matchHistory = updatedUserTeam.matchHistory;
             userTeam.seasonRecord = updatedUserTeam.seasonRecord || userTeam.seasonRecord;
