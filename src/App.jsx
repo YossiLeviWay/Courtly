@@ -22,6 +22,7 @@ import SearchPage from './pages/Search.jsx';
 import YouthAcademy from './pages/YouthAcademy.jsx';
 import Scouts from './pages/Scouts.jsx';
 import Admin from './pages/Admin.jsx';
+import SetupAdmin from './pages/SetupAdmin.jsx';
 
 function ProtectedRoute({ children }) {
   const { state } = useGame();
@@ -51,6 +52,7 @@ export default function App() {
     <BrowserRouter basename="/Courtly">
       <Routes>
         <Route path="/login" element={<Login />} />
+        <Route path="/setup-admin" element={<SetupAdmin />} />
         <Route path="/" element={
           <ProtectedRoute>
             <Layout />
