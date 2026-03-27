@@ -711,12 +711,16 @@ export function updateTeamAfterMatch(team, matchResult, isHome) {
   const won = teamScore > oppScore;
   const scoreDiff = teamScore - oppScore;
 
+  // Ensure record objects exist (NPC teams from Firestore may not have them)
+  if (!team.seasonRecord)  team.seasonRecord  = { wins: 0, losses: 0 };
+  if (!team.overallRecord) team.overallRecord = { wins: 0, losses: 0 };
+
   // Season and overall record
   if (won) {
-    team.seasonRecord.wins = (team.seasonRecord.wins ?? 0) + 1;
+    team.seasonRecord.wins  = (team.seasonRecord.wins  ?? 0) + 1;
     team.overallRecord.wins = (team.overallRecord.wins ?? 0) + 1;
   } else {
-    team.seasonRecord.losses = (team.seasonRecord.losses ?? 0) + 1;
+    team.seasonRecord.losses  = (team.seasonRecord.losses  ?? 0) + 1;
     team.overallRecord.losses = (team.overallRecord.losses ?? 0) + 1;
   }
 

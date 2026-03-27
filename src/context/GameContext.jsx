@@ -261,23 +261,28 @@ export function GameProvider({ children }) {
         const user     = buildUserProfile(userStateRes.user, userStateRes.state.profileData || {});
 
         // ── Simulate any pending matches ──────────────────────────
-        const allTeamsForSim = leagues.flatMap(l => l.teams || []);
-        const fullSchedule   = leagues.flatMap(l => l.schedule || []);
-        const { updatedTeams, updatedSchedule, processedMatchData } =
-          processPendingMatches(allTeamsForSim, fullSchedule);
+        let simulatedLeagues = leagues;
+        let processedMatchData = [];
+        try {
+          const allTeamsForSim = leagues.flatMap(l => l.teams || []);
+          const fullSchedule   = leagues.flatMap(l => l.schedule || []);
+          const simResult = processPendingMatches(allTeamsForSim, fullSchedule);
+          processedMatchData = simResult.processedMatchData;
 
-        // Save match logs to Firebase in the background (non-blocking)
-        // Each log goes to match_logs/{matchId} — keeps user_team_state < 1 MB
-        for (const matchData of processedMatchData) {
-          apiSaveMatchLog(matchData.matchId, matchData).catch(() => {});
+          // Save match logs to Firebase in the background (non-blocking)
+          for (const matchData of processedMatchData) {
+            apiSaveMatchLog(matchData.matchId, matchData).catch(() => {});
+          }
+
+          // Rebuild leagues with updated teams + schedule
+          simulatedLeagues = leagues.map(l => ({
+            ...l,
+            teams:    (l.teams    || []).map(t => simResult.updatedTeams.find(u => u.id === t.id) || t),
+            schedule: simResult.updatedSchedule.filter(m => m.leagueId === l.id),
+          }));
+        } catch (simErr) {
+          console.warn('Match simulation error (non-fatal):', simErr);
         }
-
-        // Rebuild leagues with updated teams + schedule
-        const simulatedLeagues = leagues.map(l => ({
-          ...l,
-          teams:    (l.teams    || []).map(t => updatedTeams.find(u => u.id === t.id) || t),
-          schedule: updatedSchedule.filter(m => m.leagueId === l.id),
-        }));
 
         const userTeam = buildUserTeam(simulatedLeagues, userStateRes.state);
 

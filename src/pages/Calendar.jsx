@@ -1,7 +1,7 @@
 import { useState, useMemo } from 'react';
 import { useGame } from '../context/GameContext.jsx';
 import { Calendar as CalendarIcon, Clock, MapPin, Plus, ChevronLeft, ChevronRight, Zap } from 'lucide-react';
-import { generateSeasonSchedule, getNextMatch, formatMatchDate, getTimeUntilMatch } from '../engine/gameScheduler.js';
+import { getNextMatch, formatMatchDate, getTimeUntilMatch } from '../engine/gameScheduler.js';
 import { useNavigate } from 'react-router-dom';
 
 const MONTHS = ['January','February','March','April','May','June','July','August','September','October','November','December'];
@@ -24,15 +24,14 @@ export default function Calendar() {
   const [showAddEvent, setShowAddEvent] = useState(false);
   const [newEvent, setNewEvent] = useState({ title: '', date: '', description: '' });
 
+  // Use the Firestore-backed schedule from state (never generate locally)
+  // This ensures the schedule is stable across refreshes
   const schedule = useMemo(() => {
-    if (!team || !state.allTeams?.length) return [];
-    if (team.schedule?.length) return team.schedule;
-    // Generate a schedule
-    const leagueTeams = state.allTeams.filter(t =>
-      t.leagueId === team.leagueId || t.leagueIndex === team.leagueIndex
-    ).slice(0, 10);
-    return generateSeasonSchedule(leagueTeams.length ? leagueTeams : state.allTeams.slice(0, 10), 0);
-  }, [team, state.allTeams]);
+    if (!team || !state.leagues?.length) return [];
+    // Find user's league and return its full schedule
+    const userLeague = state.leagues.find(l => l.teams?.some(t => t.id === team.id));
+    return userLeague?.schedule || [];
+  }, [team, state.leagues]);
 
   const teamMatches = useMemo(() =>
     schedule.filter(m => m.homeTeamId === team?.id || m.awayTeamId === team?.id),
