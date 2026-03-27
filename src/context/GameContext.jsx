@@ -242,7 +242,10 @@ export function GameProvider({ children }) {
         apiGetUserState(),
         apiGetTransferMarket(),
       ]).then(([world, dbMatches, dbStandings, userStateRes, transferMarket]) => {
-        if (!world || !userStateRes?.state) {
+        // Admin users without a team state can still log in (admin-panel only)
+        const isAdminUser = userStateRes?.user?.isAdmin ?? false;
+
+        if (!world || (!userStateRes?.state && !isAdminUser)) {
           if (!world) {
             dispatch({
               type: 'ADD_NOTIFICATION',
@@ -259,7 +262,7 @@ export function GameProvider({ children }) {
         }
 
         const leagues  = buildLeagues(world.leagues, dbMatches, dbStandings);
-        const user     = buildUserProfile(userStateRes.user, userStateRes.state.profileData || {});
+        const user     = buildUserProfile(userStateRes.user, userStateRes.state?.profileData || {});
 
         // ── Simulate any pending matches ──────────────────────────
         let simulatedLeagues = leagues;
@@ -287,7 +290,8 @@ export function GameProvider({ children }) {
 
         const userTeam = buildUserTeam(simulatedLeagues, userStateRes.state);
 
-        if (!userTeam) {
+        // Admin users without a team can still access the app (admin panel only)
+        if (!userTeam && !user.isAdmin) {
           dispatch({ type: 'INIT_GAME', payload: { ...initialState, initialized: true } });
           return;
         }
@@ -295,7 +299,7 @@ export function GameProvider({ children }) {
         // Merge any new matchHistory from simulation into userTeam.
         // buildUserTeam() uses userState.matchHistory (Firestore) which doesn't yet contain
         // the freshly simulated matches, so we pull them from the updated simulatedLeagues.
-        if (processedMatchData.length > 0) {
+        if (userTeam && processedMatchData.length > 0) {
           const updatedUserTeam = simulatedLeagues
             .flatMap(l => l.teams || [])
             .find(t => t.id === userTeam.id);
@@ -309,7 +313,7 @@ export function GameProvider({ children }) {
 
         const updatedLeagues = simulatedLeagues.map(l => ({
           ...l,
-          teams: (l.teams || []).map(t => t.id === userTeam.id ? userTeam : t),
+          teams: (l.teams || []).map(t => userTeam && t.id === userTeam.id ? userTeam : t),
         }));
 
         justLoaded.current = true;
