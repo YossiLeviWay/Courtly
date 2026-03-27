@@ -2,7 +2,24 @@
 // Courtly – Match Simulation Engine
 // ============================================================
 
-// ── Utilities ─────────────────────────────────────────────────
+// ── Constants ─────────────────────────────────────────────────
+
+/**
+ * Total real-time duration of a simulated game in seconds (~115 min).
+ * Q1 0-1500s | Q2 1500-3000s | Halftime 3000-3900s | Q3 3900-5400s | Q4 5400-6900s
+ */
+export const GAME_DURATION_SEC = 6900;
+
+/**
+ * Convert a game-minute + quarter to real elapsed seconds from tip-off.
+ * Used to stamp every event so the Live viewer can reveal them in real-time.
+ */
+export function gameMinToRelSec(gameMin, quarter) {
+  const q = Math.min(Math.max((quarter || 1) - 1, 0), 3);
+  const qRealStart = [0, 1500, 3900, 5400]; // real-second start of each quarter
+  const minInQ = Math.max(0, Math.min(gameMin - q * 10, 10));
+  return Math.round(qRealStart[q] + (minInQ / 10) * 1500);
+}
 
 function randomInt(min, max) {
   return Math.floor(Math.random() * (max - min + 1)) + min;
@@ -546,6 +563,12 @@ function generateHighlightEvents(homeTeam, awayTeam, quarterScores) {
       score: `${homeRunning}-${awayRunning}`,
     });
   }
+
+  // Stamp every event with its real-time offset from tip-off so the
+  // Live viewer can reveal events in sync across all users.
+  events.forEach(ev => {
+    ev.relativeTime = gameMinToRelSec(ev.time, ev.quarter);
+  });
 
   return events;
 }

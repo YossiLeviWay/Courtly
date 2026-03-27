@@ -3,54 +3,71 @@
 // Manages automatic match simulation on real-life timeline
 // ============================================================
 
-import { simulateMatch, updateTeamAfterMatch, updatePlayerAfterMatch } from './matchEngine.js';
+import { simulateMatch, updateTeamAfterMatch, updatePlayerAfterMatch, GAME_DURATION_SEC } from './matchEngine.js';
 
-const GAME_INTERVAL_DAYS = 3;
+export const GAME_INTERVAL_DAYS = 3;
 const MS_PER_DAY = 24 * 60 * 60 * 1000;
 
 /**
- * Generate the season schedule for a league.
- * 18 matches, every 3 days. Each team plays every other team home+away.
+ * Standard Berger round-robin.
+ * Returns rounds[][{ homeTeam, awayTeam }].
+ * Guarantees no team plays twice in the same round.
+ * Full season = first-half rounds + return-leg rounds (home↔away).
  */
-export function generateSeasonSchedule(teams, leagueIndex = 0) {
-  // Start first match TODAY at 19:00 UTC
-  const today = new Date();
-  today.setUTCHours(19, 0, 0, 0);
-  const firstMatchDate = today.getTime();
+function buildRoundRobinRounds(teams) {
+  const arr = [...teams];
+  if (arr.length % 2 !== 0) arr.push(null); // bye for odd count
 
-  const matches = [];
-  let matchIndex = 0;
+  const numRounds = arr.length - 1;
+  const half = arr.length / 2;
+  const firstHalf = [];
+  const rot = [...arr];
 
-  // Round-robin schedule: each team plays each other team twice
-  const teamIds = teams.map(t => t.id);
-  const n = teamIds.length;
-
-  // Generate all home/away pairs
-  const pairs = [];
-  for (let i = 0; i < n; i++) {
-    for (let j = i + 1; j < n; j++) {
-      pairs.push({ homeId: teamIds[i], awayId: teamIds[j] });
-      pairs.push({ homeId: teamIds[j], awayId: teamIds[i] });
+  for (let r = 0; r < numRounds; r++) {
+    const round = [];
+    for (let i = 0; i < half; i++) {
+      const t1 = rot[i];
+      const t2 = rot[rot.length - 1 - i];
+      if (t1 && t2) round.push({ homeTeam: t1, awayTeam: t2 });
     }
+    firstHalf.push(round);
+    rot.splice(1, 0, rot.pop()); // keep rot[0] fixed, rotate rest
   }
 
-  // Shuffle pairs
-  const shuffled = pairs.sort(() => Math.random() - 0.5);
+  // Return leg: same matchups, home/away swapped
+  const secondHalf = firstHalf.map(round =>
+    round.map(({ homeTeam, awayTeam }) => ({ homeTeam: awayTeam, awayTeam: homeTeam }))
+  );
 
-  // Take first 18 matches per team perspective (simplified: just first 90 unique pairs for 10 teams)
-  // For a 10-team league: each team plays 18 games = 90 total games
-  // We'll generate matches spaced 3 days apart
-  const allMatches = shuffled.slice(0, 90); // 10 teams * 18 games / 2 (since each game involves 2 teams) = 90
+  return [...firstHalf, ...secondHalf];
+}
 
-  allMatches.forEach((pair, idx) => {
-    matches.push({
-      id: `match-${leagueIndex}-${idx}-${Date.now()}`,
-      homeTeamId: pair.homeId,
-      awayTeamId: pair.awayId,
-      scheduledDate: firstMatchDate + idx * GAME_INTERVAL_DAYS * MS_PER_DAY,
-      played: false,
-      result: null,
-      log: [],
+/**
+ * Generate the full season schedule (client-side, for new users / display).
+ * For the authoritative Firestore schedule use regenerate-schedule.mjs.
+ */
+export function generateSeasonSchedule(teams, leagueIndex = 0) {
+  const today = new Date();
+  today.setUTCHours(19, 0, 0, 0);
+  const firstRoundTs = today.getTime();
+
+  const rounds = buildRoundRobinRounds(teams);
+  const matches = [];
+
+  rounds.forEach((round, roundIdx) => {
+    const roundTs = firstRoundTs + roundIdx * GAME_INTERVAL_DAYS * MS_PER_DAY;
+    round.forEach(({ homeTeam, awayTeam }) => {
+      matches.push({
+        id: `m-${leagueIndex}-r${roundIdx}-${homeTeam.id}-${awayTeam.id}`,
+        homeTeamId:    homeTeam.id,
+        awayTeamId:    awayTeam.id,
+        homeTeamName:  homeTeam.name || homeTeam.id,
+        awayTeamName:  awayTeam.name || awayTeam.id,
+        scheduledDate: roundTs,
+        round:         roundIdx + 1,
+        played:        false,
+        result:        null,
+      });
     });
   });
 
@@ -86,7 +103,7 @@ export function isMatchCurrentlyLive(match) {
   if (!match || match.played) return false;
   const now = Date.now();
   const matchStart = match.scheduledDate;
-  const matchEnd = matchStart + 2 * 60 * 60 * 1000; // 2 hours
+  const matchEnd = matchStart + GAME_DURATION_SEC * 1000;
   return now >= matchStart && now < matchEnd;
 }
 

@@ -1,17 +1,23 @@
 /**
  * Courtly – Regenerate Season Schedule
  *
- * Deletes all existing match documents from Firestore and creates a fresh
- * round-robin schedule starting TOMORROW at 19:00 UTC, every 3 days.
+ * • Deletes all existing matches and match_logs from Firestore
+ * • Resets all standings to 0-0
+ * • Generates a proper round-robin schedule (every team plays each other twice)
+ *   with a strict 3-day (72 h) interval between rounds, all UTC
+ * • Pre-simulates every fixture and saves the full game log to
+ *   match_logs/{matchId} so the Live viewer can reveal events in real-time
+ *   and every user sees the same play at the same second
  *
  * Usage:
  *   FIREBASE_SERVICE_ACCOUNT_KEY='<json>' node scripts/regenerate-schedule.mjs
  *
- * Or via GitHub Actions workflow (see .github/workflows/regenerate-schedule.yml).
+ * Or via GitHub Actions workflow (.github/workflows/regenerate-schedule.yml).
  */
 
 import { initializeApp, cert } from 'firebase-admin/app';
 import { getFirestore }        from 'firebase-admin/firestore';
+import { simulateMatch, GAME_DURATION_SEC } from '../src/engine/matchEngine.js';
 
 // ── Firebase init ──────────────────────────────────────────────
 
@@ -26,21 +32,14 @@ if (process.env.FIREBASE_SERVICE_ACCOUNT_KEY) {
 initializeApp({ credential: cert(serviceAccount) });
 const db = getFirestore();
 
-// ── Helpers ───────────────────────────────────────────────────
+// ── Constants ─────────────────────────────────────────────────
 
 const GAME_INTERVAL_DAYS = 3;
-const MS_PER_DAY = 24 * 60 * 60 * 1000;
+const MS_PER_DAY         = 24 * 60 * 60 * 1000;
 
-function shuffle(arr) {
-  const a = [...arr];
-  for (let i = a.length - 1; i > 0; i--) {
-    const j = Math.floor(Math.random() * (i + 1));
-    [a[i], a[j]] = [a[j], a[i]];
-  }
-  return a;
-}
+// ── Helpers ───────────────────────────────────────────────────
 
-async function batchDelete(db, refs) {
+async function batchDelete(refs) {
   const CHUNK = 400;
   for (let i = 0; i < refs.length; i += CHUNK) {
     const batch = db.batch();
@@ -49,7 +48,7 @@ async function batchDelete(db, refs) {
   }
 }
 
-async function batchWrite(db, items) {
+async function batchWrite(items) {
   const CHUNK = 400;
   for (let i = 0; i < items.length; i += CHUNK) {
     const batch = db.batch();
@@ -58,19 +57,73 @@ async function batchWrite(db, items) {
   }
 }
 
+/**
+ * Standard Berger round-robin algorithm.
+ * Returns rounds[][{ homeTeam, awayTeam }].
+ * Guarantees no team plays twice per round.
+ * Full season = first-half + return-leg (home↔away swapped).
+ */
+function buildRoundRobinRounds(teams) {
+  const arr = [...teams];
+  if (arr.length % 2 !== 0) arr.push(null); // bye slot for odd count
+
+  const numRounds = arr.length - 1;
+  const half      = arr.length / 2;
+  const firstHalf = [];
+  const rot       = [...arr];
+
+  for (let r = 0; r < numRounds; r++) {
+    const round = [];
+    for (let i = 0; i < half; i++) {
+      const t1 = rot[i];
+      const t2 = rot[rot.length - 1 - i];
+      if (t1 && t2) round.push({ homeTeam: t1, awayTeam: t2 });
+    }
+    firstHalf.push(round);
+    rot.splice(1, 0, rot.pop()); // keep rot[0] fixed, rotate the rest
+  }
+
+  const secondHalf = firstHalf.map(round =>
+    round.map(({ homeTeam, awayTeam }) => ({ homeTeam: awayTeam, awayTeam: homeTeam }))
+  );
+
+  return [...firstHalf, ...secondHalf];
+}
+
 // ── Main ──────────────────────────────────────────────────────
 
 async function main() {
-  console.log('Fetching teams…');
-  const teamsSnap = await db.collection('teams').get();
-  const teams = teamsSnap.docs.map(d => ({ id: d.id, ...d.data() }));
+  // ── 1. Load teams + players ───────────────────────────────
+  console.log('Fetching teams and players…');
+  const [teamsSnap, playersSnap] = await Promise.all([
+    db.collection('teams').get(),
+    db.collection('players').get(),
+  ]);
 
-  if (teams.length === 0) {
+  if (teamsSnap.empty) {
     console.error('No teams found in Firestore. Aborting.');
     process.exit(1);
   }
 
-  // Group teams by league
+  const playersByTeam = {};
+  playersSnap.docs.forEach(d => {
+    const p = { id: d.id, ...d.data() };
+    if (!playersByTeam[p.teamId]) playersByTeam[p.teamId] = [];
+    playersByTeam[p.teamId].push(p);
+  });
+
+  const teams = teamsSnap.docs.map(d => {
+    const t = { id: d.id, ...d.data() };
+    // Attach players so simulateMatch works correctly
+    t.players = (playersByTeam[t.id] || []).map(p => ({
+      ...p,
+      injuryStatus: p.injuryStatus || 'healthy',
+      fatigue:      p.fatigue      ?? 10,
+      motivation:   p.motivation   ?? 70,
+    }));
+    return t;
+  });
+
   const byLeague = {};
   teams.forEach(t => {
     const lid = t.leagueId || 'default';
@@ -78,82 +131,114 @@ async function main() {
     byLeague[lid].push(t);
   });
 
-  console.log(`Found ${teams.length} teams across ${Object.keys(byLeague).length} league(s).`);
+  console.log(`${teams.length} teams across ${Object.keys(byLeague).length} league(s).`);
 
-  // Delete existing match docs
+  // ── 2. Clear existing matches and match_logs ──────────────
   console.log('Deleting existing matches…');
-  const existingSnap = await db.collection('matches').get();
-  await batchDelete(db, existingSnap.docs.map(d => d.ref));
-  console.log(`Deleted ${existingSnap.size} match(es).`);
+  const [existingMatches, existingLogs] = await Promise.all([
+    db.collection('matches').get(),
+    db.collection('match_logs').get(),
+  ]);
+  await Promise.all([
+    batchDelete(existingMatches.docs.map(d => d.ref)),
+    batchDelete(existingLogs.docs.map(d => d.ref)),
+  ]);
+  console.log(`Deleted ${existingMatches.size} match(es) and ${existingLogs.size} log(s).`);
 
-  // Also reset standings
+  // ── 3. Reset standings ────────────────────────────────────
   console.log('Resetting standings…');
   const standingsSnap = await db.collection('standings').get();
-  const standingItems = [];
-  standingsSnap.docs.forEach(d => {
-    const data = d.data();
-    standingItems.push({
-      ref: d.ref,
-      data: { ...data, wins: 0, losses: 0, points: 0 },
-    });
-  });
-  if (standingItems.length > 0) await batchWrite(db, standingItems);
-  console.log(`Reset ${standingItems.length} standing(s).`);
+  if (!standingsSnap.empty) {
+    await batchWrite(standingsSnap.docs.map(d => ({
+      ref:  d.ref,
+      data: { ...d.data(), wins: 0, losses: 0, points: 0 },
+    })));
+  }
+  console.log(`Reset ${standingsSnap.size} standing(s).`);
 
-  // Generate new schedule starting TODAY at 19:00 UTC
+  // ── 4. Generate schedule + pre-simulate logs ──────────────
   const today = new Date();
   today.setUTCHours(19, 0, 0, 0);
-  const firstMatch = today.getTime();
+  const firstRoundTs = today.getTime();
 
   const newMatches = [];
-  let globalIdx = 0;
+  const newLogs    = [];
+  let totalFixtures = 0;
 
   for (const [leagueId, leagueTeams] of Object.entries(byLeague)) {
-    const teamIds = leagueTeams.map(t => t.id);
-    const n = teamIds.length;
+    const rounds = buildRoundRobinRounds(leagueTeams);
 
-    // Build home/away pairs (round-robin)
-    const pairs = [];
-    for (let i = 0; i < n; i++) {
-      for (let j = i + 1; j < n; j++) {
-        pairs.push({ homeId: teamIds[i], awayId: teamIds[j] });
-        pairs.push({ homeId: teamIds[j], awayId: teamIds[i] });
-      }
-    }
-    const shuffled = shuffle(pairs).slice(0, Math.min(pairs.length, n * 18));
+    rounds.forEach((round, roundIdx) => {
+      const roundTs = firstRoundTs + roundIdx * GAME_INTERVAL_DAYS * MS_PER_DAY;
 
-    shuffled.forEach((pair, idx) => {
-      const scheduledDate = firstMatch + (globalIdx + idx) * GAME_INTERVAL_DAYS * MS_PER_DAY;
+      round.forEach(({ homeTeam, awayTeam }) => {
+        const matchRef = db.collection('matches').doc();
+        const matchId  = matchRef.id;
 
-      const homeTeam = leagueTeams.find(t => t.id === pair.homeId);
-      const awayTeam = leagueTeams.find(t => t.id === pair.awayId);
+        // ── Match document (metadata only, no log) ──────────
+        newMatches.push({
+          ref:  matchRef,
+          data: {
+            id:           matchId,
+            leagueId,
+            homeTeamId:   homeTeam.id,
+            awayTeamId:   awayTeam.id,
+            homeTeamName: homeTeam.name || homeTeam.id,
+            awayTeamName: awayTeam.name || awayTeam.id,
+            scheduledDate: roundTs,
+            round:         roundIdx + 1,
+            played:        false,
+            homeScore:     null,
+            awayScore:     null,
+          },
+        });
 
-      newMatches.push({
-        ref: db.collection('matches').doc(),
-        data: {
-          leagueId,
-          homeTeamId:   pair.homeId,
-          awayTeamId:   pair.awayId,
-          homeTeamName: homeTeam?.name || pair.homeId,
-          awayTeamName: awayTeam?.name || pair.awayId,
-          scheduledDate,
-          played:       false,
-          homeScore:    null,
-          awayScore:    null,
-          log:          [],
-        },
+        // ── Pre-simulate the game and store in match_logs ───
+        try {
+          const result = simulateMatch(homeTeam, awayTeam, new Date(roundTs));
+          newLogs.push({
+            ref:  db.collection('match_logs').doc(matchId),
+            data: {
+              matchId,
+              leagueId,
+              homeTeamId:    homeTeam.id,
+              awayTeamId:    awayTeam.id,
+              homeTeamName:  homeTeam.name || homeTeam.id,
+              awayTeamName:  awayTeam.name || awayTeam.id,
+              homeScore:     result.homeScore,
+              awayScore:     result.awayScore,
+              events:        result.log         || [],
+              playerStats:   result.playerStats || {},
+              quarterScores: result.quarterScores || [],
+              gameDurationSec: GAME_DURATION_SEC,
+              scheduledDate:  roundTs,
+              savedAt:        Date.now(),
+            },
+          });
+        } catch (simErr) {
+          console.warn(`  ⚠ Simulation failed for ${homeTeam.name} vs ${awayTeam.name}:`, simErr.message);
+        }
+
+        totalFixtures++;
       });
     });
 
-    globalIdx += shuffled.length;
+    const teamCount = leagueTeams.length;
+    const roundCount = rounds.length;
+    console.log(`League ${leagueId}: ${teamCount} teams → ${roundCount} rounds, ${totalFixtures} fixtures so far.`);
   }
 
-  console.log(`Writing ${newMatches.length} new match(es)…`);
-  await batchWrite(db, newMatches);
+  // ── 5. Write to Firestore ─────────────────────────────────
+  console.log(`Writing ${newMatches.length} match document(s)…`);
+  await batchWrite(newMatches);
 
-  const firstDate = new Date(firstMatch).toUTCString();
-  console.log(`Done! Schedule starts today: ${firstDate}`);
-  console.log(`First match: ${newMatches[0]?.data.homeTeamName} vs ${newMatches[0]?.data.awayTeamName}`);
+  console.log(`Writing ${newLogs.length} pre-generated game log(s)…`);
+  await batchWrite(newLogs);
+
+  const firstDate = new Date(firstRoundTs).toUTCString();
+  console.log(`\n✅ Done! Season starts: ${firstDate}`);
+  console.log(`   ${newMatches.length} fixtures scheduled across ${Object.keys(byLeague).length} league(s).`);
+  console.log(`   ${newLogs.length} game logs pre-generated (live sync ready).`);
 }
 
 main().catch(err => { console.error(err); process.exit(1); });
