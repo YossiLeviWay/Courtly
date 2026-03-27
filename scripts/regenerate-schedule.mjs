@@ -100,11 +100,10 @@ async function main() {
   if (standingItems.length > 0) await batchWrite(db, standingItems);
   console.log(`Reset ${standingItems.length} standing(s).`);
 
-  // Generate new schedule starting tomorrow at 19:00 UTC
-  const tomorrow = new Date();
-  tomorrow.setUTCDate(tomorrow.getUTCDate() + 1);
-  tomorrow.setUTCHours(19, 0, 0, 0);
-  const firstMatch = tomorrow.getTime();
+  // Generate new schedule starting TODAY at 19:00 UTC
+  const today = new Date();
+  today.setUTCHours(19, 0, 0, 0);
+  const firstMatch = today.getTime();
 
   const newMatches = [];
   let globalIdx = 0;
@@ -153,7 +152,7 @@ async function main() {
   await batchWrite(db, newMatches);
 
   const firstDate = new Date(firstMatch).toUTCString();
-  console.log(`Done! Schedule starts: ${firstDate}`);
+  console.log(`Done! Schedule starts today: ${firstDate}`);
   console.log(`First match: ${newMatches[0]?.data.homeTeamName} vs ${newMatches[0]?.data.awayTeamName}`);
 }
 

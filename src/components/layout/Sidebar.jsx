@@ -3,7 +3,7 @@ import { useGame } from '../../context/GameContext.jsx';
 import {
   LayoutDashboard, Users, Target, UserCheck, Dumbbell,
   Building2, Heart, Calendar, Trophy, ArrowLeftRight,
-  BarChart2, Settings, User, LogOut, Zap, TrendingUp
+  BarChart2, Settings, User, LogOut, Zap, TrendingUp, X
 } from 'lucide-react';
 
 function YouthAcademyIcon({ size = 18 }) {
@@ -53,7 +53,7 @@ const NAV_GROUPS = [
   }
 ];
 
-export default function Sidebar() {
+export default function Sidebar({ isOpen, onClose }) {
   const { state, dispatch } = useGame();
   const navigate = useNavigate();
   const team = state.userTeam;
@@ -64,8 +64,16 @@ export default function Sidebar() {
   };
 
   return (
-    <aside className="sidebar">
+    <aside className={`sidebar${isOpen ? ' open' : ''}`}>
       <div className="sidebar-logo">
+        {/* Close button – visible only on mobile */}
+        <button
+          className="sidebar-close-btn"
+          onClick={onClose}
+          aria-label="Close menu"
+        >
+          <X size={20} />
+        </button>
         <svg className="sidebar-logo-icon" viewBox="0 0 64 64">
           <circle cx="32" cy="32" r="30" fill="#E8621A"/>
           <path d="M32 2 Q50 18 32 32 Q14 46 32 62" stroke="#C04E10" strokeWidth="2.5" fill="none"/>

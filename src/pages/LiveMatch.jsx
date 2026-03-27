@@ -3,6 +3,7 @@ import { useGame } from '../context/GameContext.jsx';
 import { useNavigate } from 'react-router-dom';
 import { Zap, Clock, ChevronRight, Play, Pause, SkipForward, RotateCcw } from 'lucide-react';
 import { getNextMatch, isMatchCurrentlyLive, formatMatchDate } from '../engine/gameScheduler.js';
+import { apiGetMatchLog } from '../api.js';
 
 // ── Constants ─────────────────────────────────────────────────
 
@@ -37,6 +38,7 @@ const SPEEDS = [
 // ── Live Match Replay ─────────────────────────────────────────
 
 function LiveMatchReplay({ latestMatch }) {
+  // latestMatch.log is guaranteed to be populated by parent (enrichedMatch)
   const log = useMemo(() => latestMatch?.log || [], [latestMatch]);
 
   const [visibleCount, setVisibleCount] = useState(0);
@@ -363,6 +365,34 @@ export default function LiveMatch() {
 
   const latestMatch = team?.matchHistory?.[0] ?? null;
 
+  // Load match log + stats from match_logs/{matchId} when not available in-memory
+  const [remoteMatchData, setRemoteMatchData] = useState(null);
+
+  useEffect(() => {
+    const matchId = latestMatch?.matchId;
+    if (!matchId) return;
+    // If log is already in-memory, skip remote load
+    if (latestMatch?.log?.length > 0) return;
+    setRemoteMatchData(null);
+    apiGetMatchLog(matchId).then(data => {
+      if (data) setRemoteMatchData(data);
+    });
+  }, [latestMatch?.matchId, latestMatch?.log?.length]);
+
+  // Merge in-memory log/stats with remote fallback
+  const enrichedMatch = useMemo(() => {
+    if (!latestMatch) return null;
+    const remoteLog   = remoteMatchData?.events      || [];
+    const remoteStats = remoteMatchData?.playerStats || {};
+    return {
+      ...latestMatch,
+      log:         latestMatch.log?.length         ? latestMatch.log         : remoteLog,
+      playerStats: Object.keys(latestMatch.playerStats || {}).length
+        ? latestMatch.playerStats
+        : remoteStats,
+    };
+  }, [latestMatch, remoteMatchData]);
+
   return (
     <div className="animate-fade-in">
       <div className="page-header">
@@ -390,8 +420,8 @@ export default function LiveMatch() {
         </div>
       )}
 
-      {latestMatch ? (
-        <LiveMatchReplay latestMatch={latestMatch} />
+      {enrichedMatch ? (
+        <LiveMatchReplay latestMatch={enrichedMatch} />
       ) : (
         <div className="empty-state">
           <div className="empty-state-icon">🏀</div>
@@ -400,7 +430,7 @@ export default function LiveMatch() {
         </div>
       )}
 
-      <PlayerStatsTable match={latestMatch} userTeam={team} />
+      <PlayerStatsTable match={enrichedMatch} userTeam={team} />
     </div>
   );
 }

@@ -13,9 +13,10 @@ const MS_PER_DAY = 24 * 60 * 60 * 1000;
  * 18 matches, every 3 days. Each team plays every other team home+away.
  */
 export function generateSeasonSchedule(teams, leagueIndex = 0) {
-  const now = Date.now();
-  // Start first match 3 days from now
-  const firstMatchDate = now + GAME_INTERVAL_DAYS * MS_PER_DAY;
+  // Start first match TODAY at 19:00 UTC
+  const today = new Date();
+  today.setUTCHours(19, 0, 0, 0);
+  const firstMatchDate = today.getTime();
 
   const matches = [];
   let matchIndex = 0;
@@ -94,11 +95,12 @@ export function isMatchCurrentlyLive(match) {
  * Simulates all matches that should have occurred
  */
 export function processPendingMatches(allTeams, schedule) {
-  if (!schedule || !allTeams.length) return { updatedTeams: allTeams, updatedSchedule: schedule };
+  if (!schedule || !allTeams.length) return { updatedTeams: allTeams, updatedSchedule: schedule, processedMatchData: [] };
 
   const pending = getPendingMatches(schedule);
   let updatedTeams = [...allTeams];
   let updatedSchedule = [...schedule];
+  const processedMatchData = [];
 
   for (const match of pending) {
     const homeTeam = updatedTeams.find(t => t.id === match.homeTeamId);
@@ -108,12 +110,14 @@ export function processPendingMatches(allTeams, schedule) {
 
     try {
       const result = simulateMatch(homeTeam, awayTeam, match.scheduledDate);
+      // Attach the schedule match ID so historyEntry and log storage are linked
+      result.matchId = match.id;
 
       // Update teams
       const updatedHome = updateTeamAfterMatch(homeTeam, result, true);
       const updatedAway = updateTeamAfterMatch(awayTeam, result, false);
 
-      // Update player stats for home team
+      // Update player stats
       if (result.playerStats) {
         updatedHome.players = updatedHome.players.map(p => {
           const stats = result.playerStats[p.id];
@@ -136,15 +140,30 @@ export function processPendingMatches(allTeams, schedule) {
       // Mark match as played
       updatedSchedule = updatedSchedule.map(m =>
         m.id === match.id
-          ? { ...m, played: true, result, log: result.log }
+          ? { ...m, played: true, result: { homeScore: result.homeScore, awayScore: result.awayScore } }
           : m
       );
+
+      // Collect log data to save to match_logs collection (separate from user_team_state)
+      processedMatchData.push({
+        matchId:      match.id,
+        leagueId:     match.leagueId,
+        homeTeamId:   match.homeTeamId,
+        awayTeamId:   match.awayTeamId,
+        homeTeamName: match.homeTeamName,
+        awayTeamName: match.awayTeamName,
+        homeScore:    result.homeScore,
+        awayScore:    result.awayScore,
+        events:       result.log          || [],
+        playerStats:  result.playerStats  || {},
+        quarterScores: result.quarterScores || [],
+      });
     } catch (e) {
       console.warn('Match simulation error:', e);
     }
   }
 
-  return { updatedTeams, updatedSchedule };
+  return { updatedTeams, updatedSchedule, processedMatchData };
 }
 
 /**

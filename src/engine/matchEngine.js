@@ -751,8 +751,12 @@ export function updateTeamAfterMatch(team, matchResult, isHome) {
   else if (won) team.reputation = clamp((team.reputation ?? 10) + 1, 0, 100);
   else if (!won && scoreDiff <= -15) team.reputation = clamp((team.reputation ?? 10) - 2, 0, 100);
 
-  // Add to match history (keep last 20)
+  // Add to match history (keep last 20).
+  // log and playerStats are NOT stored here – they are saved to match_logs/{matchId}
+  // in Firebase and loaded on-demand. This prevents the user_team_state doc from
+  // exceeding Firestore's 1 MB document limit.
   const historyEntry = {
+    matchId:      matchResult.matchId || `m_${matchResult.matchDate}_${matchResult.homeTeamId}`,
     matchDate:    matchResult.matchDate,
     opponent:     isHome ? matchResult.awayTeamName : matchResult.homeTeamName,
     opponentId:   isHome ? matchResult.awayTeamId   : matchResult.homeTeamId,
@@ -765,8 +769,9 @@ export function updateTeamAfterMatch(team, matchResult, isHome) {
     homeScore:    matchResult.homeScore,
     awayScore:    matchResult.awayScore,
     quarterScores: matchResult.quarterScores || [],
-    log:          matchResult.log          || [],
-    playerStats:  matchResult.playerStats  || {},
+    // Keep log + playerStats in memory only (stripped before Firestore save)
+    log:          matchResult.log         || [],
+    playerStats:  matchResult.playerStats || {},
   };
   team.matchHistory = [historyEntry, ...(team.matchHistory ?? [])].slice(0, 20);
 

@@ -3,8 +3,9 @@ import { onAuthStateChanged, signOut } from 'firebase/auth';
 import { auth } from '../firebase.js';
 import {
   apiGetWorld, apiGetMatches, apiGetStandings, apiGetUserState,
-  apiGetTransferMarket, apiSaveUserState,
+  apiGetTransferMarket, apiSaveUserState, apiSaveMatchLog,
 } from '../api.js';
+import { processPendingMatches } from '../engine/gameScheduler.js';
 
 // ── Build game state from Firestore data ───────────────────────
 
@@ -17,6 +18,7 @@ function buildLeagues(worldLeagues, dbMatches, dbStandings) {
       .filter(m => m.leagueId === league.id)
       .map(m => ({
         id:            m.id,
+        leagueId:      m.leagueId,
         homeTeamId:    m.homeTeamId,
         awayTeamId:    m.awayTeamId,
         homeTeamName:  m.homeTeamName,
@@ -24,7 +26,7 @@ function buildLeagues(worldLeagues, dbMatches, dbStandings) {
         scheduledDate: Number(m.scheduledDate),
         played:        m.played,
         result:        m.played ? { homeScore: m.homeScore, awayScore: m.awayScore } : null,
-        log:           m.log || [],
+        // log is NOT stored in match docs – it lives in match_logs/{id}
       }));
 
     const standings = dbStandings
@@ -256,15 +258,46 @@ export function GameProvider({ children }) {
         }
 
         const leagues  = buildLeagues(world.leagues, dbMatches, dbStandings);
-        const userTeam = buildUserTeam(leagues, userStateRes.state);
         const user     = buildUserProfile(userStateRes.user, userStateRes.state.profileData || {});
+
+        // ── Simulate any pending matches ──────────────────────────
+        const allTeamsForSim = leagues.flatMap(l => l.teams || []);
+        const fullSchedule   = leagues.flatMap(l => l.schedule || []);
+        const { updatedTeams, updatedSchedule, processedMatchData } =
+          processPendingMatches(allTeamsForSim, fullSchedule);
+
+        // Save match logs to Firebase in the background (non-blocking)
+        // Each log goes to match_logs/{matchId} — keeps user_team_state < 1 MB
+        for (const matchData of processedMatchData) {
+          apiSaveMatchLog(matchData.matchId, matchData).catch(() => {});
+        }
+
+        // Rebuild leagues with updated teams + schedule
+        const simulatedLeagues = leagues.map(l => ({
+          ...l,
+          teams:    (l.teams    || []).map(t => updatedTeams.find(u => u.id === t.id) || t),
+          schedule: updatedSchedule.filter(m => m.leagueId === l.id),
+        }));
+
+        const userTeam = buildUserTeam(simulatedLeagues, userStateRes.state);
 
         if (!userTeam) {
           dispatch({ type: 'INIT_GAME', payload: { ...initialState, initialized: true } });
           return;
         }
 
-        const updatedLeagues = leagues.map(l => ({
+        // Merge any new matchHistory from simulation into userTeam
+        if (processedMatchData.length > 0) {
+          const updatedUserTeam = updatedTeams.find(t => t.id === userTeam.id);
+          if (updatedUserTeam?.matchHistory?.length) {
+            userTeam.matchHistory = updatedUserTeam.matchHistory;
+            userTeam.seasonRecord = updatedUserTeam.seasonRecord || userTeam.seasonRecord;
+            userTeam.wins   = userTeam.seasonRecord?.wins   ?? 0;
+            userTeam.losses = userTeam.seasonRecord?.losses ?? 0;
+          }
+        }
+
+        const updatedLeagues = simulatedLeagues.map(l => ({
           ...l,
           teams: (l.teams || []).map(t => t.id === userTeam.id ? userTeam : t),
         }));

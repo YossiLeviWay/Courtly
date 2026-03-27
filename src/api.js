@@ -28,7 +28,7 @@ function normalizeMatch(m) {
     played:        m.played        ?? false,
     homeScore:     m.homeScore     ?? m.home_score      ?? null,
     awayScore:     m.awayScore     ?? m.away_score      ?? null,
-    log:           m.log           ?? [],
+    // log is NOT loaded here – stored in match_logs/{id} to respect Firestore 1 MB limit
   };
 }
 
@@ -282,19 +282,58 @@ export async function apiGetMatches() {
   } catch { return []; }
 }
 
+// ── Match Logs (separate collection to respect Firestore 1 MB limit) ─────────
+// Events log and player stats are stored in match_logs/{matchId} rather than
+// embedded in matches/{matchId} or user_team_state, keeping those docs small.
+
+export async function apiSaveMatchLog(matchId, { events, playerStats, quarterScores, homeScore, awayScore, homeTeamName, awayTeamName, leagueId } = {}) {
+  if (!matchId) return;
+  try {
+    await setDoc(doc(db, 'match_logs', matchId), {
+      matchId,
+      leagueId:      leagueId      || '',
+      homeTeamName:  homeTeamName  || '',
+      awayTeamName:  awayTeamName  || '',
+      homeScore:     homeScore     ?? null,
+      awayScore:     awayScore     ?? null,
+      events:        events        || [],
+      playerStats:   playerStats   || {},
+      quarterScores: quarterScores || [],
+      savedAt:       Date.now(),
+    });
+  } catch (err) {
+    console.error('Save match log error:', err);
+  }
+}
+
+export async function apiGetMatchLog(matchId) {
+  if (!matchId) return null;
+  try {
+    const snap = await getDoc(doc(db, 'match_logs', matchId));
+    return snap.exists() ? snap.data() : null;
+  } catch (err) {
+    console.error('Get match log error:', err);
+    return null;
+  }
+}
+
 export async function apiRecordMatchResult({
   matchId, leagueId,
   homeTeamId, awayTeamId,
   homeTeamName, awayTeamName,
-  homeScore, awayScore, log,
+  homeScore, awayScore,
+  log, playerStats, quarterScores,
 }) {
   try {
-    // 1. Mark match as played
+    // 1. Mark match as played (no log embedded – stored in match_logs)
     const matchBatch = writeBatch(db);
     matchBatch.update(doc(db, 'matches', matchId), {
-      played: true, homeScore, awayScore, log: log || [],
+      played: true, homeScore, awayScore,
     });
     await matchBatch.commit();
+
+    // 1b. Save log to separate collection
+    await apiSaveMatchLog(matchId, { events: log, playerStats, quarterScores, homeScore, awayScore, homeTeamName, awayTeamName, leagueId });
 
     // 2. Increment standings (requires a read first)
     const homeRef = doc(db, 'standings', `${leagueId}_${homeTeamId}`);
@@ -453,6 +492,15 @@ export async function apiSaveUserState(payload) {
   const uid = auth.currentUser?.uid;
   if (!uid) return;
   try {
+    // Strip log and playerStats from matchHistory entries before saving to Firestore.
+    // These large arrays are stored in match_logs/{matchId} instead, to keep
+    // user_team_state well under Firestore's 1 MB document limit.
+    const slimHistory = (payload.matchHistory ?? []).map(entry => {
+      // eslint-disable-next-line no-unused-vars
+      const { log, playerStats, ...slim } = entry;
+      return slim;
+    });
+
     await setDoc(doc(db, 'user_team_state', uid), {
       userId:         uid,
       teamId:         payload.teamId,
@@ -467,7 +515,7 @@ export async function apiSaveUserState(payload) {
       chemistryGauge: payload.chemistryGauge ?? 50,
       momentumBar:    payload.momentumBar    ?? 65,
       reputation:     payload.reputation     ?? 10,
-      matchHistory:   payload.matchHistory   ?? [],
+      matchHistory:   slimHistory,
       seasonRecord:   payload.seasonRecord   ?? { wins: 0, losses: 0 },
       profileData:    payload.profileData    ?? {},
       updatedAt:      Date.now(),

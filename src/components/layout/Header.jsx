@@ -2,7 +2,7 @@ import { useState, useRef, useEffect } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
 import { useGame } from '../../context/GameContext.jsx';
 import { useTheme } from '../../context/ThemeContext.jsx';
-import { Sun, Moon, Bell, Search, X } from 'lucide-react';
+import { Sun, Moon, Bell, Search, X, Menu } from 'lucide-react';
 
 const PAGE_TITLES = {
   '/': 'Dashboard',
@@ -168,7 +168,7 @@ function ResultRow({ icon, primary, secondary, onClick }) {
 
 // ── Main Header ───────────────────────────────────────────────
 
-export default function Header() {
+export default function Header({ onMenuToggle }) {
   const location = useLocation();
   const navigate = useNavigate();
   const { state } = useGame();
@@ -203,6 +203,15 @@ export default function Header() {
   return (
     <header className="header">
       <div className="header-left">
+        {/* Hamburger – visible only on mobile */}
+        <button
+          className="btn btn-ghost btn-sm hamburger-btn"
+          onClick={onMenuToggle}
+          aria-label="Toggle menu"
+          style={{ padding: '8px', marginRight: 4 }}
+        >
+          <Menu size={22} />
+        </button>
         <h1 className="header-title">{title}</h1>
       </div>
       <div className="header-right">
