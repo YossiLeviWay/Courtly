@@ -642,14 +642,18 @@ export async function apiRegenerateSchedule(leagues, startTimestampMs) {
   // 2. Reset standings in the standings collection
   await apiResetStandings();
 
-  // 2b. Reset every user's seasonRecord so their League row shows 0 immediately
-  const userStateSnap = await getDocs(collection(db, 'user_team_state'));
-  for (let i = 0; i < userStateSnap.docs.length; i += CHUNK) {
-    const batch = writeBatch(db);
-    userStateSnap.docs.slice(i, i + CHUNK).forEach(d => {
-      batch.update(d.ref, { seasonRecord: { wins: 0, losses: 0 } });
-    });
-    await batch.commit();
+  // 2b. Reset every user's seasonRecord (best-effort — skip if admin rules not yet deployed)
+  try {
+    const userStateSnap = await getDocs(collection(db, 'user_team_state'));
+    for (let i = 0; i < userStateSnap.docs.length; i += CHUNK) {
+      const batch = writeBatch(db);
+      userStateSnap.docs.slice(i, i + CHUNK).forEach(d => {
+        batch.update(d.ref, { seasonRecord: { wins: 0, losses: 0 } });
+      });
+      await batch.commit();
+    }
+  } catch (e) {
+    console.warn('Could not reset user seasonRecords (deploy updated Firestore rules to fix):', e.message);
   }
 
   // 3. Generate and write new matches

@@ -7,6 +7,7 @@ service cloud.firestore {
     // Returns true if the caller has isAdmin: true in their users doc.
     function isAdmin() {
       return request.auth != null
+        && exists(/databases/$(database)/documents/users/$(request.auth.uid))
         && get(/databases/$(database)/documents/users/$(request.auth.uid)).data.isAdmin == true;
     }
 
