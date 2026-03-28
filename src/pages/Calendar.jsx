@@ -1,8 +1,9 @@
-import { useState, useMemo } from 'react';
+import { useState, useMemo, useEffect } from 'react';
 import { useGame } from '../context/GameContext.jsx';
 import { Calendar as CalendarIcon, Clock, MapPin, Plus, ChevronLeft, ChevronRight, Zap, X } from 'lucide-react';
 import { getNextMatch, formatMatchDate, getTimeUntilMatch } from '../engine/gameScheduler.js';
 import { useNavigate } from 'react-router-dom';
+import { apiGetMatchLog } from '../api.js';
 
 const MONTHS = ['January','February','March','April','May','June','July','August','September','October','November','December'];
 const DAYS = ['Su','Mo','Tu','We','Th','Fr','Sa'];
@@ -14,9 +15,212 @@ function getFirstDayOfMonth(year, month) {
   return new Date(year, month, 1).getDay();
 }
 
+// ── Match Detail Modal ────────────────────────────────────────
+
+const EVENT_ICONS = {
+  three_pointer: '🎯', dunk: '💥', layup: '🏀', timeout: '⏱️',
+  foul: '🚨', injury: '🚑', substitution: '🔄', quarter_end: '🔔',
+  half_time: '🕐', comeback: '⚡', technical_foul: '🚫', fight: '⚠️',
+  turnover: '❌', steal: '🤚', block: '🛡️', free_throw: '🎯', assist: '🎪',
+};
+
+function MatchDetailModal({ match, allTeams, onClose }) {
+  const [log, setLog]         = useState(null);
+  const [loading, setLoading] = useState(true);
+  const [tab, setTab]         = useState('highlights');
+
+  useEffect(() => {
+    apiGetMatchLog(match.id).then(data => { setLog(data); setLoading(false); });
+  }, [match.id]);
+
+  const homeScore     = match.result?.homeScore ?? match.homeScore ?? log?.homeScore;
+  const awayScore     = match.result?.awayScore ?? match.awayScore ?? log?.awayScore;
+  const quarterScores = log?.quarterScores || [];
+  const events        = log?.events        || [];
+  const playerStats   = log?.playerStats   || {};
+
+  const homeTeam = allTeams?.find(t => t.id === match.homeTeamId);
+  const awayTeam = allTeams?.find(t => t.id === match.awayTeamId);
+  const allPlayers = [
+    ...(homeTeam?.players || []).map(p => ({ ...p, teamId: match.homeTeamId })),
+    ...(awayTeam?.players || []).map(p => ({ ...p, teamId: match.awayTeamId })),
+  ];
+
+  return (
+    <div className="modal-overlay" onClick={onClose}>
+      <div className="modal" onClick={e => e.stopPropagation()} style={{ maxWidth: 640 }}>
+        <div className="modal-header">
+          <div>
+            <h3 className="card-title" style={{ marginBottom: 2 }}>
+              {match.homeTeamName} vs {match.awayTeamName}
+            </h3>
+            <div style={{ fontSize: 'var(--font-size-xs)', color: 'var(--text-muted)' }}>
+              {formatMatchDate(match.scheduledDate)}
+            </div>
+          </div>
+          <button className="btn btn-ghost btn-sm" onClick={onClose}><X size={16} /></button>
+        </div>
+
+        <div className="modal-body" style={{ maxHeight: '75vh', overflowY: 'auto' }}>
+          {/* Score banner */}
+          <div style={{ display: 'flex', justifyContent: 'center', alignItems: 'center', gap: 24, padding: '16px 0 12px', marginBottom: 16 }}>
+            <div style={{ textAlign: 'center', flex: 1 }}>
+              <div style={{ fontWeight: 700, fontSize: 'var(--font-size-sm)', marginBottom: 4 }}>{match.homeTeamName}</div>
+              <div style={{ fontSize: '2.5rem', fontWeight: 900, color: homeScore > awayScore ? 'var(--color-success)' : 'var(--text-primary)', lineHeight: 1 }}>{homeScore ?? '–'}</div>
+            </div>
+            <div style={{ fontSize: 'var(--font-size-sm)', color: 'var(--text-muted)', fontWeight: 700 }}>FINAL</div>
+            <div style={{ textAlign: 'center', flex: 1 }}>
+              <div style={{ fontWeight: 700, fontSize: 'var(--font-size-sm)', marginBottom: 4 }}>{match.awayTeamName}</div>
+              <div style={{ fontSize: '2.5rem', fontWeight: 900, color: awayScore > homeScore ? 'var(--color-success)' : 'var(--text-primary)', lineHeight: 1 }}>{awayScore ?? '–'}</div>
+            </div>
+          </div>
+
+          {/* Quarter scores */}
+          {quarterScores.length > 0 && (
+            <div style={{ overflowX: 'auto', marginBottom: 16 }}>
+              <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 'var(--font-size-sm)' }}>
+                <thead>
+                  <tr style={{ color: 'var(--text-muted)', fontSize: 'var(--font-size-xs)' }}>
+                    <th style={{ textAlign: 'left', padding: '4px 8px', fontWeight: 700 }}>Team</th>
+                    {quarterScores[0]?.map((_, qi) => (
+                      <th key={qi} style={{ padding: '4px 8px', textAlign: 'center', fontWeight: 700 }}>Q{qi + 1}</th>
+                    ))}
+                    <th style={{ padding: '4px 8px', textAlign: 'center', fontWeight: 700 }}>Total</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {[
+                    { name: match.homeTeamName, scores: quarterScores[0] || [], total: homeScore },
+                    { name: match.awayTeamName, scores: quarterScores[1] || [], total: awayScore },
+                  ].map((row, ri) => (
+                    <tr key={ri} style={{ borderTop: '1px solid var(--border-color)' }}>
+                      <td style={{ padding: '6px 8px', fontWeight: 600 }}>{row.name}</td>
+                      {row.scores.map((s, qi) => (
+                        <td key={qi} style={{ padding: '6px 8px', textAlign: 'center', color: 'var(--text-muted)' }}>{s}</td>
+                      ))}
+                      <td style={{ padding: '6px 8px', textAlign: 'center', fontWeight: 800 }}>{row.total ?? '–'}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+
+          {loading && (
+            <div style={{ textAlign: 'center', color: 'var(--text-muted)', padding: 20 }}>Loading match data…</div>
+          )}
+
+          {!loading && !log && (
+            <div className="empty-state">
+              <div className="empty-state-icon">📋</div>
+              <div className="empty-state-title">No detailed log available</div>
+              <div className="empty-state-desc">This match was played before detailed logs were recorded.</div>
+            </div>
+          )}
+
+          {!loading && log && (
+            <>
+              {/* Tabs */}
+              <div className="tabs" style={{ marginBottom: 12 }}>
+                <button className={`tab${tab === 'highlights' ? ' active' : ''}`} onClick={() => setTab('highlights')}>Highlights</button>
+                <button className={`tab${tab === 'boxscore' ? ' active' : ''}`} onClick={() => setTab('boxscore')}>Box Score</button>
+              </div>
+
+              {tab === 'highlights' && (
+                <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+                  {events.length === 0 && <div style={{ textAlign: 'center', color: 'var(--text-muted)', padding: 16 }}>No highlights recorded.</div>}
+                  {events.map((ev, i) => (
+                    <div
+                      key={i}
+                      style={{
+                        display: 'flex', gap: 8, alignItems: 'flex-start', padding: '6px 8px',
+                        borderRadius: 'var(--radius-sm)',
+                        background: ev.type === 'quarter_end' || ev.type === 'half_time' ? 'var(--bg-muted)' : 'transparent',
+                        borderLeft: ev.type === 'quarter_end' || ev.type === 'half_time' ? '2px solid var(--color-primary)' : undefined,
+                      }}
+                    >
+                      <span style={{ fontSize: 'var(--font-size-xs)', color: 'var(--text-muted)', minWidth: 28 }}>
+                        {typeof ev.time === 'number' ? `${ev.time.toFixed(0)}'` : ev.time || ''}
+                      </span>
+                      <span>{EVENT_ICONS[ev.type] || '🏀'}</span>
+                      <span style={{ flex: 1, fontSize: 'var(--font-size-sm)' }}>{ev.description}</span>
+                      {ev.score && (
+                        <span style={{ fontSize: 'var(--font-size-xs)', fontWeight: 700, color: 'var(--text-muted)', whiteSpace: 'nowrap' }}>
+                          {typeof ev.score === 'string' ? ev.score : `${ev.score.home}-${ev.score.away}`}
+                        </span>
+                      )}
+                    </div>
+                  ))}
+                </div>
+              )}
+
+              {tab === 'boxscore' && (
+                <div>
+                  {[
+                    { teamName: match.homeTeamName, teamId: match.homeTeamId },
+                    { teamName: match.awayTeamName, teamId: match.awayTeamId },
+                  ].map(({ teamName, teamId }) => {
+                    const teamPlayers = allPlayers.filter(p => p.teamId === teamId);
+                    const rows = teamPlayers.map(p => {
+                      const s = playerStats[p.id] || {};
+                      if (!s.minutesPlayed) return null;
+                      const fgPct = s.fgAttempts > 0 ? ((s.fgMade / s.fgAttempts) * 100).toFixed(0) + '%' : '—';
+                      return { player: p, s, fgPct };
+                    }).filter(Boolean).sort((a, b) => (b.s.points || 0) - (a.s.points || 0));
+
+                    if (rows.length === 0) return null;
+                    return (
+                      <div key={teamId} style={{ marginBottom: 20 }}>
+                        <div style={{ fontWeight: 700, fontSize: 'var(--font-size-sm)', marginBottom: 8, padding: '4px 0', borderBottom: '2px solid var(--color-primary)' }}>{teamName}</div>
+                        <div style={{ overflowX: 'auto' }}>
+                          <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 'var(--font-size-xs)' }}>
+                            <thead>
+                              <tr style={{ color: 'var(--text-muted)' }}>
+                                <th style={{ textAlign: 'left', padding: '4px 6px' }}>Player</th>
+                                <th style={{ padding: '4px 6px', textAlign: 'center' }}>MIN</th>
+                                <th style={{ padding: '4px 6px', textAlign: 'center' }}>PTS</th>
+                                <th style={{ padding: '4px 6px', textAlign: 'center' }}>REB</th>
+                                <th style={{ padding: '4px 6px', textAlign: 'center' }}>AST</th>
+                                <th style={{ padding: '4px 6px', textAlign: 'center' }}>STL</th>
+                                <th style={{ padding: '4px 6px', textAlign: 'center' }}>BLK</th>
+                                <th style={{ padding: '4px 6px', textAlign: 'center' }}>FG%</th>
+                              </tr>
+                            </thead>
+                            <tbody>
+                              {rows.map(({ player, s, fgPct }) => (
+                                <tr key={player.id} style={{ borderTop: '1px solid var(--border-color)' }}>
+                                  <td style={{ padding: '5px 6px', fontWeight: 600 }}>
+                                    <span style={{ fontSize: '0.6rem', color: 'var(--text-muted)', marginRight: 4 }}>{player.position}</span>
+                                    {player.name}
+                                  </td>
+                                  <td style={{ padding: '5px 6px', textAlign: 'center', color: 'var(--text-muted)' }}>{s.minutesPlayed}</td>
+                                  <td style={{ padding: '5px 6px', textAlign: 'center', fontWeight: 700, color: (s.points || 0) >= 20 ? 'var(--color-primary)' : 'inherit' }}>{s.points ?? 0}</td>
+                                  <td style={{ padding: '5px 6px', textAlign: 'center' }}>{s.rebounds ?? 0}</td>
+                                  <td style={{ padding: '5px 6px', textAlign: 'center' }}>{s.assists ?? 0}</td>
+                                  <td style={{ padding: '5px 6px', textAlign: 'center' }}>{s.steals ?? 0}</td>
+                                  <td style={{ padding: '5px 6px', textAlign: 'center' }}>{s.blocks ?? 0}</td>
+                                  <td style={{ padding: '5px 6px', textAlign: 'center', color: 'var(--text-muted)' }}>{fgPct}</td>
+                                </tr>
+                              ))}
+                            </tbody>
+                          </table>
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+            </>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
 // ── Opponent Fixture Modal ─────────────────────────────────────
 
-function OpponentModal({ team, opponentId, userTeam, allMatches, scouts, onClose }) {
+function OpponentModal({ team, opponentId, userTeam, allMatches, scouts, onClose, onMatchClick }) {
   const opponentMatches = useMemo(() =>
     allMatches
       .filter(m => m.homeTeamId === opponentId || m.awayTeamId === opponentId)
@@ -130,12 +334,20 @@ function OpponentModal({ team, opponentId, userTeam, allMatches, scouts, onClose
                     ? m.result?.homeScore > m.result?.awayScore
                     : m.result?.awayScore > m.result?.homeScore;
                   return (
-                    <div key={m.id} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '8px 12px', background: 'var(--bg-muted)', borderRadius: 'var(--radius-sm)', fontSize: 'var(--font-size-sm)' }}>
+                    <div
+                      key={m.id}
+                      style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '8px 12px', background: 'var(--bg-muted)', borderRadius: 'var(--radius-sm)', fontSize: 'var(--font-size-sm)', cursor: onMatchClick ? 'pointer' : 'default' }}
+                      onClick={() => onMatchClick?.(m)}
+                      title={onMatchClick ? 'Click to view match details' : undefined}
+                    >
                       <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
                         <span className={`badge ${won ? 'badge-green' : 'badge-red'}`} style={{ fontSize: '0.55rem' }}>{won ? 'W' : 'L'}</span>
                         vs {opp}
                       </div>
-                      <span style={{ fontWeight: 700 }}>{m.result?.homeScore}–{m.result?.awayScore}</span>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                        <span style={{ fontWeight: 700 }}>{m.result?.homeScore}–{m.result?.awayScore}</span>
+                        {onMatchClick && <span style={{ fontSize: '0.7rem', color: 'var(--text-muted)' }}>📊</span>}
+                      </div>
                     </div>
                   );
                 })}
@@ -166,6 +378,7 @@ export default function Calendar() {
   const [showAddEvent, setShowAddEvent] = useState(false);
   const [newEvent, setNewEvent]       = useState({ title: '', date: '', description: '' });
   const [selectedOpponent, setSelectedOpponent] = useState(null); // { id, name }
+  const [selectedMatch, setSelectedMatch]       = useState(null); // played match for detail view
 
   // Firestore-backed schedule from state (stable across refreshes)
   const schedule = useMemo(() => {
@@ -223,11 +436,15 @@ export default function Calendar() {
     setShowAddEvent(false);
   };
 
-  function handleOpponentClick(match) {
-    const isHome = match.homeTeamId === team?.id;
-    const oppId   = isHome ? match.awayTeamId : match.homeTeamId;
-    const oppName = isHome ? match.awayTeamName : match.homeTeamName;
-    setSelectedOpponent({ id: oppId, name: oppName });
+  function handleMatchClick(match) {
+    if (match.played) {
+      setSelectedMatch(match);
+    } else {
+      const isHome = match.homeTeamId === team?.id;
+      const oppId   = isHome ? match.awayTeamId : match.homeTeamId;
+      const oppName = isHome ? match.awayTeamName : match.homeTeamName;
+      setSelectedOpponent({ id: oppId, name: oppName });
+    }
   }
 
   return (
@@ -322,8 +539,8 @@ export default function Calendar() {
                     key={match.id}
                     className="card"
                     style={{ padding: '12px 16px', cursor: 'pointer', transition: 'box-shadow 0.15s' }}
-                    onClick={() => handleOpponentClick(match)}
-                    title="Click to see this team's fixtures"
+                    onClick={() => handleMatchClick(match)}
+                    title={match.played ? 'Click to view match details' : "Click to see this team's fixtures"}
                   >
                     <div className="flex items-center justify-between">
                       <div>
@@ -368,7 +585,7 @@ export default function Calendar() {
               )}
               {filteredMatches.length > 0 && (
                 <div style={{ fontSize: 'var(--font-size-xs)', color: 'var(--text-muted)', textAlign: 'center', marginTop: 4 }}>
-                  Click any fixture to view that team's schedule
+                  Past matches: click to view details · Upcoming: click to see opponent schedule
                 </div>
               )}
             </div>
@@ -516,6 +733,16 @@ export default function Calendar() {
           allMatches={allLeagueMatches}
           scouts={scouts}
           onClose={() => setSelectedOpponent(null)}
+          onMatchClick={m => { setSelectedOpponent(null); setSelectedMatch(m); }}
+        />
+      )}
+
+      {/* Match Detail Modal */}
+      {selectedMatch && (
+        <MatchDetailModal
+          match={selectedMatch}
+          allTeams={state.allTeams}
+          onClose={() => setSelectedMatch(null)}
         />
       )}
     </div>

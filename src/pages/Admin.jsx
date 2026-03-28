@@ -5,7 +5,7 @@ import { useGame } from '../context/GameContext.jsx';
 import {
   apiUpdateMatchesBatch, apiUpdateMatch, apiGetMatchesFromCollection,
   apiGetAllUserStates, apiGetSeasonConfig, apiSaveSeasonConfig, apiCreateSeasonMatches,
-  apiResetAllMatches, apiResetStandings,
+  apiResetAllMatches, apiResetStandings, apiRegenerateSchedule,
 } from '../api.js';
 import { buildRoundRobinRounds } from '../engine/gameScheduler.js';
 
@@ -37,6 +37,74 @@ function groupByRound(matches) {
   return Array.from(map.entries())
     .sort(([a], [b]) => a - b)
     .map(([ts, ms], i) => ({ roundIdx: i, ts, matches: ms }));
+}
+
+// ── Regenerate Schedule Panel ──────────────────────────────────
+
+function RegenerateSchedulePanel({ leagues, onDone }) {
+  const todayAt22 = (() => {
+    const d = new Date();
+    d.setHours(22, 0, 0, 0);
+    const pad = n => String(n).padStart(2, '0');
+    return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T22:00`;
+  })();
+
+  const [startDate, setStartDate] = useState(todayAt22);
+  const [saving, setSaving]       = useState(false);
+  const [msg, setMsg]             = useState('');
+
+  async function handleGenerate() {
+    if (!startDate) return;
+    if (!window.confirm('This will DELETE all existing matches and create a fresh round-robin schedule. This cannot be undone. Continue?')) return;
+    setSaving(true);
+    setMsg('');
+    try {
+      const startTs = new Date(startDate).getTime();
+      const result = await apiRegenerateSchedule(leagues, startTs);
+      setMsg(`✓ Schedule regenerated: ${result.matchCount} fixtures across ${result.roundCount} rounds. First matchday: ${new Date(startTs).toLocaleString('en-US', { weekday: 'short', month: 'short', day: 'numeric', year: 'numeric', hour: '2-digit', minute: '2-digit' })}`);
+      onDone?.();
+    } catch (err) {
+      setMsg(`✗ Error: ${err.message}`);
+    }
+    setSaving(false);
+  }
+
+  return (
+    <div className="card" style={{ padding: '20px 24px', marginBottom: 24, borderLeft: '3px solid var(--color-primary)' }}>
+      <div style={{ fontWeight: 700, fontSize: 'var(--font-size-lg)', marginBottom: 4 }}>🗓 Regenerate Season 1 Schedule</div>
+      <p style={{ color: 'var(--text-muted)', fontSize: 'var(--font-size-sm)', marginBottom: 16 }}>
+        Deletes all existing matches and rebuilds a full round-robin for all {leagues.length} leagues.
+        Each matchday is 3 days apart. <strong>Standings will also be reset to 0.</strong>
+      </p>
+      <div style={{ display: 'flex', alignItems: 'flex-end', gap: 12, flexWrap: 'wrap' }}>
+        <div className="form-group" style={{ margin: 0 }}>
+          <label className="form-label" style={{ marginBottom: 4 }}>Start date &amp; time (your local time)</label>
+          <input
+            type="datetime-local"
+            className="form-input"
+            value={startDate}
+            onChange={e => setStartDate(e.target.value)}
+          />
+        </div>
+        <button
+          className="btn btn-primary"
+          disabled={!startDate || saving || !leagues.length}
+          onClick={handleGenerate}
+          style={{ flexShrink: 0 }}
+        >
+          {saving
+            ? <><RefreshCw size={14} style={{ animation: 'spin 1s linear infinite' }} /> Generating…</>
+            : '⚡ Generate & Save Schedule'}
+        </button>
+      </div>
+      {msg && (
+        <div style={{ marginTop: 12, padding: '8px 14px', background: msg.startsWith('✓') ? 'rgba(34,197,94,0.1)' : 'rgba(239,68,68,0.1)', border: `1px solid ${msg.startsWith('✓') ? 'rgba(34,197,94,0.3)' : 'rgba(239,68,68,0.3)'}`, borderRadius: 'var(--radius)', fontSize: 'var(--font-size-sm)', fontWeight: 600, color: msg.startsWith('✓') ? '#16a34a' : '#dc2626' }}>
+          {msg}
+        </div>
+      )}
+      <style>{`@keyframes spin{from{transform:rotate(0deg)}to{transform:rotate(360deg)}}`}</style>
+    </div>
+  );
 }
 
 // ── Schedule Manager (with per-match editing) ─────────────────
@@ -651,6 +719,7 @@ export default function Admin() {
   if (!state.user?.isAdmin) return <Navigate to="/" replace />;
 
   const leagues = state.leagues || [];
+  const [scheduleKey, setScheduleKey] = useState(0);
 
   return (
     <div className="animate-fade-in">
@@ -677,7 +746,8 @@ export default function Admin() {
 
       {tab === 'schedule' && (
         <>
-          <ScheduleManager collectionName="matches" />
+          <RegenerateSchedulePanel leagues={leagues} onDone={() => setScheduleKey(k => k + 1)} />
+          <ScheduleManager key={scheduleKey} collectionName="matches" />
           <ResetZone />
         </>
       )}

@@ -10,6 +10,7 @@ import {
   collection, query, where, writeBatch,
 } from 'firebase/firestore';
 import { auth, db } from './firebase.js';
+import { buildRoundRobinRounds } from './engine/gameScheduler.js';
 
 // ── Field-name normalizers ────────────────────────────────────────
 // The migration stored PostgreSQL rows verbatim (snake_case).
@@ -618,6 +619,67 @@ export async function apiCreateSeasonMatches(collectionName, matches) {
     });
     await batch.commit();
   }
+}
+
+/**
+ * Delete all existing matches, reset standings, then regenerate a full
+ * round-robin schedule for every league starting at startTimestampMs.
+ * Each round is spaced 3 days apart. Match IDs: s1-{li}-r{ri}-{homeId}-vs-{awayId}
+ */
+export async function apiRegenerateSchedule(leagues, startTimestampMs) {
+  const DAY_MS = 24 * 60 * 60 * 1000;
+  const ROUND_GAP_MS = 3 * DAY_MS;
+  const CHUNK = 400;
+
+  // 1. Delete all existing matches
+  const existingSnap = await getDocs(collection(db, 'matches'));
+  for (let i = 0; i < existingSnap.docs.length; i += CHUNK) {
+    const batch = writeBatch(db);
+    existingSnap.docs.slice(i, i + CHUNK).forEach(d => batch.delete(d.ref));
+    await batch.commit();
+  }
+
+  // 2. Reset standings
+  await apiResetStandings();
+
+  // 3. Generate and write new matches
+  const allMatches = [];
+  leagues.forEach((league, li) => {
+    if (!league.teams?.length) return;
+    const rounds = buildRoundRobinRounds(league.teams);
+    rounds.forEach((round, ri) => {
+      const scheduledDate = startTimestampMs + ri * ROUND_GAP_MS;
+      round.forEach(({ homeTeam, awayTeam }) => {
+        allMatches.push({
+          id:           `s1-${li}-r${ri}-${homeTeam.id}-vs-${awayTeam.id}`,
+          leagueId:     league.id,
+          homeTeamId:   homeTeam.id,
+          awayTeamId:   awayTeam.id,
+          homeTeamName: homeTeam.name || homeTeam.id,
+          awayTeamName: awayTeam.name || awayTeam.id,
+          scheduledDate,
+          round:        ri + 1,
+          played:       false,
+          homeScore:    null,
+          awayScore:    null,
+        });
+      });
+    });
+  });
+
+  for (let i = 0; i < allMatches.length; i += CHUNK) {
+    const batch = writeBatch(db);
+    allMatches.slice(i, i + CHUNK).forEach(m => {
+      batch.set(doc(db, 'matches', m.id), m);
+    });
+    await batch.commit();
+  }
+
+  const roundCount = leagues.length
+    ? buildRoundRobinRounds(leagues[0].teams || []).length
+    : 0;
+
+  return { matchCount: allMatches.length, roundCount };
 }
 
 /** Get all user profiles + team states (admin only). */

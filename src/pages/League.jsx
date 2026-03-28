@@ -1,6 +1,7 @@
 import { useState, useMemo } from 'react';
 import { useGame } from '../context/GameContext.jsx';
-import { Trophy, TrendingUp, TrendingDown, ChevronUp, ChevronDown, Info } from 'lucide-react';
+import { Trophy, TrendingUp, TrendingDown, ChevronUp, ChevronDown, Info, X } from 'lucide-react';
+import { formatMatchDate } from '../engine/gameScheduler.js';
 
 const REPUTATION_LEVELS = [
   [0,20,'Local Hopeful'],
@@ -19,10 +20,16 @@ export default function League() {
   const [sortCol, setSortCol] = useState('points');
   const [sortDir, setSortDir] = useState('desc');
   const [selectedTeam, setSelectedTeam] = useState(null);
+  const [showTeamSchedule, setShowTeamSchedule] = useState(false);
 
   const leagues = state.leagues || [];
   const allTeams = state.allTeams || [];
   const userTeam = state.userTeam;
+
+  const allLeagueMatches = useMemo(() =>
+    leagues.flatMap(l => l.schedule || []),
+    [leagues]
+  );
 
   // Get teams for the selected league
   const leagueTeams = useMemo(() => {
@@ -234,30 +241,114 @@ export default function League() {
       </div>
 
       {/* Team Detail Modal */}
-      {selectedTeam && (
-        <div className="modal-overlay" onClick={() => setSelectedTeam(null)}>
-          <div className="modal" onClick={e => e.stopPropagation()} style={{ maxWidth: 400 }}>
-            <div className="modal-header">
-              <h3>{selectedTeam.name}</h3>
-              <button className="btn btn-ghost btn-sm" onClick={() => setSelectedTeam(null)}>✕</button>
-            </div>
-            <div className="modal-body">
-              <div className="stats-grid" style={{ gridTemplateColumns: 'repeat(3,1fr)', marginBottom: 16 }}>
-                <div className="stat-card"><div className="stat-value">{selectedTeam.wins}</div><div className="stat-label">Wins</div></div>
-                <div className="stat-card"><div className="stat-value">{selectedTeam.losses}</div><div className="stat-label">Losses</div></div>
-                <div className="stat-card"><div className="stat-value">{selectedTeam.points}</div><div className="stat-label">Points</div></div>
+      {selectedTeam && (() => {
+        const teamMatches = allLeagueMatches
+          .filter(m => m.homeTeamId === selectedTeam.id || m.awayTeamId === selectedTeam.id)
+          .sort((a, b) => a.scheduledDate - b.scheduledDate);
+        const upcoming = teamMatches.filter(m => !m.played);
+        const past     = teamMatches.filter(m =>  m.played);
+
+        return (
+          <div className="modal-overlay" onClick={() => { setSelectedTeam(null); setShowTeamSchedule(false); }}>
+            <div className="modal" onClick={e => e.stopPropagation()} style={{ maxWidth: showTeamSchedule ? 560 : 420 }}>
+              <div className="modal-header">
+                <h3>{selectedTeam.name}</h3>
+                <div style={{ display: 'flex', gap: 8 }}>
+                  <button
+                    className={`btn btn-sm ${showTeamSchedule ? 'btn-primary' : 'btn-ghost'}`}
+                    onClick={() => setShowTeamSchedule(s => !s)}
+                    title="Toggle fixture list"
+                  >
+                    📅 {showTeamSchedule ? 'Hide Schedule' : 'View Schedule'}
+                  </button>
+                  <button className="btn btn-ghost btn-sm" onClick={() => { setSelectedTeam(null); setShowTeamSchedule(false); }}><X size={16} /></button>
+                </div>
               </div>
-              <div className="text-sm text-muted">{selectedTeam.city || selectedTeam.country} · Stadium: {selectedTeam.stadiumName}</div>
-              <div className="text-sm mt-2">
-                <span className="badge badge-orange">Reputation: {selectedTeam.rep}/100</span>
-                {' '}
-                <span className="text-muted">{getRepLevel(selectedTeam.rep)}</span>
+              <div className="modal-body" style={{ maxHeight: '75vh', overflowY: 'auto' }}>
+                {/* Stats */}
+                <div className="stats-grid" style={{ gridTemplateColumns: 'repeat(3,1fr)', marginBottom: 16 }}>
+                  <div className="stat-card"><div className="stat-value">{selectedTeam.wins}</div><div className="stat-label">Wins</div></div>
+                  <div className="stat-card"><div className="stat-value">{selectedTeam.losses}</div><div className="stat-label">Losses</div></div>
+                  <div className="stat-card"><div className="stat-value">{selectedTeam.points}</div><div className="stat-label">Points</div></div>
+                </div>
+                <div className="text-sm text-muted">{selectedTeam.city || selectedTeam.country} · Stadium: {selectedTeam.stadiumName}</div>
+                <div className="text-sm mt-2">
+                  <span className="badge badge-orange">Reputation: {selectedTeam.rep}/100</span>
+                  {' '}
+                  <span className="text-muted">{getRepLevel(selectedTeam.rep)}</span>
+                </div>
+                <div className="text-sm mt-3 font-semibold">Players: {selectedTeam.players?.length || 0}</div>
+
+                {/* Fixture list (toggled) */}
+                {showTeamSchedule && (
+                  <div style={{ marginTop: 20 }}>
+                    <div style={{ fontWeight: 700, fontSize: 'var(--font-size-sm)', borderBottom: '1px solid var(--border-color)', paddingBottom: 8, marginBottom: 12 }}>
+                      Season Schedule · {teamMatches.length} fixtures
+                    </div>
+
+                    {upcoming.length > 0 && (
+                      <div style={{ marginBottom: 14 }}>
+                        <div style={{ fontSize: 'var(--font-size-xs)', fontWeight: 700, textTransform: 'uppercase', letterSpacing: 1, color: 'var(--text-muted)', marginBottom: 6 }}>
+                          Upcoming ({upcoming.length})
+                        </div>
+                        <div style={{ display: 'flex', flexDirection: 'column', gap: 5 }}>
+                          {upcoming.slice(0, 8).map(m => {
+                            const isHome = m.homeTeamId === selectedTeam.id;
+                            const opp = isHome ? m.awayTeamName : m.homeTeamName;
+                            return (
+                              <div key={m.id} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '7px 10px', background: 'var(--bg-muted)', borderRadius: 'var(--radius-sm)', fontSize: 'var(--font-size-sm)' }}>
+                                <div>
+                                  <span className={`badge ${isHome ? 'badge-orange' : 'badge-gray'}`} style={{ fontSize: '0.55rem', marginRight: 6 }}>{isHome ? 'H' : 'A'}</span>
+                                  vs {opp}
+                                </div>
+                                <span style={{ color: 'var(--text-muted)', fontSize: 'var(--font-size-xs)' }}>{formatMatchDate(m.scheduledDate)}</span>
+                              </div>
+                            );
+                          })}
+                        </div>
+                      </div>
+                    )}
+
+                    {past.length > 0 && (
+                      <div>
+                        <div style={{ fontSize: 'var(--font-size-xs)', fontWeight: 700, textTransform: 'uppercase', letterSpacing: 1, color: 'var(--text-muted)', marginBottom: 6 }}>
+                          Results ({past.length})
+                        </div>
+                        <div style={{ display: 'flex', flexDirection: 'column', gap: 5 }}>
+                          {[...past].reverse().slice(0, 8).map(m => {
+                            const isHome = m.homeTeamId === selectedTeam.id;
+                            const opp = isHome ? m.awayTeamName : m.homeTeamName;
+                            const won = isHome
+                              ? (m.result?.homeScore ?? m.homeScore) > (m.result?.awayScore ?? m.awayScore)
+                              : (m.result?.awayScore ?? m.awayScore) > (m.result?.homeScore ?? m.homeScore);
+                            const hs = m.result?.homeScore ?? m.homeScore;
+                            const as_ = m.result?.awayScore ?? m.awayScore;
+                            return (
+                              <div key={m.id} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '7px 10px', background: 'var(--bg-muted)', borderRadius: 'var(--radius-sm)', fontSize: 'var(--font-size-sm)' }}>
+                                <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                                  <span className={`badge ${won ? 'badge-green' : 'badge-red'}`} style={{ fontSize: '0.55rem' }}>{won ? 'W' : 'L'}</span>
+                                  vs {opp}
+                                </div>
+                                <span style={{ fontWeight: 700 }}>{hs}–{as_}</span>
+                              </div>
+                            );
+                          })}
+                        </div>
+                      </div>
+                    )}
+
+                    {teamMatches.length === 0 && (
+                      <div style={{ textAlign: 'center', color: 'var(--text-muted)', padding: 16, fontSize: 'var(--font-size-sm)' }}>
+                        No fixtures found for this team.
+                      </div>
+                    )}
+                  </div>
+                )}
               </div>
-              <div className="text-sm mt-3 font-semibold">Players: {selectedTeam.players?.length || 0}</div>
             </div>
           </div>
-        </div>
-      )}
+        );
+      })()}
     </div>
   );
 }
