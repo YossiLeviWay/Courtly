@@ -4,6 +4,12 @@ service cloud.firestore {
 
     // ── Helpers ─────────────────────────────────────────────────
 
+    // Returns true if the caller has isAdmin: true in their users doc.
+    function isAdmin() {
+      return request.auth != null
+        && get(/databases/$(database)/documents/users/$(request.auth.uid)).data.isAdmin == true;
+    }
+
     // Returns the caller's user_team_state document (cached per request)
     function myState() {
       return get(/databases/$(database)/documents/user_team_state/$(request.auth.uid)).data;
@@ -28,28 +34,40 @@ service cloud.firestore {
     }
 
     // Teams: readable by all authenticated users.
-    // Only the owner of a team can rename it (name propagation).
+    // Only the owner of a team (or admin) can rename it.
     match /teams/{teamId} {
-      allow read:   if request.auth != null;
-      allow update: if request.auth != null
-                    && myState().teamId == teamId;
-      allow create, delete: if false;
+      allow read:           if request.auth != null;
+      allow update:         if request.auth != null
+                            && (myState().teamId == teamId || isAdmin());
+      allow create, delete: if isAdmin();
     }
 
     // ── Shared live data ─────────────────────────────────────────
 
-    // Any authenticated user may update a match to record the result.
-    // No one can create or delete match documents from the client.
+    // Any authenticated user may update a match to record a result.
+    // Only admin can create or delete match documents (schedule regeneration).
     match /matches/{matchId} {
-      allow read:   if request.auth != null;
-      allow update: if request.auth != null;
-      allow create, delete: if false;
+      allow read:           if request.auth != null;
+      allow update:         if request.auth != null;
+      allow create, delete: if isAdmin();
     }
 
     // Standings are updated atomically alongside match results.
     match /standings/{standingId} {
       allow read:  if request.auth != null;
       allow write: if request.auth != null;
+    }
+
+    // Match logs: written when a match result is recorded, readable by all.
+    match /match_logs/{matchId} {
+      allow read:  if request.auth != null;
+      allow write: if request.auth != null;
+    }
+
+    // App config (season management): only admin can write.
+    match /app_config/{docId} {
+      allow read:  if request.auth != null;
+      allow write: if isAdmin();
     }
 
     // ── Transfer market ──────────────────────────────────────────
@@ -59,9 +77,9 @@ service cloud.firestore {
       // A user may only list players from their own team.
       allow create: if request.auth != null
                     && request.resource.data.sellingTeamId == myState().teamId;
-      // Only the selling team's owner may delist.
+      // Only the selling team's owner (or admin) may delist.
       allow delete: if request.auth != null
-                    && resource.data.sellingTeamId == myState().teamId;
+                    && (resource.data.sellingTeamId == myState().teamId || isAdmin());
       allow update: if false;
     }
 
@@ -69,12 +87,14 @@ service cloud.firestore {
 
     match /users/{userId} {
       allow read, write: if request.auth != null
-                         && request.auth.uid == userId;
+                         && (request.auth.uid == userId || isAdmin());
     }
 
+    // Users may only read/write their own state.
+    // Admin can read/write any user's state (e.g. to reset seasonRecord).
     match /user_team_state/{userId} {
       allow read, write: if request.auth != null
-                         && request.auth.uid == userId;
+                         && (request.auth.uid == userId || isAdmin());
     }
   }
 }
