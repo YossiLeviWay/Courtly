@@ -14,7 +14,7 @@ const MS_PER_DAY = 24 * 60 * 60 * 1000;
  * Guarantees no team plays twice in the same round.
  * Full season = first-half rounds + return-leg rounds (home↔away).
  */
-function buildRoundRobinRounds(teams) {
+export function buildRoundRobinRounds(teams) {
   const arr = [...teams];
   if (arr.length % 2 !== 0) arr.push(null); // bye for odd count
 

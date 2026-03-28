@@ -71,9 +71,12 @@ export default function YouthAcademy() {
   const userTeam = state.userTeam;
 
   const now = new Date();
-  const currentMonth = `${now.getFullYear()}-${now.getMonth()}`;
-  const lastDraftMonth = userTeam?.youthDraft?.lastDraftMonth;
-  const alreadyDrafted = lastDraftMonth === currentMonth;
+  const WEEK_MS = 7 * 24 * 60 * 60 * 1000;
+  const lastDraftedAt = userTeam?.youthDraft?.lastDraftedAt ?? 0;
+  const msSinceDraft = Date.now() - lastDraftedAt;
+  const alreadyDrafted = msSinceDraft < WEEK_MS;
+  const daysLeft = alreadyDrafted ? Math.ceil((WEEK_MS - msSinceDraft) / (24 * 60 * 60 * 1000)) : 0;
+  const nextAvailable = alreadyDrafted ? new Date(lastDraftedAt + WEEK_MS).toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' }) : null;
 
   const youthLevel = userTeam?.facilities?.youthAcademy;
   const facilityLevel = typeof youthLevel === 'object' ? (youthLevel?.level ?? 0) : (youthLevel ?? 0);
@@ -95,7 +98,7 @@ export default function YouthAcademy() {
       type: 'UPDATE_TEAM', payload: {
         ...userTeam,
         players: updatedPlayers,
-        youthDraft: { lastDraftMonth: currentMonth, lastDraftedPlayer: newPlayer.name }
+        youthDraft: { lastDraftedAt: Date.now(), lastDraftedPlayer: newPlayer.name }
       }
     });
     addNotification(`${newPlayer.name} drafted and added to the squad!`, 'success');
@@ -113,12 +116,12 @@ export default function YouthAcademy() {
         <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: 12 }}>
           <div>
             <div style={{ fontWeight: 700, marginBottom: 4 }}>
-              {alreadyDrafted ? '✅ Draft Complete' : '📅 Draft Window Open'}
+              {alreadyDrafted ? '🔒 Draft on Cooldown' : '📅 Draft Window Open'}
             </div>
             <div style={{ fontSize: 'var(--font-size-sm)', color: 'var(--text-muted)' }}>
               {alreadyDrafted
-                ? `You drafted ${userTeam?.youthDraft?.lastDraftedPlayer} this month. Next window opens next month.`
-                : `Pick one prospect before end of ${now.toLocaleString('default', { month: 'long' })} ${now.getFullYear()}.`}
+                ? `You drafted ${userTeam?.youthDraft?.lastDraftedPlayer}. Next draft available ${nextAvailable} (${daysLeft} day${daysLeft !== 1 ? 's' : ''} left).`
+                : 'Pick one prospect to add to your squad. You can draft again in 7 days.'}
             </div>
           </div>
           <div style={{ textAlign: 'right' }}>

@@ -3,7 +3,7 @@ import { onAuthStateChanged, signOut } from 'firebase/auth';
 import { auth } from '../firebase.js';
 import {
   apiGetWorld, apiGetMatches, apiGetStandings, apiGetUserState,
-  apiGetTransferMarket, apiSaveUserState, apiSaveMatchLog,
+  apiGetTransferMarket, apiSaveUserState, apiRecordMatchResult,
 } from '../api.js';
 import { processPendingMatches } from '../engine/gameScheduler.js';
 
@@ -227,6 +227,116 @@ export function GameProvider({ children }) {
   const [state, dispatch] = useReducer(gameReducer, initialState);
   const justLoaded = useRef(false);
 
+  // ── Core data loader (called on login + polling) ──────────────
+  const loadGameData = useCallback(async () => {
+    if (!auth.currentUser) return;
+
+    try {
+      const [world, dbMatches, dbStandings, userStateRes, transferMarket] = await Promise.all([
+        apiGetWorld(),
+        apiGetMatches(),
+        apiGetStandings(),
+        apiGetUserState(),
+        apiGetTransferMarket(),
+      ]);
+
+      const isAdminUser = userStateRes?.user?.isAdmin ?? false;
+
+      if (!world || (!userStateRes?.state && !isAdminUser)) {
+        if (!world) {
+          dispatch({
+            type: 'ADD_NOTIFICATION',
+            payload: {
+              id: Date.now(),
+              message: 'Game world not initialized yet. Ask the admin to seed the world.',
+              type: 'error',
+              timestamp: Date.now(),
+            },
+          });
+        }
+        dispatch({ type: 'INIT_GAME', payload: { ...initialState, initialized: true } });
+        return;
+      }
+
+      const leagues = buildLeagues(world.leagues, dbMatches, dbStandings);
+      const user    = buildUserProfile(userStateRes.user, userStateRes.state?.profileData || {});
+
+      // ── Simulate any pending matches ────────────────────────────
+      let simulatedLeagues = leagues;
+      let processedMatchData = [];
+      try {
+        const allTeamsForSim = leagues.flatMap(l => l.teams || []);
+        const fullSchedule   = leagues.flatMap(l => l.schedule || []);
+        const simResult = processPendingMatches(allTeamsForSim, fullSchedule);
+        processedMatchData = simResult.processedMatchData;
+
+        // Persist results to Firebase: mark matches played + update standings
+        for (const matchData of processedMatchData) {
+          apiRecordMatchResult({
+            matchId:       matchData.matchId,
+            leagueId:      matchData.leagueId,
+            homeTeamId:    matchData.homeTeamId,
+            awayTeamId:    matchData.awayTeamId,
+            homeTeamName:  matchData.homeTeamName,
+            awayTeamName:  matchData.awayTeamName,
+            homeScore:     matchData.homeScore,
+            awayScore:     matchData.awayScore,
+            log:           matchData.events,
+            playerStats:   matchData.playerStats,
+            quarterScores: matchData.quarterScores,
+          }).catch(() => {});
+        }
+
+        simulatedLeagues = leagues.map(l => ({
+          ...l,
+          teams:    (l.teams    || []).map(t => simResult.updatedTeams.find(u => u.id === t.id) || t),
+          schedule: simResult.updatedSchedule.filter(m => m.leagueId === l.id),
+        }));
+      } catch (simErr) {
+        console.warn('Match simulation error (non-fatal):', simErr);
+      }
+
+      const userTeam = buildUserTeam(simulatedLeagues, userStateRes.state);
+
+      if (!userTeam && !user.isAdmin) {
+        dispatch({ type: 'INIT_GAME', payload: { ...initialState, initialized: true } });
+        return;
+      }
+
+      if (userTeam && processedMatchData.length > 0) {
+        const updatedUserTeam = simulatedLeagues
+          .flatMap(l => l.teams || [])
+          .find(t => t.id === userTeam.id);
+        if (updatedUserTeam?.matchHistory?.length) {
+          userTeam.matchHistory = updatedUserTeam.matchHistory;
+          userTeam.seasonRecord = updatedUserTeam.seasonRecord || userTeam.seasonRecord;
+          userTeam.wins   = userTeam.seasonRecord?.wins   ?? 0;
+          userTeam.losses = userTeam.seasonRecord?.losses ?? 0;
+        }
+      }
+
+      const updatedLeagues = simulatedLeagues.map(l => ({
+        ...l,
+        teams: (l.teams || []).map(t => userTeam && t.id === userTeam.id ? userTeam : t),
+      }));
+
+      justLoaded.current = true;
+      dispatch({
+        type: 'INIT_GAME',
+        payload: {
+          user,
+          userTeam,
+          leagues: updatedLeagues,
+          allTeams: updatedLeagues.flatMap(l => l.teams || []),
+          transferMarket: transferMarket || [],
+          lastUpdated: Date.now(),
+        },
+      });
+    } catch {
+      dispatch({ type: 'INIT_GAME', payload: { ...initialState, initialized: true } });
+    }
+  }, []);
+
   // ── React to Firebase Auth state changes ─────────────────────
   useEffect(() => {
     const unsubscribe = onAuthStateChanged(auth, (firebaseUser) => {
@@ -234,107 +344,17 @@ export function GameProvider({ children }) {
         dispatch({ type: 'INIT_GAME', payload: { ...initialState, initialized: true } });
         return;
       }
-
-      Promise.all([
-        apiGetWorld(),
-        apiGetMatches(),
-        apiGetStandings(),
-        apiGetUserState(),
-        apiGetTransferMarket(),
-      ]).then(([world, dbMatches, dbStandings, userStateRes, transferMarket]) => {
-        // Admin users without a team state can still log in (admin-panel only)
-        const isAdminUser = userStateRes?.user?.isAdmin ?? false;
-
-        if (!world || (!userStateRes?.state && !isAdminUser)) {
-          if (!world) {
-            dispatch({
-              type: 'ADD_NOTIFICATION',
-              payload: {
-                id: Date.now(),
-                message: 'Game world not initialized yet. Ask the admin to seed the world.',
-                type: 'error',
-                timestamp: Date.now(),
-              },
-            });
-          }
-          dispatch({ type: 'INIT_GAME', payload: { ...initialState, initialized: true } });
-          return;
-        }
-
-        const leagues  = buildLeagues(world.leagues, dbMatches, dbStandings);
-        const user     = buildUserProfile(userStateRes.user, userStateRes.state?.profileData || {});
-
-        // ── Simulate any pending matches ──────────────────────────
-        let simulatedLeagues = leagues;
-        let processedMatchData = [];
-        try {
-          const allTeamsForSim = leagues.flatMap(l => l.teams || []);
-          const fullSchedule   = leagues.flatMap(l => l.schedule || []);
-          const simResult = processPendingMatches(allTeamsForSim, fullSchedule);
-          processedMatchData = simResult.processedMatchData;
-
-          // Save match logs to Firebase in the background (non-blocking)
-          for (const matchData of processedMatchData) {
-            apiSaveMatchLog(matchData.matchId, matchData).catch(() => {});
-          }
-
-          // Rebuild leagues with updated teams + schedule
-          simulatedLeagues = leagues.map(l => ({
-            ...l,
-            teams:    (l.teams    || []).map(t => simResult.updatedTeams.find(u => u.id === t.id) || t),
-            schedule: simResult.updatedSchedule.filter(m => m.leagueId === l.id),
-          }));
-        } catch (simErr) {
-          console.warn('Match simulation error (non-fatal):', simErr);
-        }
-
-        const userTeam = buildUserTeam(simulatedLeagues, userStateRes.state);
-
-        // Admin users without a team can still access the app (admin panel only)
-        if (!userTeam && !user.isAdmin) {
-          dispatch({ type: 'INIT_GAME', payload: { ...initialState, initialized: true } });
-          return;
-        }
-
-        // Merge any new matchHistory from simulation into userTeam.
-        // buildUserTeam() uses userState.matchHistory (Firestore) which doesn't yet contain
-        // the freshly simulated matches, so we pull them from the updated simulatedLeagues.
-        if (userTeam && processedMatchData.length > 0) {
-          const updatedUserTeam = simulatedLeagues
-            .flatMap(l => l.teams || [])
-            .find(t => t.id === userTeam.id);
-          if (updatedUserTeam?.matchHistory?.length) {
-            userTeam.matchHistory = updatedUserTeam.matchHistory;
-            userTeam.seasonRecord = updatedUserTeam.seasonRecord || userTeam.seasonRecord;
-            userTeam.wins   = userTeam.seasonRecord?.wins   ?? 0;
-            userTeam.losses = userTeam.seasonRecord?.losses ?? 0;
-          }
-        }
-
-        const updatedLeagues = simulatedLeagues.map(l => ({
-          ...l,
-          teams: (l.teams || []).map(t => userTeam && t.id === userTeam.id ? userTeam : t),
-        }));
-
-        justLoaded.current = true;
-        dispatch({
-          type: 'INIT_GAME',
-          payload: {
-            user,
-            userTeam,
-            leagues: updatedLeagues,
-            allTeams: updatedLeagues.flatMap(l => l.teams || []),
-            transferMarket: transferMarket || [],
-            lastUpdated: Date.now(),
-          },
-        });
-      }).catch(() => {
-        dispatch({ type: 'INIT_GAME', payload: { ...initialState, initialized: true } });
-      });
+      loadGameData();
     });
-
     return () => unsubscribe();
-  }, []);
+  }, [loadGameData]);
+
+  // ── Poll every 3 minutes for real-time match results ──────────
+  useEffect(() => {
+    if (!state.initialized || !state.user) return;
+    const interval = setInterval(loadGameData, 3 * 60 * 1000);
+    return () => clearInterval(interval);
+  }, [state.initialized, state.user?.id, loadGameData]);
 
   // ── Auto-save per-user state on change ──────────────────────
   useEffect(() => {

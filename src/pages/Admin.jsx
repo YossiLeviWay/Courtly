@@ -1,8 +1,12 @@
-import { useState, useMemo, useEffect } from 'react';
+import { useState, useMemo, useEffect, useCallback } from 'react';
 import { Navigate } from 'react-router-dom';
-import { Shield, Save, ChevronDown, ChevronRight, RefreshCw } from 'lucide-react';
+import { Shield, Save, ChevronDown, ChevronRight, RefreshCw, Edit2, Check, X, Plus, Trophy } from 'lucide-react';
 import { useGame } from '../context/GameContext.jsx';
-import { apiUpdateRoundDates, apiGetAllUserStates } from '../api.js';
+import {
+  apiUpdateMatchesBatch, apiUpdateMatch, apiGetMatchesFromCollection,
+  apiGetAllUserStates, apiGetSeasonConfig, apiSaveSeasonConfig, apiCreateSeasonMatches,
+} from '../api.js';
+import { buildRoundRobinRounds } from '../engine/gameScheduler.js';
 
 // ── Helpers ───────────────────────────────────────────────────
 
@@ -13,162 +17,471 @@ function tsToInputVal(ts) {
   return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
 }
 
-function groupMatchesByRound(allMatches) {
-  const roundMap = new Map();
-  for (const match of allMatches) {
-    const key = match.scheduledDate;
-    if (!roundMap.has(key)) roundMap.set(key, []);
-    roundMap.get(key).push(match);
-  }
-  return Array.from(roundMap.entries())
-    .sort((a, b) => a[0] - b[0])
-    .map(([ts, matches]) => ({ ts, matches }));
+function fmtDate(ts) {
+  if (!ts) return '—';
+  return new Date(ts).toLocaleString('en-US', {
+    weekday: 'short', month: 'short', day: 'numeric',
+    year: 'numeric', hour: '2-digit', minute: '2-digit',
+  });
 }
 
-// ── Schedule Manager ──────────────────────────────────────────
+function groupByRound(matches) {
+  // Group by scheduledDate; each unique date = one matchday
+  const map = new Map();
+  for (const m of matches) {
+    const key = m.scheduledDate;
+    if (!map.has(key)) map.set(key, []);
+    map.get(key).push(m);
+  }
+  return Array.from(map.entries())
+    .sort(([a], [b]) => a - b)
+    .map(([ts, ms], i) => ({ roundIdx: i, ts, matches: ms }));
+}
 
-function ScheduleManager({ allMatches }) {
-  const rounds = useMemo(() => groupMatchesByRound(allMatches), [allMatches]);
-  const [edits, setEdits] = useState({});
-  const [saving, setSaving] = useState(false);
-  const [savedMsg, setSavedMsg] = useState('');
-  const [expandedRound, setExpandedRound] = useState(null);
+// ── Schedule Manager (with per-match editing) ─────────────────
 
-  const hasEdits = Object.keys(edits).length > 0;
+function ScheduleManager({ collectionName = 'matches' }) {
+  const [matches, setMatches]         = useState([]);
+  const [loading, setLoading]         = useState(true);
+  const [edits, setEdits]             = useState({});   // { matchId: { scheduledDate? } }
+  const [resultEdits, setResultEdits] = useState({});   // { matchId: { homeScore, awayScore } }
+  const [saving, setSaving]           = useState(false);
+  const [msg, setMsg]                 = useState('');
+  const [expanded, setExpanded]       = useState(new Set());
+  const [editingMatch, setEditingMatch] = useState(null); // matchId being date-edited
+  const [editingResult, setEditingResult] = useState(null); // matchId being result-edited
+
+  const load = useCallback(async () => {
+    setLoading(true);
+    const data = await apiGetMatchesFromCollection(collectionName);
+    setMatches(data.sort((a, b) => a.scheduledDate - b.scheduledDate));
+    setEdits({});
+    setResultEdits({});
+    setLoading(false);
+  }, [collectionName]);
+
+  useEffect(() => { load(); }, [load]);
+
+  const rounds = useMemo(() => groupByRound(matches), [matches]);
   const now = Date.now();
+  const totalEdits = Object.keys(edits).length + Object.keys(resultEdits).length;
 
-  async function handleSave() {
+  function setRoundDate(roundTs, newTs) {
+    const roundMatches = rounds.find(r => r.ts === roundTs)?.matches || [];
+    setEdits(prev => {
+      const next = { ...prev };
+      roundMatches.forEach(m => {
+        if (newTs && newTs !== m.scheduledDate) next[m.id] = { ...(next[m.id] || {}), scheduledDate: newTs };
+        else { const e = { ...next[m.id] }; delete e.scheduledDate; if (Object.keys(e).length) next[m.id] = e; else delete next[m.id]; }
+      });
+      return next;
+    });
+  }
+
+  function setMatchDate(matchId, newTs, origTs) {
+    setEdits(prev => {
+      const next = { ...prev };
+      if (newTs && newTs !== origTs) next[matchId] = { ...(next[matchId] || {}), scheduledDate: newTs };
+      else { const e = { ...next[matchId] }; delete e.scheduledDate; if (Object.keys(e).length) next[matchId] = e; else delete next[matchId]; }
+      return next;
+    });
+  }
+
+  function commitResult(matchId, homeScore, awayScore) {
+    setResultEdits(prev => ({ ...prev, [matchId]: { homeScore: Number(homeScore), awayScore: Number(awayScore), played: true } }));
+    setEditingResult(null);
+  }
+
+  async function handleSaveAll() {
+    const allEdits = {};
+    Object.entries(edits).forEach(([id, fields]) => { allEdits[id] = { ...(allEdits[id] || {}), ...fields }; });
+    Object.entries(resultEdits).forEach(([id, fields]) => { allEdits[id] = { ...(allEdits[id] || {}), ...fields }; });
+    if (!Object.keys(allEdits).length) return;
+
     setSaving(true);
     try {
-      for (const [origTs, newTs] of Object.entries(edits)) {
-        const round = rounds.find(r => String(r.ts) === origTs);
-        if (!round || !newTs) continue;
-        await apiUpdateRoundDates(round.matches.map(m => m.id), newTs);
-      }
-      setEdits({});
-      setSavedMsg(`Saved ${Object.keys(edits).length} round(s). Refresh the page to see updated schedule.`);
-      setTimeout(() => setSavedMsg(''), 6000);
+      await apiUpdateMatchesBatch(allEdits);
+      setMsg(`✓ Saved ${Object.keys(allEdits).length} change(s).`);
+      setTimeout(() => setMsg(''), 5000);
+      await load();
     } catch (err) {
-      alert('Error saving schedule: ' + err.message);
-    } finally {
-      setSaving(false);
+      setMsg(`✗ Error: ${err.message}`);
     }
+    setSaving(false);
   }
+
+  if (loading) return (
+    <div style={{ padding: 40, textAlign: 'center', color: 'var(--text-muted)' }}>
+      <RefreshCw size={20} style={{ animation: 'spin 1s linear infinite' }} />
+      <div style={{ marginTop: 8 }}>Loading from Firebase…</div>
+      <style>{`@keyframes spin{from{transform:rotate(0deg)}to{transform:rotate(360deg)}}`}</style>
+    </div>
+  );
 
   return (
     <div>
-      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 20, flexWrap: 'wrap', gap: 12 }}>
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 20, flexWrap: 'wrap', gap: 12 }}>
         <div>
           <div style={{ fontWeight: 700, fontSize: 'var(--font-size-lg)' }}>
-            {rounds.length} Rounds · {allMatches.length} Total Fixtures
+            {rounds.length} Matchdays · {matches.length} Fixtures
           </div>
           <div style={{ color: 'var(--text-muted)', fontSize: 'var(--font-size-sm)', marginTop: 2 }}>
-            Edit the datetime to reschedule all games in a round simultaneously.
+            Edit round dates (bulk) or individual match times. Admin can override any result.
           </div>
         </div>
-        <button
-          className="btn btn-primary"
-          disabled={!hasEdits || saving}
-          onClick={handleSave}
-        >
-          <Save size={16} /> {saving ? 'Saving…' : `Save ${Object.keys(edits).length} Change${Object.keys(edits).length !== 1 ? 's' : ''}`}
-        </button>
+        <div style={{ display: 'flex', gap: 8 }}>
+          <button className="btn btn-ghost btn-sm" onClick={load}>
+            <RefreshCw size={14} /> Refresh
+          </button>
+          <button className="btn btn-primary" disabled={!totalEdits || saving} onClick={handleSaveAll}>
+            <Save size={16} /> {saving ? 'Saving…' : `Save ${totalEdits} Change${totalEdits !== 1 ? 's' : ''}`}
+          </button>
+        </div>
       </div>
 
-      {savedMsg && (
-        <div style={{ padding: '10px 16px', background: 'rgba(34,197,94,0.1)', border: '1px solid rgba(34,197,94,0.3)', borderRadius: 'var(--radius)', marginBottom: 16, fontSize: 'var(--font-size-sm)', color: '#16a34a', fontWeight: 600 }}>
-          ✓ {savedMsg}
+      {msg && (
+        <div style={{ padding: '10px 16px', background: msg.startsWith('✓') ? 'rgba(34,197,94,0.1)' : 'rgba(239,68,68,0.1)', border: `1px solid ${msg.startsWith('✓') ? 'rgba(34,197,94,0.3)' : 'rgba(239,68,68,0.3)'}`, borderRadius: 'var(--radius)', marginBottom: 16, fontSize: 'var(--font-size-sm)', fontWeight: 600, color: msg.startsWith('✓') ? '#16a34a' : '#dc2626' }}>
+          {msg}
         </div>
       )}
 
       <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-        {rounds.map((round, i) => {
-          const isPast = round.ts < now;
-          const isExpanded = expandedRound === i;
-          const editedTs = edits[String(round.ts)];
-          const displayTs = editedTs ?? round.ts;
-          const isEdited = String(round.ts) in edits;
+        {rounds.map((round) => {
+          const isPast  = round.ts < now;
+          const isOpen  = expanded.has(round.roundIdx);
+          const toggle  = () => setExpanded(prev => { const s = new Set(prev); s.has(round.roundIdx) ? s.delete(round.roundIdx) : s.add(round.roundIdx); return s; });
+          const roundEdited = round.matches.some(m => edits[m.id]?.scheduledDate);
+          const playedCount = round.matches.filter(m => m.played).length;
+
+          // Display date for the round header (use first match's edited or original date)
+          const firstMatch = round.matches[0];
+          const roundDisplayTs = edits[firstMatch?.id]?.scheduledDate ?? round.ts;
 
           return (
-            <div key={round.ts} className="card" style={{ padding: 0 }}>
+            <div key={round.ts} className="card" style={{ padding: 0, borderLeft: roundEdited ? '3px solid var(--color-primary)' : undefined }}>
               {/* Round header */}
-              <div
-                style={{
-                  display: 'flex', alignItems: 'center', gap: 12, padding: '12px 16px',
-                  cursor: 'pointer',
-                  borderLeft: `3px solid ${isEdited ? 'var(--color-primary)' : 'transparent'}`,
-                  background: isEdited ? 'rgba(232,98,26,0.03)' : undefined,
-                  flexWrap: 'wrap',
-                }}
-                onClick={() => setExpandedRound(isExpanded ? null : i)}
-              >
-                <div style={{
-                  width: 28, height: 28, borderRadius: '50%', flexShrink: 0,
-                  background: isPast ? 'var(--bg-muted)' : 'var(--color-primary-100)',
-                  color: isPast ? 'var(--text-muted)' : 'var(--color-primary)',
-                  display: 'flex', alignItems: 'center', justifyContent: 'center',
-                  fontWeight: 800, fontSize: 'var(--font-size-xs)',
-                }}>{i + 1}</div>
-
-                <div style={{ flex: 1, minWidth: 160 }}>
-                  <div style={{ fontWeight: 600, fontSize: 'var(--font-size-sm)', display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
-                    Round {i + 1} · {round.matches.length} games
-                    {isPast && <span className="badge badge-gray" style={{ fontSize: '0.6rem' }}>PAST</span>}
-                    {isEdited && <span className="badge badge-orange" style={{ fontSize: '0.6rem' }}>EDITED</span>}
+              <div style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '12px 16px', flexWrap: 'wrap' }}>
+                <div
+                  style={{ display: 'flex', alignItems: 'center', gap: 10, flex: 1, cursor: 'pointer', minWidth: 200 }}
+                  onClick={toggle}
+                >
+                  <div style={{ width: 28, height: 28, borderRadius: '50%', flexShrink: 0, background: isPast ? 'var(--bg-muted)' : 'var(--color-primary-100)', color: isPast ? 'var(--text-muted)' : 'var(--color-primary)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontWeight: 800, fontSize: 11 }}>
+                    {round.roundIdx + 1}
                   </div>
-                  <div style={{ fontSize: 'var(--font-size-xs)', color: 'var(--text-muted)', marginTop: 2 }}>
-                    {new Date(displayTs).toLocaleString('en-US', { weekday: 'short', month: 'short', day: 'numeric', year: 'numeric', hour: '2-digit', minute: '2-digit' })}
+                  <div>
+                    <div style={{ fontWeight: 600, fontSize: 'var(--font-size-sm)', display: 'flex', gap: 6, alignItems: 'center', flexWrap: 'wrap' }}>
+                      Matchday {round.roundIdx + 1} · {round.matches.length} games
+                      {isPast && <span className="badge badge-gray" style={{ fontSize: '0.6rem' }}>PAST</span>}
+                      {playedCount > 0 && <span className="badge badge-orange" style={{ fontSize: '0.6rem' }}>{playedCount}/{round.matches.length} played</span>}
+                      {roundEdited && <span className="badge badge-orange" style={{ fontSize: '0.6rem' }}>EDITED</span>}
+                    </div>
+                    <div style={{ fontSize: 'var(--font-size-xs)', color: 'var(--text-muted)', marginTop: 2 }}>
+                      {fmtDate(roundDisplayTs)}
+                    </div>
                   </div>
+                  {isOpen ? <ChevronDown size={14} style={{ flexShrink: 0 }} /> : <ChevronRight size={14} style={{ flexShrink: 0 }} />}
                 </div>
 
-                {/* Datetime picker */}
-                <div onClick={e => e.stopPropagation()}>
+                {/* Bulk round date picker */}
+                <div onClick={e => e.stopPropagation()} style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                  <span style={{ fontSize: 11, color: 'var(--text-muted)' }}>All:</span>
                   <input
                     type="datetime-local"
                     className="form-input"
-                    style={{ fontSize: 'var(--font-size-xs)', padding: '4px 8px', width: 'auto' }}
-                    value={tsToInputVal(displayTs)}
+                    style={{ fontSize: 11, padding: '4px 8px', width: 'auto' }}
+                    value={tsToInputVal(roundDisplayTs)}
                     onChange={e => {
                       const newTs = e.target.value ? new Date(e.target.value).getTime() : null;
-                      setEdits(prev => {
-                        const next = { ...prev };
-                        if (newTs && newTs !== round.ts) {
-                          next[String(round.ts)] = newTs;
-                        } else {
-                          delete next[String(round.ts)];
-                        }
-                        return next;
-                      });
+                      setRoundDate(round.ts, newTs);
                     }}
                   />
                 </div>
-
-                {isExpanded ? <ChevronDown size={16} style={{ flexShrink: 0 }} /> : <ChevronRight size={16} style={{ flexShrink: 0 }} />}
               </div>
 
               {/* Match list */}
-              {isExpanded && (
-                <div style={{ borderTop: '1px solid var(--border-color)', padding: '12px 16px' }}>
-                  <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
-                    {round.matches.map(m => (
-                      <div key={m.id} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', fontSize: 'var(--font-size-sm)', padding: '4px 0', borderBottom: '1px solid var(--border-color)' }}>
-                        <span style={{ fontWeight: 600, flex: 1 }}>{m.homeTeamName}</span>
-                        <span style={{ color: 'var(--text-muted)', padding: '0 8px' }}>vs</span>
-                        <span style={{ fontWeight: 600, flex: 1, textAlign: 'right' }}>{m.awayTeamName}</span>
-                        {m.played && (
-                          <span className="badge badge-gray" style={{ marginLeft: 8, fontSize: '0.6rem' }}>
-                            {m.result?.homeScore}–{m.result?.awayScore}
+              {isOpen && (
+                <div style={{ borderTop: '1px solid var(--border-color)', padding: '8px 16px 12px' }}>
+                  {round.matches.map(m => {
+                    const matchEditedTs = edits[m.id]?.scheduledDate;
+                    const matchDisplayTs = matchEditedTs ?? m.scheduledDate;
+                    const resultEdit = resultEdits[m.id];
+                    const isEditingThisDate = editingMatch === m.id;
+                    const isEditingThisResult = editingResult === m.id;
+
+                    return (
+                      <div key={m.id} style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '6px 0', borderBottom: '1px solid var(--border-color)', flexWrap: 'wrap' }}>
+                        {/* Teams */}
+                        <div style={{ flex: 1, minWidth: 200, fontSize: 'var(--font-size-sm)' }}>
+                          <span style={{ fontWeight: 600 }}>{m.homeTeamName}</span>
+                          <span style={{ color: 'var(--text-muted)', margin: '0 6px' }}>vs</span>
+                          <span style={{ fontWeight: 600 }}>{m.awayTeamName}</span>
+                        </div>
+
+                        {/* Score / result */}
+                        {(m.played || resultEdit) && !isEditingThisResult && (
+                          <span className="badge badge-gray" style={{ fontSize: '0.7rem', cursor: 'pointer' }} onClick={() => setEditingResult(m.id)} title="Click to override result">
+                            {resultEdit ? `${resultEdit.homeScore}–${resultEdit.awayScore} *` : `${m.homeScore ?? '?'}–${m.awayScore ?? '?'}`}
                           </span>
                         )}
+
+                        {/* Result editor */}
+                        {isEditingThisResult && (
+                          <ResultEditor
+                            homeTeam={m.homeTeamName}
+                            awayTeam={m.awayTeamName}
+                            defaultHome={resultEdit?.homeScore ?? m.homeScore ?? 0}
+                            defaultAway={resultEdit?.awayScore ?? m.awayScore ?? 0}
+                            onSave={(h, a) => commitResult(m.id, h, a)}
+                            onCancel={() => setEditingResult(null)}
+                          />
+                        )}
+
+                        {/* Individual date editor */}
+                        {isEditingThisDate ? (
+                          <div style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
+                            <input
+                              autoFocus
+                              type="datetime-local"
+                              className="form-input"
+                              style={{ fontSize: 11, padding: '3px 6px', width: 'auto' }}
+                              value={tsToInputVal(matchDisplayTs)}
+                              onChange={e => {
+                                const newTs = e.target.value ? new Date(e.target.value).getTime() : null;
+                                setMatchDate(m.id, newTs, m.scheduledDate);
+                              }}
+                            />
+                            <button className="btn btn-ghost btn-sm" style={{ padding: '2px 6px' }} onClick={() => setEditingMatch(null)}>
+                              <Check size={12} color="var(--color-success)" />
+                            </button>
+                          </div>
+                        ) : (
+                          <div style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
+                            {matchEditedTs && (
+                              <span style={{ fontSize: 10, color: 'var(--color-primary)' }}>{fmtDate(matchEditedTs)}</span>
+                            )}
+                            <button
+                              className="btn btn-ghost btn-sm"
+                              style={{ padding: '2px 6px', opacity: 0.6 }}
+                              title="Edit this match's time"
+                              onClick={() => { setEditingMatch(m.id); setEditingResult(null); }}
+                            >
+                              <Edit2 size={12} />
+                            </button>
+                            {!m.played && !resultEdit && (
+                              <button
+                                className="btn btn-ghost btn-sm"
+                                style={{ padding: '2px 6px', opacity: 0.6, fontSize: 10 }}
+                                title="Set result"
+                                onClick={() => { setEditingResult(m.id); setEditingMatch(null); }}
+                              >
+                                +score
+                              </button>
+                            )}
+                          </div>
+                        )}
                       </div>
-                    ))}
-                  </div>
+                    );
+                  })}
                 </div>
               )}
             </div>
           );
         })}
       </div>
+    </div>
+  );
+}
+
+function ResultEditor({ homeTeam, awayTeam, defaultHome, defaultAway, onSave, onCancel }) {
+  const [h, setH] = useState(String(defaultHome));
+  const [a, setA] = useState(String(defaultAway));
+  return (
+    <div style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
+      <input type="number" min="0" max="200" style={{ width: 44, padding: '2px 4px', borderRadius: 4, border: '1px solid var(--border-color)', background: 'var(--bg-app)', color: 'var(--text-primary)', fontSize: 12, textAlign: 'center' }} value={h} onChange={e => setH(e.target.value)} />
+      <span style={{ fontSize: 10, color: 'var(--text-muted)' }}>–</span>
+      <input type="number" min="0" max="200" style={{ width: 44, padding: '2px 4px', borderRadius: 4, border: '1px solid var(--border-color)', background: 'var(--bg-app)', color: 'var(--text-primary)', fontSize: 12, textAlign: 'center' }} value={a} onChange={e => setA(e.target.value)} />
+      <button className="btn btn-ghost btn-sm" style={{ padding: '2px 5px' }} onClick={() => onSave(h, a)}><Check size={11} color="var(--color-success)" /></button>
+      <button className="btn btn-ghost btn-sm" style={{ padding: '2px 5px' }} onClick={onCancel}><X size={11} color="var(--color-danger)" /></button>
+    </div>
+  );
+}
+
+// ── Season Manager ────────────────────────────────────────────
+
+function SeasonManager({ leagues }) {
+  const [config, setConfig]         = useState(null);
+  const [loading, setLoading]       = useState(true);
+  const [creating, setCreating]     = useState(false);
+  const [startDate, setStartDate]   = useState('');
+  const [saving, setSaving]         = useState(false);
+  const [msg, setMsg]               = useState('');
+  const [viewSeason, setViewSeason] = useState(null); // season number to preview
+
+  useEffect(() => {
+    apiGetSeasonConfig().then(c => {
+      setConfig(c);
+      setLoading(false);
+    });
+  }, []);
+
+  if (loading) return (
+    <div style={{ padding: 40, textAlign: 'center', color: 'var(--text-muted)' }}>
+      <RefreshCw size={20} style={{ animation: 'spin 1s linear infinite' }} />
+      <style>{`@keyframes spin{from{transform:rotate(0deg)}to{transform:rotate(360deg)}}`}</style>
+    </div>
+  );
+
+  const nextNum = (config.currentSeason || 1) + 1;
+  const allSeasons = config.seasons || [{ number: 1, name: 'Season 1', active: true, collection: 'matches', createdAt: Date.now() }];
+
+  async function handleCreateSeason() {
+    if (!startDate) return;
+    setSaving(true);
+    setMsg('');
+    try {
+      const startTs = new Date(startDate).getTime();
+      const MS_3D   = 3 * 24 * 60 * 60 * 1000;
+      const collectionName = `matches_${nextNum}`;
+      const allMatches = [];
+
+      leagues.forEach((league, li) => {
+        const rounds = buildRoundRobinRounds(league.teams || []);
+        rounds.forEach((round, ri) => {
+          const roundTs = startTs + ri * MS_3D;
+          round.forEach(({ homeTeam, awayTeam }) => {
+            allMatches.push({
+              id:            `s${nextNum}-${li}-r${ri}-${homeTeam.id}-vs-${awayTeam.id}`,
+              season:        nextNum,
+              leagueId:      league.id,
+              homeTeamId:    homeTeam.id,
+              awayTeamId:    awayTeam.id,
+              homeTeamName:  homeTeam.name || homeTeam.id,
+              awayTeamName:  awayTeam.name || awayTeam.id,
+              scheduledDate: roundTs,
+              played:        false,
+              homeScore:     null,
+              awayScore:     null,
+            });
+          });
+        });
+      });
+
+      await apiCreateSeasonMatches(collectionName, allMatches);
+
+      const newConfig = {
+        currentSeason: config.currentSeason,
+        seasons: [
+          ...allSeasons,
+          { number: nextNum, name: `Season ${nextNum}`, active: false, collection: collectionName, createdAt: Date.now(), matchCount: allMatches.length },
+        ],
+      };
+      await apiSaveSeasonConfig(newConfig);
+      setConfig(newConfig);
+      setCreating(false);
+      setMsg(`✓ Season ${nextNum} created with ${allMatches.length} fixtures. Edit the schedule, then activate it when ready.`);
+    } catch (err) {
+      setMsg(`✗ Error: ${err.message}`);
+    }
+    setSaving(false);
+  }
+
+  async function handleActivate(seasonNumber) {
+    if (!window.confirm(`Activate Season ${seasonNumber}? This will switch the live game to the new season fixtures.`)) return;
+    const newConfig = {
+      ...config,
+      currentSeason: seasonNumber,
+      seasons: allSeasons.map(s => ({ ...s, active: s.number === seasonNumber })),
+    };
+    await apiSaveSeasonConfig(newConfig);
+    setConfig(newConfig);
+    setMsg(`✓ Season ${seasonNumber} is now active. Users will see the new fixtures on next login.`);
+  }
+
+  return (
+    <div>
+      {msg && (
+        <div style={{ padding: '10px 16px', background: msg.startsWith('✓') ? 'rgba(34,197,94,0.1)' : 'rgba(239,68,68,0.1)', border: `1px solid ${msg.startsWith('✓') ? 'rgba(34,197,94,0.3)' : 'rgba(239,68,68,0.3)'}`, borderRadius: 'var(--radius)', marginBottom: 16, fontSize: 'var(--font-size-sm)', fontWeight: 600, color: msg.startsWith('✓') ? '#16a34a' : '#dc2626' }}>
+          {msg}
+        </div>
+      )}
+
+      <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 20, flexWrap: 'wrap' }}>
+        <Trophy size={20} color="var(--color-primary)" />
+        <div>
+          <span style={{ fontWeight: 700 }}>Active Season: </span>
+          <span style={{ color: 'var(--color-primary)', fontWeight: 700 }}>Season {config.currentSeason}</span>
+        </div>
+      </div>
+
+      {/* Season list */}
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 8, marginBottom: 24 }}>
+        {allSeasons.map(s => (
+          <div key={s.number} className="card" style={{ padding: '14px 18px', borderLeft: s.active ? '3px solid var(--color-primary)' : undefined }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: 8 }}>
+              <div>
+                <div style={{ fontWeight: 700, display: 'flex', alignItems: 'center', gap: 8 }}>
+                  {s.name}
+                  {s.active && <span className="badge badge-orange" style={{ fontSize: '0.6rem' }}>ACTIVE</span>}
+                </div>
+                <div style={{ fontSize: 'var(--font-size-xs)', color: 'var(--text-muted)', marginTop: 2 }}>
+                  Collection: <code style={{ background: 'var(--bg-muted)', padding: '1px 4px', borderRadius: 3 }}>{s.collection}</code>
+                  {s.matchCount && ` · ${s.matchCount} matches`}
+                </div>
+              </div>
+              <div style={{ display: 'flex', gap: 8 }}>
+                <button
+                  className="btn btn-ghost btn-sm"
+                  onClick={() => setViewSeason(viewSeason === s.number ? null : s.number)}
+                >
+                  {viewSeason === s.number ? 'Hide Schedule' : 'View Schedule'}
+                </button>
+                {!s.active && (
+                  <button className="btn btn-primary btn-sm" onClick={() => handleActivate(s.number)}>
+                    Activate
+                  </button>
+                )}
+              </div>
+            </div>
+
+            {viewSeason === s.number && (
+              <div style={{ marginTop: 16 }}>
+                <ScheduleManager collectionName={s.collection} />
+              </div>
+            )}
+          </div>
+        ))}
+      </div>
+
+      {/* Create new season */}
+      {!creating ? (
+        <button className="btn btn-primary" onClick={() => setCreating(true)}>
+          <Plus size={16} /> Create Season {nextNum}
+        </button>
+      ) : (
+        <div className="card" style={{ padding: '20px 24px' }}>
+          <h4 style={{ margin: '0 0 8px', fontWeight: 700 }}>Create Season {nextNum}</h4>
+          <p style={{ color: 'var(--text-muted)', fontSize: 'var(--font-size-sm)', marginBottom: 16 }}>
+            Generates a full round-robin schedule for all {leagues.length} leagues ({leagues.flatMap(l => l.teams || []).length} teams total).
+            Each matchday is spaced 3 days apart.
+          </p>
+          <div className="form-group">
+            <label className="form-label">Season Start Date &amp; Time</label>
+            <input
+              type="datetime-local"
+              className="form-input"
+              value={startDate}
+              onChange={e => setStartDate(e.target.value)}
+            />
+          </div>
+          <div style={{ display: 'flex', gap: 8, marginTop: 16 }}>
+            <button className="btn btn-primary" disabled={!startDate || saving} onClick={handleCreateSeason}>
+              {saving ? <><RefreshCw size={14} style={{ animation: 'spin 1s linear infinite' }} /> Generating…</> : `Generate ${nextNum === 2 ? 'Season 2' : `Season ${nextNum}`} Schedule`}
+            </button>
+            <button className="btn btn-ghost" onClick={() => setCreating(false)}>Cancel</button>
+          </div>
+          <style>{`@keyframes spin{from{transform:rotate(0deg)}to{transform:rotate(360deg)}}`}</style>
+        </div>
+      )}
     </div>
   );
 }
@@ -189,46 +502,36 @@ function TeamsView({ leagues }) {
             <h3 style={{ margin: '0 0 12px', fontSize: 'var(--font-size-lg)', fontWeight: 700 }}>{league.name}</h3>
             <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
               {sorted.map((standing, si) => {
-                const teamId = standing.teamId || standing.id;
+                const teamId   = standing.teamId || standing.id;
                 const teamName = standing.teamName || standing.name;
-                const isExpanded = expanded === teamId;
-                const team = league.teams?.find(t => t.id === teamId);
+                const isExp    = expanded === teamId;
+                const team     = league.teams?.find(t => t.id === teamId);
 
                 return (
                   <div key={teamId} className="card" style={{ padding: 0 }}>
                     <div
                       style={{ display: 'flex', alignItems: 'center', gap: 12, padding: '10px 16px', cursor: 'pointer' }}
-                      onClick={() => setExpanded(isExpanded ? null : teamId)}
+                      onClick={() => setExpanded(isExp ? null : teamId)}
                     >
-                      <div style={{ width: 24, textAlign: 'center', fontWeight: 800, color: si < 3 ? 'var(--color-primary)' : 'var(--text-muted)', fontSize: 'var(--font-size-xs)' }}>
-                        {si + 1}
-                      </div>
+                      <div style={{ width: 24, textAlign: 'center', fontWeight: 800, color: si < 3 ? 'var(--color-primary)' : 'var(--text-muted)', fontSize: 'var(--font-size-xs)' }}>{si + 1}</div>
                       <div style={{ flex: 1, fontWeight: 600 }}>{teamName}</div>
                       <div style={{ display: 'flex', gap: 16, fontSize: 'var(--font-size-xs)', color: 'var(--text-muted)' }}>
                         <span>{standing.wins || 0}W–{standing.losses || 0}L</span>
                         <span style={{ fontWeight: 700, color: 'var(--text-primary)' }}>{standing.points || 0} pts</span>
                       </div>
-                      {isExpanded ? <ChevronDown size={16} /> : <ChevronRight size={16} />}
+                      {isExp ? <ChevronDown size={16} /> : <ChevronRight size={16} />}
                     </div>
-
-                    {isExpanded && team && (
+                    {isExp && team && (
                       <div style={{ borderTop: '1px solid var(--border-color)', padding: '12px 16px' }}>
                         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(200px, 1fr))', gap: 6 }}>
-                          {(team.players || [])
-                            .sort((a, b) => (b.overallRating || 0) - (a.overallRating || 0))
-                            .slice(0, 10)
-                            .map(p => (
-                              <div key={p.id} style={{ display: 'flex', justifyContent: 'space-between', fontSize: 'var(--font-size-xs)', padding: '3px 0', borderBottom: '1px solid var(--border-color)' }}>
-                                <span>{p.name} <span style={{ color: 'var(--text-muted)' }}>{p.position}</span></span>
-                                <span style={{ fontWeight: 700, color: 'var(--color-primary)' }}>{p.overallRating}</span>
-                              </div>
-                            ))}
+                          {(team.players || []).sort((a, b) => (b.overallRating || 0) - (a.overallRating || 0)).slice(0, 10).map(p => (
+                            <div key={p.id} style={{ display: 'flex', justifyContent: 'space-between', fontSize: 'var(--font-size-xs)', padding: '3px 0', borderBottom: '1px solid var(--border-color)' }}>
+                              <span>{p.name} <span style={{ color: 'var(--text-muted)' }}>{p.position}</span></span>
+                              <span style={{ fontWeight: 700, color: 'var(--color-primary)' }}>{p.overallRating}</span>
+                            </div>
+                          ))}
                         </div>
-                        {team.stadiumName && (
-                          <div style={{ marginTop: 8, fontSize: 'var(--font-size-xs)', color: 'var(--text-muted)' }}>
-                            🏟 {team.stadiumName}
-                          </div>
-                        )}
+                        {team.stadiumName && <div style={{ marginTop: 8, fontSize: 'var(--font-size-xs)', color: 'var(--text-muted)' }}>🏟 {team.stadiumName}</div>}
                       </div>
                     )}
                   </div>
@@ -246,21 +549,18 @@ function TeamsView({ leagues }) {
 
 function UsersView() {
   const { state } = useGame();
-  const [users, setUsers] = useState([]);
+  const [users, setUsers]   = useState([]);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    apiGetAllUserStates().then(data => {
-      setUsers(data.filter(u => u.user));
-      setLoading(false);
-    });
+    apiGetAllUserStates().then(data => { setUsers(data.filter(u => u.user)); setLoading(false); });
   }, []);
 
   if (loading) return (
     <div style={{ padding: 40, textAlign: 'center', color: 'var(--text-muted)' }}>
       <RefreshCw size={24} style={{ animation: 'spin 1s linear infinite', marginBottom: 8 }} />
       <div>Loading users…</div>
-      <style>{`@keyframes spin { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }`}</style>
+      <style>{`@keyframes spin{from{transform:rotate(0deg)}to{transform:rotate(360deg)}}`}</style>
     </div>
   );
 
@@ -270,8 +570,7 @@ function UsersView() {
       <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
         {users.map(({ user, state: uState }) => {
           const teamName = state.allTeams?.find(t => t.id === uState?.teamId)?.name || uState?.teamId || '—';
-          const matchesPlayed = (uState?.seasonRecord?.wins || 0) + (uState?.seasonRecord?.losses || 0);
-
+          const played   = (uState?.seasonRecord?.wins || 0) + (uState?.seasonRecord?.losses || 0);
           return (
             <div key={user.id} className="card" style={{ padding: '12px 16px' }}>
               <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: 8 }}>
@@ -284,12 +583,10 @@ function UsersView() {
                     {user.email} · {teamName}
                   </div>
                 </div>
-                <div style={{ display: 'flex', gap: 12, fontSize: 'var(--font-size-xs)', color: 'var(--text-muted)', flexWrap: 'wrap' }}>
-                  {uState?.budget != null && (
-                    <span style={{ fontWeight: 600, color: 'var(--color-success)' }}>${uState.budget}k</span>
-                  )}
+                <div style={{ display: 'flex', gap: 12, fontSize: 'var(--font-size-xs)', color: 'var(--text-muted)' }}>
+                  {uState?.budget != null && <span style={{ fontWeight: 600, color: 'var(--color-success)' }}>${uState.budget}k</span>}
                   <span>{uState?.seasonRecord?.wins || 0}W – {uState?.seasonRecord?.losses || 0}L</span>
-                  <span>{matchesPlayed} played</span>
+                  <span>{played} played</span>
                 </div>
               </div>
             </div>
@@ -309,7 +606,6 @@ export default function Admin() {
   if (!state.initialized) return null;
   if (!state.user?.isAdmin) return <Navigate to="/" replace />;
 
-  const allMatches = (state.leagues || []).flatMap(l => l.schedule || []);
   const leagues = state.leagues || [];
 
   return (
@@ -319,18 +615,24 @@ export default function Admin() {
           <Shield size={28} color="var(--color-primary)" />
           <div>
             <h1 style={{ margin: 0 }}>Admin Panel</h1>
-            <p style={{ margin: 0 }}>Manage schedule, teams, and world settings</p>
+            <p style={{ margin: 0 }}>Manage schedule, seasons, teams, and users</p>
           </div>
         </div>
       </div>
 
       <div className="tabs" style={{ marginBottom: 24 }}>
-        {[['schedule', '📅 Schedule'], ['teams', '🏀 Teams'], ['users', '👤 Users']].map(([k, l]) => (
+        {[
+          ['schedule', '📅 Schedule'],
+          ['seasons',  '🏆 Seasons'],
+          ['teams',    '🏀 Teams'],
+          ['users',    '👤 Users'],
+        ].map(([k, l]) => (
           <button key={k} className={`tab${tab === k ? ' active' : ''}`} onClick={() => setTab(k)}>{l}</button>
         ))}
       </div>
 
-      {tab === 'schedule' && <ScheduleManager allMatches={allMatches} />}
+      {tab === 'schedule' && <ScheduleManager collectionName="matches" />}
+      {tab === 'seasons'  && <SeasonManager leagues={leagues} />}
       {tab === 'teams'    && <TeamsView leagues={leagues} />}
       {tab === 'users'    && <UsersView />}
     </div>

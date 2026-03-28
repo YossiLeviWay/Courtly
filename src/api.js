@@ -538,6 +538,62 @@ export async function apiUpdateRoundDates(matchIds, newTimestampMs) {
   await batch.commit();
 }
 
+/** Batch-update arbitrary fields on individual matches. edits = { matchId: { field: value } } */
+export async function apiUpdateMatchesBatch(edits) {
+  const entries = Object.entries(edits);
+  if (!entries.length) return;
+  const CHUNK = 400;
+  for (let i = 0; i < entries.length; i += CHUNK) {
+    const batch = writeBatch(db);
+    entries.slice(i, i + CHUNK).forEach(([matchId, fields]) => {
+      batch.update(doc(db, 'matches', matchId), fields);
+    });
+    await batch.commit();
+  }
+}
+
+/** Update a single match document (admin override). */
+export async function apiUpdateMatch(matchId, fields, collectionName = 'matches') {
+  await setDoc(doc(db, collectionName, matchId), fields, { merge: true });
+}
+
+/** Read matches from any collection (used by admin for cross-season view). */
+export async function apiGetMatchesFromCollection(collectionName = 'matches') {
+  try {
+    const snap = await getDocs(collection(db, collectionName));
+    return snap.docs.map(d => normalizeMatch(d.data()));
+  } catch { return []; }
+}
+
+/** Get season configuration from Firestore. */
+export async function apiGetSeasonConfig() {
+  try {
+    const snap = await getDoc(doc(db, 'app_config', 'seasons'));
+    if (snap.exists()) return snap.data();
+  } catch {}
+  return {
+    currentSeason: 1,
+    seasons: [{ number: 1, name: 'Season 1', active: true, collection: 'matches', createdAt: Date.now() }],
+  };
+}
+
+/** Save season configuration to Firestore. */
+export async function apiSaveSeasonConfig(config) {
+  await setDoc(doc(db, 'app_config', 'seasons'), config);
+}
+
+/** Batch-create all matches for a new season. */
+export async function apiCreateSeasonMatches(collectionName, matches) {
+  const CHUNK = 400;
+  for (let i = 0; i < matches.length; i += CHUNK) {
+    const batch = writeBatch(db);
+    matches.slice(i, i + CHUNK).forEach(m => {
+      batch.set(doc(db, collectionName, m.id), m);
+    });
+    await batch.commit();
+  }
+}
+
 /** Get all user profiles + team states (admin only). */
 export async function apiGetAllUserStates() {
   try {
