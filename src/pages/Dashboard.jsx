@@ -17,7 +17,7 @@ import {
 // ── Helpers ───────────────────────────────────────────────────
 
 const formatDate = (date) =>
-  new Date(date).toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+  new Date(date).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
 
 function getPlayerStats(player) {
   const s = player.seasonStats || {};
