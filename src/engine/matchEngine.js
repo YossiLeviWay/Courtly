@@ -21,12 +21,34 @@ export function gameMinToRelSec(gameMin, quarter) {
   return Math.round(qRealStart[q] + (minInQ / 10) * 1500);
 }
 
+// ── Seeded RNG (deterministic per-match) ─────────────────────
+// A module-level rng function is set at the start of each simulateMatch call.
+// This makes every match's outcome permanently deterministic for the same matchId,
+// regardless of how many times the simulation runs.
+
+let _rng = Math.random; // default; overridden inside simulateMatch
+
+function _hashStr(s) {
+  let h = 0;
+  for (let i = 0; i < s.length; i++) h = Math.imul(31, h) + s.charCodeAt(i) | 0;
+  return Math.abs(h) || 1;
+}
+
+function _mulberry32(seed) {
+  return function () {
+    seed |= 0; seed = seed + 0x6D2B79F5 | 0;
+    let t = Math.imul(seed ^ seed >>> 15, 1 | seed);
+    t = t + Math.imul(t ^ t >>> 7, 61 | t) ^ t;
+    return ((t ^ t >>> 14) >>> 0) / 4294967296;
+  };
+}
+
 function randomInt(min, max) {
-  return Math.floor(Math.random() * (max - min + 1)) + min;
+  return Math.floor(_rng() * (max - min + 1)) + min;
 }
 
 function randomFrom(arr) {
-  return arr[Math.floor(Math.random() * arr.length)];
+  return arr[Math.floor(_rng() * arr.length)];
 }
 
 function clamp(val, min, max) {
@@ -162,29 +184,29 @@ function simulateSegmentScore(homeTeam, awayTeam, minutes) {
  */
 function simulatePossession(shotQuality) {
   const turnoverChance = clamp(0.15 - (shotQuality - 1) * 0.05, 0.05, 0.25);
-  if (Math.random() < turnoverChance) return 0;
+  if (_rng() < turnoverChance) return 0;
 
-  const roll = Math.random();
+  const roll = _rng();
   // Distributes: ~20% three-point attempts, ~55% two-point, ~25% FT trips
   if (roll < 0.20) {
     // Three-point attempt
-    const made = Math.random() < clamp(0.30 * shotQuality, 0.15, 0.55);
+    const made = _rng() < clamp(0.30 * shotQuality, 0.15, 0.55);
     return made ? 3 : 0;
   } else if (roll < 0.75) {
     // Two-point attempt (includes layups/dunks/mid-range)
-    const made = Math.random() < clamp(0.48 * shotQuality, 0.25, 0.72);
+    const made = _rng() < clamp(0.48 * shotQuality, 0.25, 0.72);
     if (made) {
       // And-one?
-      if (Math.random() < 0.08) {
-        return 2 + (Math.random() < 0.75 ? 1 : 0);
+      if (_rng() < 0.08) {
+        return 2 + (_rng() < 0.75 ? 1 : 0);
       }
       return 2;
     }
     return 0;
   } else {
     // Free throw trip
-    const ft1 = Math.random() < clamp(0.72 * shotQuality, 0.50, 0.92);
-    const ft2 = Math.random() < clamp(0.72 * shotQuality, 0.50, 0.92);
+    const ft1 = _rng() < clamp(0.72 * shotQuality, 0.50, 0.92);
+    const ft2 = _rng() < clamp(0.72 * shotQuality, 0.50, 0.92);
     return (ft1 ? 1 : 0) + (ft2 ? 1 : 0);
   }
 }
@@ -313,18 +335,18 @@ function generateHighlightEvents(homeTeam, awayTeam, quarterScores) {
     // Spread events within the quarter
     const minuteSlots = [];
     for (let i = 0; i < eventsPerQuarter; i++) {
-      minuteSlots.push(parseFloat((qStart + Math.random() * quarterLength).toFixed(1)));
+      minuteSlots.push(parseFloat((qStart + _rng() * quarterLength).toFixed(1)));
     }
     minuteSlots.sort((a, b) => a - b);
 
     for (const minute of minuteSlots) {
       eventId++;
-      const roll = Math.random();
+      const roll = _rng();
       let event;
 
       if (roll < 0.22) {
         // Three pointer
-        const team = Math.random() < 0.5 ? homeTeam : awayTeam;
+        const team = _rng() < 0.5 ? homeTeam : awayTeam;
         const player = pickPlayer(team);
         event = {
           id: eventId,
@@ -340,7 +362,7 @@ function generateHighlightEvents(homeTeam, awayTeam, quarterScores) {
         };
       } else if (roll < 0.42) {
         // Dunk
-        const team = Math.random() < 0.5 ? homeTeam : awayTeam;
+        const team = _rng() < 0.5 ? homeTeam : awayTeam;
         const player = pickPlayer(team);
         event = {
           id: eventId,
@@ -356,7 +378,7 @@ function generateHighlightEvents(homeTeam, awayTeam, quarterScores) {
         };
       } else if (roll < 0.55) {
         // Layup
-        const team = Math.random() < 0.5 ? homeTeam : awayTeam;
+        const team = _rng() < 0.5 ? homeTeam : awayTeam;
         const player = pickPlayer(team);
         event = {
           id: eventId,
@@ -372,7 +394,7 @@ function generateHighlightEvents(homeTeam, awayTeam, quarterScores) {
         };
       } else if (roll < 0.63) {
         // Foul
-        const team = Math.random() < 0.5 ? homeTeam : awayTeam;
+        const team = _rng() < 0.5 ? homeTeam : awayTeam;
         const player = pickPlayer(team);
         if (team === homeTeam) homeFoulsThisQuarter++;
         else awayFoulsThisQuarter++;
@@ -390,7 +412,7 @@ function generateHighlightEvents(homeTeam, awayTeam, quarterScores) {
         };
       } else if (roll < 0.70) {
         // Turnover
-        const team = Math.random() < 0.5 ? homeTeam : awayTeam;
+        const team = _rng() < 0.5 ? homeTeam : awayTeam;
         const player = pickPlayer(team);
         event = {
           id: eventId,
@@ -406,7 +428,7 @@ function generateHighlightEvents(homeTeam, awayTeam, quarterScores) {
         };
       } else if (roll < 0.75) {
         // Steal
-        const team = Math.random() < 0.5 ? homeTeam : awayTeam;
+        const team = _rng() < 0.5 ? homeTeam : awayTeam;
         const player = pickPlayer(team);
         event = {
           id: eventId,
@@ -422,7 +444,7 @@ function generateHighlightEvents(homeTeam, awayTeam, quarterScores) {
         };
       } else if (roll < 0.79) {
         // Block
-        const team = Math.random() < 0.5 ? homeTeam : awayTeam;
+        const team = _rng() < 0.5 ? homeTeam : awayTeam;
         const player = pickPlayer(team);
         event = {
           id: eventId,
@@ -440,7 +462,7 @@ function generateHighlightEvents(homeTeam, awayTeam, quarterScores) {
         // Timeout
         const halfIdx = q < 2 ? 0 : 1;
         let team, teamTOs;
-        if (Math.random() < 0.5 && homeTOsLeft[halfIdx] > 0) {
+        if (_rng() < 0.5 && homeTOsLeft[halfIdx] > 0) {
           team = homeTeam; homeTOsLeft[halfIdx]--;
         } else if (awayTOsLeft[halfIdx] > 0) {
           team = awayTeam; awayTOsLeft[halfIdx]--;
@@ -461,7 +483,7 @@ function generateHighlightEvents(homeTeam, awayTeam, quarterScores) {
         };
       } else if (roll < 0.87) {
         // Substitution
-        const team = Math.random() < 0.5 ? homeTeam : awayTeam;
+        const team = _rng() < 0.5 ? homeTeam : awayTeam;
         const outPlayer = pickPlayer(team);
         const inPlayer = pickPlayer(team);
         event = {
@@ -478,7 +500,7 @@ function generateHighlightEvents(homeTeam, awayTeam, quarterScores) {
         };
       } else if (roll < 0.90) {
         // Technical foul (rare)
-        const team = Math.random() < 0.5 ? homeTeam : awayTeam;
+        const team = _rng() < 0.5 ? homeTeam : awayTeam;
         const player = pickPlayer(team);
         event = {
           id: eventId,
@@ -510,7 +532,7 @@ function generateHighlightEvents(homeTeam, awayTeam, quarterScores) {
         };
       } else if (roll < 0.96) {
         // Injury (rare)
-        const team = Math.random() < 0.5 ? homeTeam : awayTeam;
+        const team = _rng() < 0.5 ? homeTeam : awayTeam;
         const player = pickPlayer(team);
         event = {
           id: eventId,
@@ -526,7 +548,7 @@ function generateHighlightEvents(homeTeam, awayTeam, quarterScores) {
         };
       } else {
         // Fight (very rare)
-        const team = Math.random() < 0.5 ? homeTeam : awayTeam;
+        const team = _rng() < 0.5 ? homeTeam : awayTeam;
         const player = pickPlayer(team);
         event = {
           id: eventId,
@@ -614,7 +636,7 @@ function distributePlayerStats(team, teamTotals) {
     for (const stat of statsToDistribute) {
       if (teamTotals[stat] != null) {
         // Add some noise
-        const raw = teamTotals[stat] * share * (0.7 + Math.random() * 0.6);
+        const raw = teamTotals[stat] * share * (0.7 + _rng() * 0.6);
         s[stat] = Math.round(raw);
       }
     }
@@ -668,7 +690,12 @@ function deriveTeamTotals(score, oppScore) {
  * @param {string|Date} matchDate
  * @returns {Object} match result
  */
-export function simulateMatch(homeTeam, awayTeam, matchDate) {
+export function simulateMatch(homeTeam, awayTeam, matchDate, matchId = null) {
+  // Seed the RNG from the matchId so the result is always identical for the same match.
+  // This prevents different scores on each page refresh.
+  const seed = matchId ? _hashStr(String(matchId)) : (Number(matchDate) || Date.now());
+  _rng = _mulberry32(seed);
+
   // Simulate each quarter score
   const quarterScores = [];
   let homeTotal = 0;
@@ -686,7 +713,7 @@ export function simulateMatch(homeTeam, awayTeam, matchDate) {
 
   // Prevent ties: give 1 extra point to the leader or flip a coin
   if (homeTotal === awayTotal) {
-    if (Math.random() < 0.5) homeTotal++;
+    if (_rng() < 0.5) homeTotal++;
     else awayTotal++;
   }
 
@@ -862,10 +889,10 @@ export function updatePlayerAfterMatch(player, playerMatchStats) {
   player.lastFormRating = Math.round((player.lastFormRating ?? 65) * 0.6 + newFormRaw * 0.4);
 
   // Injury check (very low probability, especially if fatigued)
-  const injuryRoll = Math.random();
+  const injuryRoll = _rng();
   const injuryThreshold = player.fatigue > 70 ? 0.06 : 0.02;
   if (player.injuryStatus === 'healthy' && injuryRoll < injuryThreshold) {
-    const severity = Math.random();
+    const severity = _rng();
     if (severity < 0.6) {
       player.injuryStatus = 'minor';
       player.injuryDaysRemaining = randomInt(2, 5);

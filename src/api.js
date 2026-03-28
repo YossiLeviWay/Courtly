@@ -582,6 +582,32 @@ export async function apiSaveSeasonConfig(config) {
   await setDoc(doc(db, 'app_config', 'seasons'), config);
 }
 
+/** Reset all matches in a collection to unplayed (no scores). */
+export async function apiResetAllMatches(collectionName = 'matches') {
+  const snap = await getDocs(collection(db, collectionName));
+  const CHUNK = 400;
+  for (let i = 0; i < snap.docs.length; i += CHUNK) {
+    const batch = writeBatch(db);
+    snap.docs.slice(i, i + CHUNK).forEach(d => {
+      batch.update(d.ref, { played: false, homeScore: null, awayScore: null });
+    });
+    await batch.commit();
+  }
+}
+
+/** Reset all standings to 0 wins/losses/points. */
+export async function apiResetStandings() {
+  const snap = await getDocs(collection(db, 'standings'));
+  const CHUNK = 400;
+  for (let i = 0; i < snap.docs.length; i += CHUNK) {
+    const batch = writeBatch(db);
+    snap.docs.slice(i, i + CHUNK).forEach(d => {
+      batch.update(d.ref, { wins: 0, losses: 0, points: 0 });
+    });
+    await batch.commit();
+  }
+}
+
 /** Batch-create all matches for a new season. */
 export async function apiCreateSeasonMatches(collectionName, matches) {
   const CHUNK = 400;

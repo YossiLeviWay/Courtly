@@ -5,6 +5,7 @@ import { useGame } from '../context/GameContext.jsx';
 import {
   apiUpdateMatchesBatch, apiUpdateMatch, apiGetMatchesFromCollection,
   apiGetAllUserStates, apiGetSeasonConfig, apiSaveSeasonConfig, apiCreateSeasonMatches,
+  apiResetAllMatches, apiResetStandings,
 } from '../api.js';
 import { buildRoundRobinRounds } from '../engine/gameScheduler.js';
 
@@ -486,6 +487,49 @@ function SeasonManager({ leagues }) {
   );
 }
 
+// ── Reset Zone ────────────────────────────────────────────────
+
+function ResetZone({ onReset }) {
+  const [resetting, setResetting] = useState(false);
+  const [msg, setMsg]             = useState('');
+
+  async function handleReset() {
+    if (!window.confirm('⚠️ This will set ALL matches back to unplayed and reset all standings to 0. This cannot be undone. Continue?')) return;
+    setResetting(true);
+    setMsg('');
+    try {
+      await apiResetAllMatches('matches');
+      await apiResetStandings();
+      setMsg('✓ All matches reset to unplayed. All standings cleared. Refresh the page.');
+      onReset?.();
+    } catch (err) {
+      setMsg(`✗ Error: ${err.message}`);
+    }
+    setResetting(false);
+  }
+
+  return (
+    <div style={{ marginTop: 40, padding: '20px 24px', border: '1px solid rgba(239,68,68,0.35)', borderRadius: 'var(--radius-lg)', background: 'rgba(239,68,68,0.04)' }}>
+      <div style={{ fontWeight: 700, color: '#dc2626', marginBottom: 6, fontSize: 'var(--font-size-sm)' }}>⚠ Danger Zone</div>
+      <p style={{ fontSize: 'var(--font-size-sm)', color: 'var(--text-muted)', marginBottom: 16 }}>
+        Reset all match results to <strong>unplayed</strong> and clear all standings back to 0–0. Use this when starting a season fresh.
+      </p>
+      {msg && (
+        <div style={{ marginBottom: 12, fontSize: 'var(--font-size-sm)', fontWeight: 600, color: msg.startsWith('✓') ? '#16a34a' : '#dc2626' }}>{msg}</div>
+      )}
+      <button
+        className="btn btn-sm"
+        style={{ background: '#dc2626', color: '#fff', border: 'none' }}
+        disabled={resetting}
+        onClick={handleReset}
+      >
+        {resetting ? <><RefreshCw size={13} style={{ animation: 'spin 1s linear infinite' }} /> Resetting…</> : '🔄 Reset All Results & Standings'}
+      </button>
+      <style>{`@keyframes spin{from{transform:rotate(0deg)}to{transform:rotate(360deg)}}`}</style>
+    </div>
+  );
+}
+
 // ── Teams Overview ────────────────────────────────────────────
 
 function TeamsView({ leagues }) {
@@ -631,7 +675,12 @@ export default function Admin() {
         ))}
       </div>
 
-      {tab === 'schedule' && <ScheduleManager collectionName="matches" />}
+      {tab === 'schedule' && (
+        <>
+          <ScheduleManager collectionName="matches" />
+          <ResetZone />
+        </>
+      )}
       {tab === 'seasons'  && <SeasonManager leagues={leagues} />}
       {tab === 'teams'    && <TeamsView leagues={leagues} />}
       {tab === 'users'    && <UsersView />}

@@ -126,7 +126,7 @@ export function processPendingMatches(allTeams, schedule) {
     if (!homeTeam || !awayTeam) continue;
 
     try {
-      const result = simulateMatch(homeTeam, awayTeam, match.scheduledDate);
+      const result = simulateMatch(homeTeam, awayTeam, match.scheduledDate, match.id);
       // Attach the schedule match ID so historyEntry and log storage are linked
       result.matchId = match.id;
 
