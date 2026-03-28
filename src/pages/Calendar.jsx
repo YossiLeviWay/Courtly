@@ -24,7 +24,7 @@ const EVENT_ICONS = {
   turnover: '❌', steal: '🤚', block: '🛡️', free_throw: '🎯', assist: '🎪',
 };
 
-function MatchDetailModal({ match, allTeams, onClose }) {
+function MatchDetailModal({ match, allTeams, userTeamId, onClose }) {
   const [log, setLog]         = useState(null);
   const [loading, setLoading] = useState(true);
   const [tab, setTab]         = useState('highlights');
@@ -33,17 +33,31 @@ function MatchDetailModal({ match, allTeams, onClose }) {
     apiGetMatchLog(match.id).then(data => { setLog(data); setLoading(false); });
   }, [match.id]);
 
-  const homeScore     = match.result?.homeScore ?? match.homeScore ?? log?.homeScore;
-  const awayScore     = match.result?.awayScore ?? match.awayScore ?? log?.awayScore;
-  const quarterScores = log?.quarterScores || [];
-  const events        = log?.events        || [];
-  const playerStats   = log?.playerStats   || {};
+  const rawHomeScore = match.result?.homeScore ?? match.homeScore ?? log?.homeScore;
+  const rawAwayScore = match.result?.awayScore ?? match.awayScore ?? log?.awayScore;
+
+  // Determine user's side and set "user first" display order
+  const isUserHome   = match.homeTeamId === userTeamId;
+  const userScore    = isUserHome ? rawHomeScore : rawAwayScore;
+  const oppScore     = isUserHome ? rawAwayScore : rawHomeScore;
+  const userTeamName = isUserHome ? match.homeTeamName : match.awayTeamName;
+  const oppTeamName  = isUserHome ? match.awayTeamName : match.homeTeamName;
+  const userWon      = (userScore ?? -1) > (oppScore ?? -1);
+
+  // Quarter scores reordered: user first
+  const rawQS    = log?.quarterScores || [];
+  const userQS   = isUserHome ? (rawQS[0] || []) : (rawQS[1] || []);
+  const oppQS    = isUserHome ? (rawQS[1] || []) : (rawQS[0] || []);
+
+  const events      = log?.events      || [];
+  const playerStats = log?.playerStats || {};
 
   const homeTeam = allTeams?.find(t => t.id === match.homeTeamId);
   const awayTeam = allTeams?.find(t => t.id === match.awayTeamId);
+  // User's players first in box score
   const allPlayers = [
-    ...(homeTeam?.players || []).map(p => ({ ...p, teamId: match.homeTeamId })),
-    ...(awayTeam?.players || []).map(p => ({ ...p, teamId: match.awayTeamId })),
+    ...((isUserHome ? homeTeam : awayTeam)?.players || []).map(p => ({ ...p, side: 'user',     sideId: isUserHome ? match.homeTeamId : match.awayTeamId })),
+    ...((isUserHome ? awayTeam : homeTeam)?.players || []).map(p => ({ ...p, side: 'opponent', sideId: isUserHome ? match.awayTeamId : match.homeTeamId })),
   ];
 
   return (
@@ -51,11 +65,15 @@ function MatchDetailModal({ match, allTeams, onClose }) {
       <div className="modal" onClick={e => e.stopPropagation()} style={{ maxWidth: 640 }}>
         <div className="modal-header">
           <div>
-            <h3 className="card-title" style={{ marginBottom: 2 }}>
-              {match.homeTeamName} vs {match.awayTeamName}
+            <h3 className="card-title" style={{ marginBottom: 2, display: 'flex', alignItems: 'center', gap: 8 }}>
+              {userTeamName}
+              <span className={`badge ${userWon ? 'badge-green' : 'badge-red'}`} style={{ fontSize: '0.6rem' }}>
+                {userWon ? 'WIN' : 'LOSS'}
+              </span>
+              <span style={{ color: 'var(--text-muted)', fontWeight: 400 }}>vs {oppTeamName}</span>
             </h3>
             <div style={{ fontSize: 'var(--font-size-xs)', color: 'var(--text-muted)' }}>
-              {formatMatchDate(match.scheduledDate)}
+              {formatMatchDate(match.scheduledDate)} · {isUserHome ? '🏠 Home' : '✈️ Away'}
             </div>
           </div>
           <button className="btn btn-ghost btn-sm" onClick={onClose}><X size={16} /></button>
@@ -63,26 +81,38 @@ function MatchDetailModal({ match, allTeams, onClose }) {
 
         <div className="modal-body" style={{ maxHeight: '75vh', overflowY: 'auto' }}>
           {/* Score banner */}
-          <div style={{ display: 'flex', justifyContent: 'center', alignItems: 'center', gap: 24, padding: '16px 0 12px', marginBottom: 16 }}>
+          <div style={{
+            display: 'flex', justifyContent: 'center', alignItems: 'center', gap: 24,
+            padding: '16px 20px 12px', marginBottom: 16,
+            background: userWon ? 'rgba(34,197,94,0.06)' : 'rgba(239,68,68,0.06)',
+            borderRadius: 'var(--radius)',
+          }}>
             <div style={{ textAlign: 'center', flex: 1 }}>
-              <div style={{ fontWeight: 700, fontSize: 'var(--font-size-sm)', marginBottom: 4 }}>{match.homeTeamName}</div>
-              <div style={{ fontSize: '2.5rem', fontWeight: 900, color: homeScore > awayScore ? 'var(--color-success)' : 'var(--text-primary)', lineHeight: 1 }}>{homeScore ?? '–'}</div>
+              <div style={{ fontSize: '0.65rem', fontWeight: 700, letterSpacing: 1, color: 'var(--color-primary)', marginBottom: 4 }}>YOUR TEAM</div>
+              <div style={{ fontWeight: 700, fontSize: 'var(--font-size-sm)', marginBottom: 4 }}>{userTeamName}</div>
+              <div style={{ fontSize: '3rem', fontWeight: 900, color: userWon ? 'var(--color-success)' : 'var(--color-danger)', lineHeight: 1 }}>{userScore ?? '–'}</div>
             </div>
-            <div style={{ fontSize: 'var(--font-size-sm)', color: 'var(--text-muted)', fontWeight: 700 }}>FINAL</div>
+            <div style={{ textAlign: 'center' }}>
+              <div style={{ fontSize: 'var(--font-size-xs)', color: 'var(--text-muted)', fontWeight: 700 }}>FINAL</div>
+              <div style={{ fontSize: '1.1rem', fontWeight: 800, color: userWon ? 'var(--color-success)' : 'var(--color-danger)', marginTop: 2 }}>
+                {userWon ? '🏆' : ''}
+              </div>
+            </div>
             <div style={{ textAlign: 'center', flex: 1 }}>
-              <div style={{ fontWeight: 700, fontSize: 'var(--font-size-sm)', marginBottom: 4 }}>{match.awayTeamName}</div>
-              <div style={{ fontSize: '2.5rem', fontWeight: 900, color: awayScore > homeScore ? 'var(--color-success)' : 'var(--text-primary)', lineHeight: 1 }}>{awayScore ?? '–'}</div>
+              <div style={{ fontSize: '0.65rem', fontWeight: 700, letterSpacing: 1, color: 'var(--text-muted)', marginBottom: 4 }}>OPPONENT</div>
+              <div style={{ fontWeight: 700, fontSize: 'var(--font-size-sm)', marginBottom: 4 }}>{oppTeamName}</div>
+              <div style={{ fontSize: '3rem', fontWeight: 900, color: 'var(--text-primary)', lineHeight: 1 }}>{oppScore ?? '–'}</div>
             </div>
           </div>
 
-          {/* Quarter scores */}
-          {quarterScores.length > 0 && (
+          {/* Quarter scores — user first */}
+          {userQS.length > 0 && (
             <div style={{ overflowX: 'auto', marginBottom: 16 }}>
               <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 'var(--font-size-sm)' }}>
                 <thead>
                   <tr style={{ color: 'var(--text-muted)', fontSize: 'var(--font-size-xs)' }}>
                     <th style={{ textAlign: 'left', padding: '4px 8px', fontWeight: 700 }}>Team</th>
-                    {quarterScores[0]?.map((_, qi) => (
+                    {userQS.map((_, qi) => (
                       <th key={qi} style={{ padding: '4px 8px', textAlign: 'center', fontWeight: 700 }}>Q{qi + 1}</th>
                     ))}
                     <th style={{ padding: '4px 8px', textAlign: 'center', fontWeight: 700 }}>Total</th>
@@ -90,11 +120,14 @@ function MatchDetailModal({ match, allTeams, onClose }) {
                 </thead>
                 <tbody>
                   {[
-                    { name: match.homeTeamName, scores: quarterScores[0] || [], total: homeScore },
-                    { name: match.awayTeamName, scores: quarterScores[1] || [], total: awayScore },
-                  ].map((row, ri) => (
-                    <tr key={ri} style={{ borderTop: '1px solid var(--border-color)' }}>
-                      <td style={{ padding: '6px 8px', fontWeight: 600 }}>{row.name}</td>
+                    { name: userTeamName, scores: userQS, total: userScore, isUser: true },
+                    { name: oppTeamName,  scores: oppQS,  total: oppScore,  isUser: false },
+                  ].map((row) => (
+                    <tr key={row.name} style={{ borderTop: '1px solid var(--border-color)', background: row.isUser ? 'rgba(232,98,26,0.04)' : undefined }}>
+                      <td style={{ padding: '6px 8px', fontWeight: 600 }}>
+                        {row.name}
+                        {row.isUser && <span style={{ fontSize: '0.6rem', color: 'var(--color-primary)', marginLeft: 4 }}>★</span>}
+                      </td>
                       {row.scores.map((s, qi) => (
                         <td key={qi} style={{ padding: '6px 8px', textAlign: 'center', color: 'var(--text-muted)' }}>{s}</td>
                       ))}
@@ -157,10 +190,10 @@ function MatchDetailModal({ match, allTeams, onClose }) {
               {tab === 'boxscore' && (
                 <div>
                   {[
-                    { teamName: match.homeTeamName, teamId: match.homeTeamId },
-                    { teamName: match.awayTeamName, teamId: match.awayTeamId },
-                  ].map(({ teamName, teamId }) => {
-                    const teamPlayers = allPlayers.filter(p => p.teamId === teamId);
+                    { label: userTeamName, side: 'user',     isUser: true  },
+                    { label: oppTeamName,  side: 'opponent', isUser: false },
+                  ].map(({ label, side, isUser }) => {
+                    const teamPlayers = allPlayers.filter(p => p.side === side);
                     const rows = teamPlayers.map(p => {
                       const s = playerStats[p.id] || {};
                       if (!s.minutesPlayed) return null;
@@ -170,8 +203,11 @@ function MatchDetailModal({ match, allTeams, onClose }) {
 
                     if (rows.length === 0) return null;
                     return (
-                      <div key={teamId} style={{ marginBottom: 20 }}>
-                        <div style={{ fontWeight: 700, fontSize: 'var(--font-size-sm)', marginBottom: 8, padding: '4px 0', borderBottom: '2px solid var(--color-primary)' }}>{teamName}</div>
+                      <div key={side} style={{ marginBottom: 20 }}>
+                        <div style={{ fontWeight: 700, fontSize: 'var(--font-size-sm)', marginBottom: 8, padding: '4px 0', borderBottom: `2px solid ${isUser ? 'var(--color-primary)' : 'var(--border-color)'}`, display: 'flex', alignItems: 'center', gap: 6 }}>
+                          {label}
+                          {isUser && <span style={{ fontSize: '0.6rem', color: 'var(--color-primary)' }}>YOUR TEAM</span>}
+                        </div>
                         <div style={{ overflowX: 'auto' }}>
                           <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 'var(--font-size-xs)' }}>
                             <thead>
@@ -402,6 +438,26 @@ export default function Calendar() {
   const pastMatches = useMemo(() => teamMatches.filter(m =>  m.played).sort((a,b) => b.scheduledDate - a.scheduledDate), [teamMatches]);
   const upcomingMatches = useMemo(() => teamMatches.filter(m => !m.played).sort((a,b) => a.scheduledDate - b.scheduledDate), [teamMatches]);
 
+  // Season record from the standings collection (authoritative source)
+  const userStanding = useMemo(() => {
+    for (const league of (state.leagues || [])) {
+      const s = (league.standings || []).find(s => s.teamId === team?.id);
+      if (s) return s;
+    }
+    return null;
+  }, [state.leagues, team?.id]);
+  const seasonWins   = userStanding?.wins   ?? team?.wins   ?? 0;
+  const seasonLosses = userStanding?.losses ?? team?.losses ?? 0;
+  const seasonPts    = userStanding?.points ?? (seasonWins * 2 + seasonLosses);
+  const seasonPlayed = seasonWins + seasonLosses;
+
+  // Youth Academy cooldown (7-day)
+  const WEEK_MS = 7 * 24 * 60 * 60 * 1000;
+  const lastDraftedAt  = team?.youthDraft?.lastDraftedAt ?? 0;
+  const nextDraftMs    = lastDraftedAt + WEEK_MS;
+  const canDraftNow    = Date.now() >= nextDraftMs;
+  const nextDraftDate  = new Date(nextDraftMs);
+
   const events = team?.calendarEvents || [];
   const scouts = team?.scouts || [];
 
@@ -421,6 +477,24 @@ export default function Calendar() {
 
   const getTeamById = id => state.allTeams?.find(t => t.id === id);
   const getTeamName = id => getTeamById(id)?.name || 'Unknown';
+
+  function msToCountdown(ms) {
+    if (ms <= 0) return 'Available now';
+    const d = Math.floor(ms / 86400000);
+    const h = Math.floor((ms % 86400000) / 3600000);
+    const m = Math.floor((ms % 3600000) / 60000);
+    if (d > 0) return `in ${d}d ${h}h`;
+    if (h > 0) return `in ${h}h ${m}m`;
+    return `in ${m}m`;
+  }
+
+  // Mark youth-academy reset day on the calendar grid
+  const youthResetCalDay =
+    !canDraftNow &&
+    nextDraftDate.getFullYear() === year &&
+    nextDraftDate.getMonth() === month
+      ? nextDraftDate.getDate()
+      : null;
 
   const filteredMatches = activeTab === 'past' ? pastMatches
     : activeTab === 'upcoming' ? upcomingMatches
@@ -613,17 +687,24 @@ export default function Calendar() {
                 const day = i + 1;
                 const isToday = new Date().getDate() === day && new Date().getMonth() === month && new Date().getFullYear() === year;
                 const hasMatch = matchDays.has(day);
+                const isYouthReset = youthResetCalDay === day;
                 return (
-                  <div key={day} style={{
+                  <div key={day} title={isYouthReset ? '🌱 Youth Academy draft available' : undefined} style={{
                     padding: '6px 2px', borderRadius: 6,
                     fontSize: 'var(--font-size-xs)',
                     fontWeight: isToday || hasMatch ? 700 : 400,
                     background: isToday ? 'var(--color-primary)' : hasMatch ? 'var(--color-primary-100)' : 'transparent',
                     color: isToday ? 'white' : hasMatch ? 'var(--color-primary)' : 'var(--text-primary)',
                     position: 'relative',
+                    outline: isYouthReset && !isToday ? '2px solid #16a34a' : undefined,
                   }}>
                     {day}
-                    {hasMatch && !isToday && <div style={{ width: 4, height: 4, background: 'var(--color-primary)', borderRadius: '50%', margin: '0 auto' }} />}
+                    {(hasMatch || isYouthReset) && !isToday && (
+                      <div style={{ display: 'flex', justifyContent: 'center', gap: 2, marginTop: 1 }}>
+                        {hasMatch    && <div style={{ width: 4, height: 4, background: 'var(--color-primary)', borderRadius: '50%' }} />}
+                        {isYouthReset && <div style={{ width: 4, height: 4, background: '#16a34a', borderRadius: '50%' }} />}
+                      </div>
+                    )}
                   </div>
                 );
               })}
@@ -632,20 +713,24 @@ export default function Calendar() {
 
           {/* Season Summary */}
           <div className="card mb-4">
-            <div className="card-title mb-3">Season Record</div>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 }}>
+              <div className="card-title" style={{ margin: 0 }}>Season Record</div>
+              <div style={{ fontSize: 'var(--font-size-xs)', color: 'var(--text-muted)' }}>
+                <span style={{ fontWeight: 700, color: 'var(--color-primary)' }}>{seasonPts} pts</span>
+                {' '}· League Table
+              </div>
+            </div>
             <div style={{ display: 'flex', gap: 12, marginBottom: 12 }}>
               <div style={{ flex: 1, textAlign: 'center', padding: '10px 8px', borderRadius: 'var(--radius-md)', background: 'rgba(46,125,50,0.08)' }}>
-                <div style={{ fontSize: 'var(--font-size-2xl)', fontWeight: 900, color: 'var(--color-success)' }}>{team?.wins ?? 0}</div>
+                <div style={{ fontSize: 'var(--font-size-2xl)', fontWeight: 900, color: 'var(--color-success)' }}>{seasonWins}</div>
                 <div style={{ fontSize: 'var(--font-size-xs)', color: 'var(--text-muted)', fontWeight: 700 }}>WINS</div>
               </div>
               <div style={{ flex: 1, textAlign: 'center', padding: '10px 8px', borderRadius: 'var(--radius-md)', background: 'rgba(198,40,40,0.08)' }}>
-                <div style={{ fontSize: 'var(--font-size-2xl)', fontWeight: 900, color: 'var(--color-danger)' }}>{team?.losses ?? 0}</div>
+                <div style={{ fontSize: 'var(--font-size-2xl)', fontWeight: 900, color: 'var(--color-danger)' }}>{seasonLosses}</div>
                 <div style={{ fontSize: 'var(--font-size-xs)', color: 'var(--text-muted)', fontWeight: 700 }}>LOSSES</div>
               </div>
               <div style={{ flex: 1, textAlign: 'center', padding: '10px 8px', borderRadius: 'var(--radius-md)', background: 'var(--bg-muted)' }}>
-                <div style={{ fontSize: 'var(--font-size-2xl)', fontWeight: 900, color: 'var(--text-primary)' }}>
-                  {(team?.wins ?? 0) + (team?.losses ?? 0)}
-                </div>
+                <div style={{ fontSize: 'var(--font-size-2xl)', fontWeight: 900, color: 'var(--text-primary)' }}>{seasonPlayed}</div>
                 <div style={{ fontSize: 'var(--font-size-xs)', color: 'var(--text-muted)', fontWeight: 700 }}>PLAYED</div>
               </div>
             </div>
@@ -675,21 +760,63 @@ export default function Calendar() {
           {/* Key Deadlines */}
           <div className="card">
             <div className="card-title mb-3">Key Deadlines</div>
-            {[
-              { label: 'Youth Academy Draft', desc: '1st of every month', icon: '🌱', color: 'badge-green' },
-              { label: 'Training Reset',      desc: 'Every 7 days',       icon: '🏋️', color: 'badge-blue'  },
-              { label: 'Transfer Window',     desc: 'Pre-season & mid-season', icon: '🔄', color: 'badge-orange' },
-              { label: 'Season End',          desc: '18 matches played',  icon: '🏆', color: 'badge-yellow' },
-            ].map(item => (
-              <div key={item.label} className="flex items-center gap-3" style={{ marginBottom: 12 }}>
-                <span style={{ fontSize: '1.2rem' }}>{item.icon}</span>
-                <div>
-                  <div className="text-sm font-semibold">{item.label}</div>
-                  <div className="text-xs text-muted">{item.desc}</div>
+
+            {/* Youth Academy Draft */}
+            <div className="flex items-center gap-3" style={{ marginBottom: 12 }}>
+              <span style={{ fontSize: '1.2rem' }}>🌱</span>
+              <div style={{ flex: 1 }}>
+                <div className="text-sm font-semibold">Youth Academy Draft</div>
+                <div className="text-xs text-muted">
+                  {canDraftNow
+                    ? 'A new prospect is ready to scout'
+                    : `Next draft: ${nextDraftDate.toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' })} · ${msToCountdown(nextDraftMs - Date.now())}`}
                 </div>
-                <span className={`badge ${item.color} ml-auto`}>Active</span>
               </div>
-            ))}
+              <span className={`badge ml-auto ${canDraftNow ? 'badge-green' : 'badge-gray'}`}>
+                {canDraftNow ? '✅ Ready' : '⏳ Cooldown'}
+              </span>
+            </div>
+
+            {/* Next match */}
+            <div className="flex items-center gap-3" style={{ marginBottom: 12 }}>
+              <span style={{ fontSize: '1.2rem' }}>🏀</span>
+              <div style={{ flex: 1 }}>
+                <div className="text-sm font-semibold">Next Match</div>
+                <div className="text-xs text-muted">
+                  {nextMatch
+                    ? `vs ${getTeamName(nextMatch.homeTeamId === team?.id ? nextMatch.awayTeamId : nextMatch.homeTeamId)} · ${formatMatchDate(nextMatch.scheduledDate)}`
+                    : 'No upcoming matches'}
+                </div>
+              </div>
+              {nextMatch && (
+                <span className="badge badge-orange ml-auto">{getTimeUntilMatch(nextMatch)}</span>
+              )}
+            </div>
+
+            {/* Season progress */}
+            <div className="flex items-center gap-3" style={{ marginBottom: 12 }}>
+              <span style={{ fontSize: '1.2rem' }}>🏆</span>
+              <div style={{ flex: 1 }}>
+                <div className="text-sm font-semibold">Season Progress</div>
+                <div className="text-xs text-muted">
+                  {seasonPlayed} of 18 matches played · {18 - seasonPlayed} remaining
+                </div>
+                <div style={{ marginTop: 4, height: 4, background: 'var(--bg-muted)', borderRadius: 2, overflow: 'hidden' }}>
+                  <div style={{ height: '100%', width: `${(seasonPlayed / 18) * 100}%`, background: 'var(--color-primary)', borderRadius: 2, transition: 'width 0.5s' }} />
+                </div>
+              </div>
+              <span className="badge badge-yellow ml-auto">{Math.round((seasonPlayed / 18) * 100)}%</span>
+            </div>
+
+            {/* Transfer Window */}
+            <div className="flex items-center gap-3">
+              <span style={{ fontSize: '1.2rem' }}>🔄</span>
+              <div style={{ flex: 1 }}>
+                <div className="text-sm font-semibold">Transfer Window</div>
+                <div className="text-xs text-muted">Pre-season &amp; mid-season</div>
+              </div>
+              <span className="badge badge-orange ml-auto">Active</span>
+            </div>
           </div>
         </div>
       </div>
@@ -742,6 +869,7 @@ export default function Calendar() {
         <MatchDetailModal
           match={selectedMatch}
           allTeams={state.allTeams}
+          userTeamId={team?.id}
           onClose={() => setSelectedMatch(null)}
         />
       )}
