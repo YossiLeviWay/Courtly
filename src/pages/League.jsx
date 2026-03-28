@@ -31,29 +31,37 @@ export default function League() {
     [leagues]
   );
 
-  // Get teams for the selected league
-  const leagueTeams = useMemo(() => {
+  // Get the active league object
+  const currentLeague = useMemo(() => {
     if (activeLeague.startsWith('C-')) {
       const idx = parseInt(activeLeague.split('-')[1]);
-      const league = leagues[idx];
-      if (!league) return [];
-      return league.teams || allTeams.slice(idx * 10, idx * 10 + 10);
+      return leagues[idx] || null;
     }
-    return []; // Liga A and B are empty initially
-  }, [activeLeague, leagues, allTeams]);
+    return null;
+  }, [activeLeague, leagues]);
 
-  // Add stats to teams — filter nulls to guard against malformed world data
-  const teamsWithStats = useMemo(() => leagueTeams.filter(Boolean).map(t => {
-    const full = allTeams.find(a => a?.id === t.id) || t;
-    const wins = full.seasonRecord?.wins || 0;
-    const losses = full.seasonRecord?.losses || 0;
-    const played = wins + losses;
-    const points = wins * 2 + losses;
-    const history = full.matchHistory || [];
-    const gf = history.reduce((sum, m) => sum + (m?.userScore || 0), 0);
-    const ga = history.reduce((sum, m) => sum + (m?.oppScore || 0), 0);
-    return { ...full, wins, losses, played, points, gf, ga, gd: gf - ga, rep: full.reputation || 10 };
-  }), [leagueTeams, allTeams]);
+  // Get teams for the selected league
+  const leagueTeams = useMemo(() => {
+    if (!currentLeague) return [];
+    return currentLeague.teams || allTeams.slice(0, 10);
+  }, [currentLeague, allTeams]);
+
+  // Add stats to teams using Firestore standings (league.standings), with fallback to seasonRecord
+  const teamsWithStats = useMemo(() => {
+    const standings = currentLeague?.standings || [];
+    return leagueTeams.filter(Boolean).map(t => {
+      const full     = allTeams.find(a => a?.id === t.id) || t;
+      const standing = standings.find(s => s.teamId === t.id);
+      const wins     = standing?.wins   ?? full.seasonRecord?.wins   ?? 0;
+      const losses   = standing?.losses ?? full.seasonRecord?.losses ?? 0;
+      const points   = standing?.points ?? wins * 2;
+      const played   = wins + losses;
+      const history  = full.matchHistory || [];
+      const gf = history.reduce((sum, m) => sum + (m?.userScore || 0), 0);
+      const ga = history.reduce((sum, m) => sum + (m?.oppScore  || 0), 0);
+      return { ...full, wins, losses, played, points, gf, ga, gd: gf - ga, rep: full.reputation || 10 };
+    });
+  }, [leagueTeams, currentLeague, allTeams]);
 
   const sorted = useMemo(() => {
     return [...teamsWithStats].filter(Boolean).sort((a, b) => {
