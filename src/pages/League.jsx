@@ -54,7 +54,7 @@ export default function League() {
       const standing = standings.find(s => s.teamId === t.id);
       const wins     = standing?.wins   ?? full.seasonRecord?.wins   ?? 0;
       const losses   = standing?.losses ?? full.seasonRecord?.losses ?? 0;
-      const points   = standing?.points ?? wins * 2;
+      const points   = standing?.points ?? (wins * 2 + losses);
       const played   = wins + losses;
       const history  = full.matchHistory || [];
       const gf = history.reduce((sum, m) => sum + (m?.userScore || 0), 0);

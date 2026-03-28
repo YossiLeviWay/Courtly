@@ -352,13 +352,13 @@ export async function apiRecordMatchResult({
       leagueId, teamId: homeTeamId, teamName: homeTeamName || hd.teamName || '',
       wins:   (hd.wins   || 0) + (homeWon ? 1 : 0),
       losses: (hd.losses || 0) + (homeWon ? 0 : 1),
-      points: (hd.points || 0) + (homeWon ? 3 : 0),
+      points: (hd.points || 0) + (homeWon ? 2 : 1),
     });
     standBatch.set(awayRef, {
       leagueId, teamId: awayTeamId, teamName: awayTeamName || ad.teamName || '',
       wins:   (ad.wins   || 0) + (awayWon ? 1 : 0),
       losses: (ad.losses || 0) + (awayWon ? 0 : 1),
-      points: (ad.points || 0) + (awayWon ? 3 : 0),
+      points: (ad.points || 0) + (awayWon ? 2 : 1),
     });
     await standBatch.commit();
   } catch (err) {
@@ -639,8 +639,18 @@ export async function apiRegenerateSchedule(leagues, startTimestampMs) {
     await batch.commit();
   }
 
-  // 2. Reset standings
+  // 2. Reset standings in the standings collection
   await apiResetStandings();
+
+  // 2b. Reset every user's seasonRecord so their League row shows 0 immediately
+  const userStateSnap = await getDocs(collection(db, 'user_team_state'));
+  for (let i = 0; i < userStateSnap.docs.length; i += CHUNK) {
+    const batch = writeBatch(db);
+    userStateSnap.docs.slice(i, i + CHUNK).forEach(d => {
+      batch.update(d.ref, { seasonRecord: { wins: 0, losses: 0 } });
+    });
+    await batch.commit();
+  }
 
   // 3. Generate and write new matches
   const allMatches = [];
