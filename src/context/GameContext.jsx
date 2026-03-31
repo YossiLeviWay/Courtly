@@ -218,6 +218,8 @@ function gameReducer(state, action) {
       return { ...state, notifications: [action.payload, ...state.notifications].slice(0, 50) };
     case 'CLEAR_NOTIFICATION':
       return { ...state, notifications: state.notifications.filter(n => n.id !== action.payload) };
+    case 'UPDATE_USER':
+      return { ...state, user: { ...state.user, ...action.payload } };
     default:
       return state;
   }

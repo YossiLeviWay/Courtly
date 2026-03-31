@@ -6,6 +6,7 @@ import {
   apiUpdateMatchesBatch, apiUpdateMatch, apiGetMatchesFromCollection,
   apiGetAllUserStates, apiGetSeasonConfig, apiSaveSeasonConfig, apiCreateSeasonMatches,
   apiResetAllMatches, apiResetStandings, apiRegenerateSchedule,
+  apiGetFeedback, apiMarkFeedbackRead,
 } from '../api.js';
 import { buildRoundRobinRounds } from '../engine/gameScheduler.js';
 
@@ -709,6 +710,103 @@ function UsersView() {
   );
 }
 
+// ── Feedback Inbox ────────────────────────────────────────────
+
+function FeedbackInbox() {
+  const [items, setItems]   = useState([]);
+  const [loading, setLoading] = useState(true);
+
+  const load = useCallback(() => {
+    setLoading(true);
+    apiGetFeedback().then(data => { setItems(data); setLoading(false); });
+  }, []);
+
+  useEffect(() => { load(); }, [load]);
+
+  async function markRead(id) {
+    await apiMarkFeedbackRead(id);
+    setItems(prev => prev.map(i => i.id === id ? { ...i, read: true } : i));
+  }
+
+  const unreadCount = items.filter(i => !i.read).length;
+
+  if (loading) return (
+    <div style={{ padding: 40, textAlign: 'center', color: 'var(--text-muted)' }}>
+      <RefreshCw size={24} style={{ animation: 'spin 1s linear infinite', marginBottom: 8 }} />
+      <div>Loading feedback…</div>
+      <style>{`@keyframes spin{from{transform:rotate(0deg)}to{transform:rotate(360deg)}}`}</style>
+    </div>
+  );
+
+  if (items.length === 0) return (
+    <div style={{ padding: 60, textAlign: 'center', color: 'var(--text-muted)' }}>
+      <div style={{ fontSize: '2.5rem', marginBottom: 12 }}>💬</div>
+      <div style={{ fontWeight: 600 }}>No feedback yet</div>
+      <div style={{ fontSize: 'var(--font-size-sm)', marginTop: 4 }}>Messages from users will appear here.</div>
+    </div>
+  );
+
+  return (
+    <div>
+      <div style={{ marginBottom: 16, display: 'flex', alignItems: 'center', gap: 12 }}>
+        <span style={{ fontWeight: 700 }}>{items.length} message{items.length !== 1 ? 's' : ''}</span>
+        {unreadCount > 0 && (
+          <span className="badge badge-orange" style={{ fontSize: '0.68rem' }}>{unreadCount} unread</span>
+        )}
+        <button className="btn btn-ghost btn-sm" onClick={load} style={{ marginLeft: 'auto' }}>
+          <RefreshCw size={13} style={{ marginRight: 4 }} /> Refresh
+        </button>
+      </div>
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+        {items.map(item => {
+          const date = new Date(item.createdAt);
+          const timeAgo = (() => {
+            const mins = Math.floor((Date.now() - item.createdAt) / 60000);
+            if (mins < 1) return 'just now';
+            if (mins < 60) return `${mins}m ago`;
+            const hrs = Math.floor(mins / 60);
+            if (hrs < 24) return `${hrs}h ago`;
+            return `${Math.floor(hrs / 24)}d ago`;
+          })();
+          return (
+            <div
+              key={item.id}
+              className="card"
+              style={{
+                padding: '12px 16px',
+                borderLeft: item.read ? undefined : '3px solid var(--color-primary)',
+                opacity: item.read ? 0.75 : 1,
+              }}
+            >
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: 8, marginBottom: 6 }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                  {!item.read && <span style={{ width: 8, height: 8, borderRadius: '50%', background: 'var(--color-primary)', display: 'inline-block', flexShrink: 0 }} />}
+                  <span style={{ fontWeight: 700, fontSize: 'var(--font-size-sm)' }}>{item.username || item.userId}</span>
+                </div>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                  <span style={{ fontSize: '0.68rem', color: 'var(--text-muted)' }} title={date.toLocaleString()}>{timeAgo}</span>
+                  {!item.read && (
+                    <button
+                      className="btn btn-ghost btn-sm"
+                      onClick={() => markRead(item.id)}
+                      style={{ fontSize: '0.68rem', padding: '2px 8px', height: 'auto' }}
+                    >
+                      Mark Read
+                    </button>
+                  )}
+                </div>
+              </div>
+              <div style={{ fontSize: 'var(--font-size-sm)', color: 'var(--text-secondary)', whiteSpace: 'pre-wrap', wordBreak: 'break-word' }}>
+                {item.message}
+              </div>
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
 // ── Main Admin Page ───────────────────────────────────────────
 
 export default function Admin() {
@@ -739,6 +837,7 @@ export default function Admin() {
           ['seasons',  '🏆 Seasons'],
           ['teams',    '🏀 Teams'],
           ['users',    '👤 Users'],
+          ['feedback', '💬 Feedback'],
         ].map(([k, l]) => (
           <button key={k} className={`tab${tab === k ? ' active' : ''}`} onClick={() => setTab(k)}>{l}</button>
         ))}
@@ -754,6 +853,7 @@ export default function Admin() {
       {tab === 'seasons'  && <SeasonManager leagues={leagues} />}
       {tab === 'teams'    && <TeamsView leagues={leagues} />}
       {tab === 'users'    && <UsersView />}
+      {tab === 'feedback' && <FeedbackInbox />}
     </div>
   );
 }

@@ -84,6 +84,17 @@ service cloud.firestore {
       allow update: if false;
     }
 
+    // ── Feedback ─────────────────────────────────────────────────
+
+    // Any authenticated user may create feedback (must own the userId field).
+    // Only admin may read or update (mark read) feedback.
+    match /feedback/{feedbackId} {
+      allow create: if request.auth != null
+                    && request.resource.data.userId == request.auth.uid;
+      allow read, update: if isAdmin();
+      allow delete: if false;
+    }
+
     // ── Per-user data — strictly private ────────────────────────
 
     match /users/{userId} {

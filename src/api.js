@@ -6,8 +6,8 @@ import {
   EmailAuthProvider,
 } from 'firebase/auth';
 import {
-  doc, getDoc, getDocs, setDoc, deleteDoc,
-  collection, query, where, writeBatch,
+  doc, getDoc, getDocs, setDoc, deleteDoc, addDoc, updateDoc,
+  collection, query, where, orderBy, writeBatch,
 } from 'firebase/firestore';
 import { auth, db } from './firebase.js';
 import { buildRoundRobinRounds } from './engine/gameScheduler.js';
@@ -713,6 +713,35 @@ export async function apiGetAllUserStates() {
     console.error('Get all user states error:', err);
     return [];
   }
+}
+
+// ── Feedback ─────────────────────────────────────────────────────
+
+export async function apiSendFeedback(userId, username, message) {
+  const now = Date.now();
+  const ref = await addDoc(collection(db, 'feedback'), {
+    userId,
+    username,
+    message,
+    createdAt: now,
+    read: false,
+  });
+  await updateDoc(doc(db, 'users', userId), { lastFeedbackAt: now });
+  return ref;
+}
+
+export async function apiGetFeedback() {
+  try {
+    const snap = await getDocs(query(collection(db, 'feedback'), orderBy('createdAt', 'desc')));
+    return snap.docs.map(d => ({ id: d.id, ...d.data() }));
+  } catch (err) {
+    console.error('Get feedback error:', err);
+    return [];
+  }
+}
+
+export async function apiMarkFeedbackRead(docId) {
+  await updateDoc(doc(db, 'feedback', docId), { read: true });
 }
 
 // ── Internal helper ──────────────────────────────────────────────
