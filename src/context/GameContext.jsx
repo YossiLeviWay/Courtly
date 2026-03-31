@@ -92,8 +92,10 @@ function buildUserTeam(leagues, userState) {
     teamExposure:   userState.teamExposure   ?? 0,
     chemistryGauge: userState.chemistryGauge ?? 50,
     momentumBar:    userState.momentumBar    ?? 65,
+    motivationBar:  userState.motivationBar  ?? 60,
     reputation:     userState.reputation     ?? 10,
     matchHistory:   userState.matchHistory   ?? [],
+    youthDraft:     userState.youthDraft     ?? null,
     wins:         userState.seasonRecord?.wins    ?? 0,
     losses:       userState.seasonRecord?.losses  ?? 0,
     seasonRecord: {
@@ -134,8 +136,10 @@ function extractUserState(state) {
     teamExposure:   t.teamExposure   ?? 0,
     chemistryGauge: t.chemistryGauge ?? 50,
     momentumBar:    t.momentumBar    ?? 65,
+    motivationBar:  t.motivationBar  ?? 60,
     reputation:     t.reputation     ?? 10,
     matchHistory:   t.matchHistory   ?? [],
+    youthDraft:     t.youthDraft     ?? null,
     seasonRecord:   { wins: t.wins ?? 0, losses: t.losses ?? 0 },
     profileData: {
       bio:                  state.user?.bio                  || '',
@@ -218,6 +222,8 @@ function gameReducer(state, action) {
       return { ...state, notifications: [action.payload, ...state.notifications].slice(0, 50) };
     case 'CLEAR_NOTIFICATION':
       return { ...state, notifications: state.notifications.filter(n => n.id !== action.payload) };
+    case 'CLEAR_ALL_NOTIFICATIONS':
+      return { ...state, notifications: [] };
     case 'UPDATE_USER':
       return { ...state, user: { ...state.user, ...action.payload } };
     default:
@@ -309,11 +315,24 @@ export function GameProvider({ children }) {
         const updatedUserTeam = simulatedLeagues
           .flatMap(l => l.teams || [])
           .find(t => t.id === userTeam.id);
-        if (updatedUserTeam?.matchHistory?.length) {
-          userTeam.matchHistory = updatedUserTeam.matchHistory;
-          userTeam.seasonRecord = updatedUserTeam.seasonRecord || userTeam.seasonRecord;
-          userTeam.wins   = userTeam.seasonRecord?.wins   ?? 0;
-          userTeam.losses = userTeam.seasonRecord?.losses ?? 0;
+        if (updatedUserTeam) {
+          if (updatedUserTeam.matchHistory?.length) {
+            userTeam.matchHistory = updatedUserTeam.matchHistory;
+          }
+          if (updatedUserTeam.seasonRecord) {
+            userTeam.seasonRecord = updatedUserTeam.seasonRecord;
+            userTeam.wins   = userTeam.seasonRecord.wins   ?? 0;
+            userTeam.losses = userTeam.seasonRecord.losses ?? 0;
+          }
+          // Propagate updated player seasonStats from simulation back to userTeam
+          if (updatedUserTeam.players?.length) {
+            const simPlayerMap = Object.fromEntries(updatedUserTeam.players.map(p => [p.id, p]));
+            userTeam.players = userTeam.players.map(p =>
+              simPlayerMap[p.id]
+                ? { ...p, seasonStats: simPlayerMap[p.id].seasonStats ?? p.seasonStats }
+                : p
+            );
+          }
         }
       }
 

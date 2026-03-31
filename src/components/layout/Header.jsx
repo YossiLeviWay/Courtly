@@ -291,12 +291,15 @@ export default function Header({ onMenuToggle }) {
   const [query, setQuery] = useState('');
   const [open, setOpen] = useState(false);
   const [feedbackOpen, setFeedbackOpen] = useState(false);
+  const [notifOpen, setNotifOpen] = useState(false);
   const wrapRef = useRef(null);
+  const notifRef = useRef(null);
 
-  // Close dropdown when clicking outside
+  // Close search dropdown when clicking outside
   useEffect(() => {
     function onOutside(e) {
       if (wrapRef.current && !wrapRef.current.contains(e.target)) setOpen(false);
+      if (notifRef.current && !notifRef.current.contains(e.target)) setNotifOpen(false);
     }
     document.addEventListener('mousedown', onOutside);
     return () => document.removeEventListener('mousedown', onOutside);
@@ -375,13 +378,68 @@ export default function Header({ onMenuToggle }) {
             LIVE
           </div>
         )}
-        <div style={{ position: 'relative' }}>
-          <button className="btn btn-ghost btn-sm" style={{ position: 'relative', padding: '8px' }}>
+        <div ref={notifRef} style={{ position: 'relative' }}>
+          <button
+            className="btn btn-ghost btn-sm"
+            style={{ position: 'relative', padding: '8px' }}
+            onClick={() => setNotifOpen(o => !o)}
+            title="Notifications"
+          >
             <Bell size={18} />
             {unread > 0 && (
               <span style={{ position: 'absolute', top: 2, right: 2, width: 8, height: 8, background: 'var(--color-danger)', borderRadius: '50%' }} />
             )}
           </button>
+          {notifOpen && (
+            <div style={{
+              position: 'absolute', top: 'calc(100% + 8px)', right: 0,
+              width: 320, maxHeight: 400, overflowY: 'auto',
+              background: 'var(--bg-card)', border: '1.5px solid var(--border-color)',
+              borderRadius: 'var(--radius-lg)', boxShadow: '0 8px 32px rgba(0,0,0,0.18)',
+              zIndex: 600,
+            }}>
+              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '10px 14px', borderBottom: '1px solid var(--border-color)' }}>
+                <span style={{ fontWeight: 700, fontSize: 'var(--font-size-sm)' }}>Notifications {unread > 0 ? `(${unread})` : ''}</span>
+                {unread > 0 && (
+                  <button
+                    className="btn btn-ghost btn-sm"
+                    onClick={() => { dispatch({ type: 'CLEAR_ALL_NOTIFICATIONS' }); setNotifOpen(false); }}
+                    style={{ fontSize: '0.68rem', padding: '2px 8px', height: 'auto' }}
+                  >
+                    Clear all
+                  </button>
+                )}
+              </div>
+              {state.notifications?.length === 0 ? (
+                <div style={{ padding: '24px 14px', textAlign: 'center', color: 'var(--text-muted)', fontSize: 'var(--font-size-sm)' }}>
+                  No notifications
+                </div>
+              ) : (
+                <div style={{ display: 'flex', flexDirection: 'column' }}>
+                  {(state.notifications || []).map(n => (
+                    <div
+                      key={n.id}
+                      style={{
+                        display: 'flex', alignItems: 'flex-start', gap: 10,
+                        padding: '10px 14px', borderBottom: '1px solid var(--border-color)',
+                        cursor: 'pointer',
+                      }}
+                      onClick={() => dispatch({ type: 'CLEAR_NOTIFICATION', payload: n.id })}
+                    >
+                      <span style={{ fontSize: '0.9rem', flexShrink: 0, marginTop: 1 }}>
+                        {n.type === 'success' ? '✅' : n.type === 'error' ? '❌' : 'ℹ️'}
+                      </span>
+                      <div style={{ flex: 1, minWidth: 0 }}>
+                        <div style={{ fontSize: 'var(--font-size-xs)', color: 'var(--text-secondary)', wordBreak: 'break-word' }}>
+                          {n.message}
+                        </div>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          )}
         </div>
         {user && (
           <button

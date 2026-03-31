@@ -15,8 +15,13 @@ function getRepLevel(rep) {
 
 function getTopPlayer(players, stat) {
   if (!players?.length) return null;
-  const sorted = [...players].sort((a, b) => (b.seasonStats?.[stat] || 0) - (a.seasonStats?.[stat] || 0));
-  return sorted[0];
+  const withStats = players.filter(p => p.seasonStats && (p.seasonStats[stat] || 0) > 0);
+  if (!withStats.length) return null;
+  return withStats.sort((a, b) => {
+    const agp = a.seasonStats.gamesPlayed || 1;
+    const bgp = b.seasonStats.gamesPlayed || 1;
+    return (b.seasonStats[stat] / bgp) - (a.seasonStats[stat] / agp);
+  })[0];
 }
 
 function perGame(player, stat) {
@@ -33,16 +38,19 @@ export default function TeamInfo() {
 
   const wins = team.seasonRecord?.wins || 0;
   const losses = team.seasonRecord?.losses || 0;
-  const played = wins + losses;
+  // Use real played count from calendar (seasonMatches), fall back to wins+losses
+  const calendarPlayed = (team.seasonMatches || []).filter(m => m.played).length;
+  const played = calendarPlayed || (wins + losses);
   const totalWins = team.overallRecord?.wins || wins;
   const totalLosses = team.overallRecord?.losses || losses;
 
-  // Calculate streak
+  // Calculate streak using result field (W/L) or score comparison
   const history = team.matchHistory || [];
   let streak = 0, streakType = '';
-  for (let i = history.length - 1; i >= 0; i--) {
-    const won = history[i].userScore > history[i].oppScore;
-    if (i === history.length - 1) { streakType = won ? 'W' : 'L'; streak = 1; }
+  for (let i = 0; i < history.length; i++) {
+    const m = history[i];
+    const won = m.result === 'W' || (m.teamScore ?? m.userScore ?? 0) > (m.oppScore ?? m.opponentScore ?? 0);
+    if (i === 0) { streakType = won ? 'W' : 'L'; streak = 1; }
     else if ((won && streakType === 'W') || (!won && streakType === 'L')) streak++;
     else break;
   }
@@ -64,9 +72,26 @@ export default function TeamInfo() {
   const repInfo = getRepLevel(team.reputation || 10);
   const repPct = team.reputation || 10;
 
-  // Avg stats (simple estimation)
-  const avgPts = played ? (history.reduce((s,m) => s + (m.userScore || 80), 0) / Math.max(played, 1)).toFixed(1) : '—';
-  const avgOpp = played ? (history.reduce((s,m) => s + (m.oppScore || 78), 0) / Math.max(played, 1)).toFixed(1) : '—';
+  // Avg stats from real match history (no fallback hardcoded values)
+  const historyWithScores = history.filter(m => (m.teamScore ?? m.userScore) != null);
+  const avgPts = historyWithScores.length
+    ? (historyWithScores.reduce((s, m) => s + (m.teamScore ?? m.userScore ?? 0), 0) / historyWithScores.length).toFixed(1)
+    : '—';
+  const avgOpp = historyWithScores.length
+    ? (historyWithScores.reduce((s, m) => s + (m.oppScore ?? m.opponentScore ?? 0), 0) / historyWithScores.length).toFixed(1)
+    : '—';
+  // Per-game rebounds, assists, turnovers from aggregated player seasonStats
+  const allPlayerStats = (team.players || []).reduce((acc, p) => {
+    const ss = p.seasonStats || {};
+    acc.rebounds  += ss.rebounds  || 0;
+    acc.assists   += ss.assists   || 0;
+    acc.turnovers += ss.turnovers || 0;
+    return acc;
+  }, { rebounds: 0, assists: 0, turnovers: 0 });
+  const gp = Math.max(played, 1);
+  const avgReb = played ? (allPlayerStats.rebounds  / gp).toFixed(1) : '—';
+  const avgAst = played ? (allPlayerStats.assists   / gp).toFixed(1) : '—';
+  const avgTo  = played ? (allPlayerStats.turnovers / gp).toFixed(1) : '—';
 
   return (
     <div className="animate-fade-in">
@@ -106,13 +131,11 @@ export default function TeamInfo() {
           <div className="stats-grid" style={{ gridTemplateColumns: 'repeat(2,1fr)', marginBottom: 16 }}>
             <div className="stat-card"><div className="stat-value">{wins}</div><div className="stat-label">Wins</div></div>
             <div className="stat-card"><div className="stat-value">{losses}</div><div className="stat-label">Losses</div></div>
+            <div className="stat-card"><div className="stat-value">{played}</div><div className="stat-label">Played</div></div>
             <div className="stat-card"><div className="stat-value">{position}</div><div className="stat-label">League Rank</div></div>
-            <div className="stat-card">
-              <div className="stat-value" style={{ fontSize: 'var(--font-size-lg)', color: wins > losses ? 'var(--color-success)' : 'var(--color-danger)' }}>
-                {streakText.split('-')[0]}
-              </div>
-              <div className="stat-label">{streakType === 'W' ? 'Win' : 'Loss'} Streak</div>
-            </div>
+          </div>
+          <div style={{ marginBottom: 8, fontSize: 'var(--font-size-sm)', fontWeight: 600, color: streak > 0 ? (streakType === 'W' ? 'var(--color-success)' : 'var(--color-danger)') : 'var(--text-muted)' }}>
+            {streak > 0 ? streakText : 'No current streak'}
           </div>
           <div className="text-xs text-muted">Career: {totalWins}W - {totalLosses}L</div>
         </div>
@@ -123,9 +146,9 @@ export default function TeamInfo() {
           {[
             { label: 'Points Scored (PTS/G)', val: avgPts },
             { label: 'Points Allowed (OPP/G)', val: avgOpp },
-            { label: 'Rebounds (REB/G)', val: '—' },
-            { label: 'Assists (AST/G)', val: '—' },
-            { label: 'Turnovers (TO/G)', val: '—' },
+            { label: 'Rebounds (REB/G)', val: avgReb },
+            { label: 'Assists (AST/G)', val: avgAst },
+            { label: 'Turnovers (TO/G)', val: avgTo },
           ].map(({ label, val }) => (
             <div key={label} className="flex justify-between items-center" style={{ marginBottom: 8, padding: '4px 0', borderBottom: '1px solid var(--border-color)' }}>
               <span className="text-sm text-muted">{label}</span>

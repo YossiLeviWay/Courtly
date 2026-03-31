@@ -160,7 +160,7 @@ export default function Dashboard() {
   const expiringContracts = activePlayers.filter(p => (p.contractYears ?? 99) <= 1);
 
   // ── Injuries / squad news ─────────────────────────────────
-  const injured = activePlayers.filter((p) => p.injuryStatus !== 'healthy');
+  const injured = activePlayers.filter((p) => p.injuryStatus && p.injuryStatus !== 'healthy');
   const highForm = activePlayers.filter((p) => p.lastFormRating >= 75);
   const lowFatigue = activePlayers.filter((p) => p.fatigue < 20);
 
@@ -364,7 +364,8 @@ export default function Dashboard() {
           ) : (
             <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-3)' }}>
               {recentMatches.map((m, i) => {
-                const won = m.userScore > m.opponentScore;
+                const won = m.result === 'W' || (m.teamScore ?? m.userScore ?? 0) > (m.oppScore ?? m.opponentScore ?? 0);
+                const displayScore = `${m.teamScore ?? m.userScore ?? '?'}–${m.oppScore ?? m.opponentScore ?? '?'}`;
                 return (
                   <div
                     key={i}
@@ -379,10 +380,10 @@ export default function Dashboard() {
                   >
                     <WLBadge won={won} />
                     <span style={{ flex: 1, fontSize: 'var(--font-size-sm)', fontWeight: 600, color: 'var(--text-secondary)' }}>
-                      {m.opponentName || 'Unknown'}
+                      {m.opponent || m.opponentName || m.awayTeam || m.homeTeam || 'Unknown'}
                     </span>
                     <span style={{ fontWeight: 800, color: won ? 'var(--color-success)' : 'var(--color-danger)', fontSize: 'var(--font-size-sm)' }}>
-                      {m.userScore}–{m.opponentScore}
+                      {displayScore}
                     </span>
                     {m.date && (
                       <span style={{ fontSize: 'var(--font-size-xs)', color: 'var(--text-muted)' }}>
@@ -464,30 +465,45 @@ export default function Dashboard() {
             </span>
           </div>
           <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-3)' }}>
-            <NewsItem
-              icon="📰"
-              title="Season standings tighten at the top"
-              body="Several teams are within two wins of first place as the midpoint of the season approaches."
-              time="2h ago"
-            />
-            <NewsItem
-              icon="🏆"
-              title="Liga C promotions race heats up"
-              body="Five clubs are still in contention for the two promotion spots with six matchdays remaining."
-              time="5h ago"
-            />
-            <NewsItem
-              icon="⚡"
-              title="Record-breaking scoring night in Liga C"
-              body="A stunning triple-overtime thriller saw 235 combined points across the two teams last weekend."
-              time="1d ago"
-            />
-            <NewsItem
-              icon="👁"
-              title="Scouts spotted at recent fixtures"
-              body="A Liga B club has been sending scouts to monitor performances in the Group 3 fixtures."
-              time="2d ago"
-            />
+            {(() => {
+              // Generate data-driven league news from real standings
+              const leagues = state.leagues || [];
+              const news = [];
+
+              for (const lg of leagues.slice(0, 3)) {
+                const standings = (lg.standings || []).slice().sort((a, b) => b.wins - a.wins || a.losses - b.losses);
+                const leader = standings[0];
+                if (leader && (leader.wins + leader.losses) > 0) {
+                  const gp = leader.wins + leader.losses;
+                  const pct = ((leader.wins / gp) * 100).toFixed(0);
+                  news.push({ icon: '🏆', title: `${leader.teamName} lead ${lg.name || lg.id}`, body: `${leader.wins}W-${leader.losses}L (${pct}%) through ${gp} game${gp !== 1 ? 's' : ''}. Season progress well underway.` });
+                }
+
+                const teams = standings.filter(t => t.wins + t.losses >= 1);
+                if (teams.length >= 2) {
+                  const second = standings[1];
+                  const gb = ((leader.wins - second.wins + second.losses - leader.losses) / 2).toFixed(1);
+                  if (gb <= 3 && gb > 0) {
+                    news.push({ icon: '📊', title: `Tight race in ${lg.name || lg.id}`, body: `${second.teamName} trails ${leader.teamName} by just ${gb} game${gb !== '1.0' ? 's' : ''}.` });
+                  }
+                }
+
+                // Check for winning streaks by looking at schedule
+                const playedMatches = (lg.schedule || []).filter(m => m.played);
+                if (playedMatches.length > 0) {
+                  news.push({ icon: '⚡', title: `${playedMatches.length} match${playedMatches.length !== 1 ? 'es' : ''} played in ${lg.name || lg.id}`, body: `${standings.length} teams in action this season so far.` });
+                }
+              }
+
+              if (news.length === 0) {
+                news.push({ icon: '📅', title: 'Season about to begin', body: 'No results yet. The first matchday will reveal the season\'s opening standings.' });
+                news.push({ icon: '🏀', title: 'Prepare your squad', body: 'Review your tactics, training, and lineup before the season opener.' });
+              }
+
+              return news.slice(0, 4).map((item, i) => (
+                <NewsItem key={i} icon={item.icon} title={item.title} body={item.body} />
+              ));
+            })()}
           </div>
         </div>
 

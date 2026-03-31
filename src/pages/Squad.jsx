@@ -345,7 +345,7 @@ function SquadSummary({ players }) {
   const total = players.length;
   const avgRating = total > 0 ? Math.round(players.reduce((s, p) => s + (p.overallRating || 0), 0) / total) : 0;
   const avgFatigue = total > 0 ? Math.round(players.reduce((s, p) => s + (p.fatigue || 0), 0) / total) : 0;
-  const injuredCount = players.filter(p => p.injuryStatus !== 'healthy').length;
+  const injuredCount = players.filter(p => p.injuryStatus && p.injuryStatus !== 'healthy').length;
 
   return (
     <div className="card" style={{ marginBottom: 'var(--space-5)' }}>
@@ -396,33 +396,74 @@ function SquadSummary({ players }) {
 function CaptainDisplay({ players, onSetCaptain, onSetViceCaptain }) {
   const captain = players.find(p => p.isCaptain);
   const vc = players.find(p => p.isViceCaptain);
+  const sortedByRating = [...players].sort((a, b) => (b.overallRating || 0) - (a.overallRating || 0));
+
+  const selectStyle = {
+    padding: '6px 10px', borderRadius: 'var(--radius-md)',
+    border: '1.5px solid var(--border-color)',
+    background: 'var(--bg-card)', color: 'var(--text-primary)',
+    fontSize: 'var(--font-size-xs)', fontWeight: 600,
+    cursor: 'pointer', width: '100%', marginTop: 4,
+  };
 
   return (
     <div className="card" style={{ marginBottom: 'var(--space-5)' }}>
       <div className="card-header">
         <span className="card-title">Leadership</span>
-        <span style={{ fontSize: 'var(--font-size-xs)', color: 'var(--text-muted)' }}>Click a player card to set roles</span>
+        <span style={{ fontSize: 'var(--font-size-xs)', color: 'var(--text-muted)' }}>Select captain &amp; vice captain below</span>
       </div>
       <div className="grid-2">
-        <div style={{ display: 'flex', alignItems: 'center', gap: 'var(--space-3)', padding: 'var(--space-3)', background: 'var(--bg-muted)', borderRadius: 'var(--radius-md)' }}>
-          <span style={{ fontSize: '1.25rem' }}>👑</span>
-          <div>
-            <div style={{ fontSize: 'var(--font-size-xs)', color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: 0.5, fontWeight: 700 }}>Captain</div>
-            <div style={{ fontWeight: 700, fontSize: 'var(--font-size-sm)', color: captain ? 'var(--text-primary)' : 'var(--text-muted)' }}>
-              {captain ? captain.name : 'Not assigned'}
-            </div>
-            {captain && <div style={{ fontSize: 'var(--font-size-xs)', color: 'var(--text-muted)' }}>{captain.position} · OVR {captain.overallRating}</div>}
+        <div style={{ padding: 'var(--space-3)', background: 'var(--bg-muted)', borderRadius: 'var(--radius-md)' }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 'var(--space-2)', marginBottom: 4 }}>
+            <span style={{ fontSize: '1.1rem' }}>👑</span>
+            <span style={{ fontSize: 'var(--font-size-xs)', color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: 0.5, fontWeight: 700 }}>Captain</span>
           </div>
+          {captain && (
+            <div style={{ fontSize: 'var(--font-size-xs)', color: 'var(--text-muted)', marginBottom: 2 }}>
+              {captain.position} · OVR {captain.overallRating}
+            </div>
+          )}
+          <select
+            value={captain?.id || ''}
+            onChange={e => {
+              const p = players.find(pl => pl.id === e.target.value);
+              if (p) onSetCaptain(p);
+            }}
+            style={selectStyle}
+          >
+            <option value="">— Not assigned —</option>
+            {sortedByRating.map(p => (
+              <option key={p.id} value={p.id} disabled={p.isViceCaptain}>
+                {p.name} ({p.position}, OVR {p.overallRating}){p.isViceCaptain ? ' [VC]' : ''}
+              </option>
+            ))}
+          </select>
         </div>
-        <div style={{ display: 'flex', alignItems: 'center', gap: 'var(--space-3)', padding: 'var(--space-3)', background: 'var(--bg-muted)', borderRadius: 'var(--radius-md)' }}>
-          <span style={{ fontSize: '1.25rem' }}>🥈</span>
-          <div>
-            <div style={{ fontSize: 'var(--font-size-xs)', color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: 0.5, fontWeight: 700 }}>Vice Captain</div>
-            <div style={{ fontWeight: 700, fontSize: 'var(--font-size-sm)', color: vc ? 'var(--text-primary)' : 'var(--text-muted)' }}>
-              {vc ? vc.name : 'Not assigned'}
-            </div>
-            {vc && <div style={{ fontSize: 'var(--font-size-xs)', color: 'var(--text-muted)' }}>{vc.position} · OVR {vc.overallRating}</div>}
+        <div style={{ padding: 'var(--space-3)', background: 'var(--bg-muted)', borderRadius: 'var(--radius-md)' }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 'var(--space-2)', marginBottom: 4 }}>
+            <span style={{ fontSize: '1.1rem' }}>🥈</span>
+            <span style={{ fontSize: 'var(--font-size-xs)', color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: 0.5, fontWeight: 700 }}>Vice Captain</span>
           </div>
+          {vc && (
+            <div style={{ fontSize: 'var(--font-size-xs)', color: 'var(--text-muted)', marginBottom: 2 }}>
+              {vc.position} · OVR {vc.overallRating}
+            </div>
+          )}
+          <select
+            value={vc?.id || ''}
+            onChange={e => {
+              const p = players.find(pl => pl.id === e.target.value);
+              if (p) onSetViceCaptain(p);
+            }}
+            style={selectStyle}
+          >
+            <option value="">— Not assigned —</option>
+            {sortedByRating.map(p => (
+              <option key={p.id} value={p.id} disabled={p.isCaptain}>
+                {p.name} ({p.position}, OVR {p.overallRating}){p.isCaptain ? ' [C]' : ''}
+              </option>
+            ))}
+          </select>
         </div>
       </div>
     </div>
