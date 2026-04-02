@@ -17,7 +17,7 @@ function getRepLevel(rep) {
 export default function League() {
   const { state } = useGame();
   const [activeLeague, setActiveLeague] = useState('C-0');
-  const [sortCol, setSortCol] = useState('points');
+  const [sortCol, setSortCol] = useState('wins');
   const [sortDir, setSortDir] = useState('desc');
   const [selectedTeam, setSelectedTeam] = useState(null);
   const [showTeamSchedule, setShowTeamSchedule] = useState(false);
@@ -46,30 +46,71 @@ export default function League() {
     return currentLeague.teams || allTeams.slice(0, 10);
   }, [currentLeague, allTeams]);
 
-  // Add stats to teams using Firestore standings (league.standings), with fallback to seasonRecord
+  // Add basketball stats to teams using Firestore standings + schedule-derived L10/Strk
   const teamsWithStats = useMemo(() => {
     const standings = currentLeague?.standings || [];
-    return leagueTeams.filter(Boolean).map(t => {
+    const schedule  = currentLeague?.schedule  || [];
+    const playedMatches = schedule.filter(m => m.played);
+
+    const rows = leagueTeams.filter(Boolean).map(t => {
       const full     = allTeams.find(a => a?.id === t.id) || t;
       const standing = standings.find(s => s.teamId === t.id);
       const wins     = standing?.wins   ?? full.seasonRecord?.wins   ?? 0;
       const losses   = standing?.losses ?? full.seasonRecord?.losses ?? 0;
-      const points   = standing?.points ?? (wins * 2 + losses);
       const played   = wins + losses;
-      const history  = full.matchHistory || [];
-      const gf = history.reduce((sum, m) => sum + (m?.userScore || 0), 0);
-      const ga = history.reduce((sum, m) => sum + (m?.oppScore  || 0), 0);
-      return { ...full, wins, losses, played, points, gf, ga, gd: gf - ga, rep: full.reputation || 10 };
+      const pct      = played > 0 ? wins / played : 0;
+
+      // L10 and Strk: derive from league schedule
+      const teamMatches = playedMatches
+        .filter(m => m.homeTeamId === t.id || m.awayTeamId === t.id)
+        .sort((a, b) => (a.scheduledDate || 0) - (b.scheduledDate || 0));
+
+      const last10 = teamMatches.slice(-10);
+      const l10Wins   = last10.filter(m => (m.homeTeamId === t.id ? m.homeScore : m.awayScore) > (m.homeTeamId === t.id ? m.awayScore : m.homeScore)).length;
+      const l10Losses = last10.length - l10Wins;
+      const l10 = last10.length > 0 ? `${l10Wins}-${l10Losses}` : '—';
+
+      // Streak: count from most-recent match backwards
+      let streak = 0, streakType = '';
+      for (let i = teamMatches.length - 1; i >= 0; i--) {
+        const m = teamMatches[i];
+        const teamScore = m.homeTeamId === t.id ? m.homeScore : m.awayScore;
+        const oppScore  = m.homeTeamId === t.id ? m.awayScore : m.homeScore;
+        const won = teamScore > oppScore;
+        if (streak === 0) { streakType = won ? 'W' : 'L'; streak = 1; }
+        else if ((won && streakType === 'W') || (!won && streakType === 'L')) streak++;
+        else break;
+      }
+      const strk = streak > 0 ? `${streakType}${streak}` : '—';
+
+      return { ...full, wins, losses, played, pct, l10, strk };
     });
+
+    // GB relative to leader
+    const leader = [...rows].sort((a, b) => b.wins - a.wins || a.losses - b.losses)[0];
+    return rows.map(t => ({
+      ...t,
+      gb: leader && t.id !== leader.id
+        ? ((leader.wins - t.wins + t.losses - leader.losses) / 2)
+        : null,
+    }));
   }, [leagueTeams, currentLeague, allTeams]);
 
   const sorted = useMemo(() => {
     return [...teamsWithStats].filter(Boolean).sort((a, b) => {
+      if (sortCol === 'name') {
+        return sortDir === 'asc'
+          ? String(a.name).localeCompare(String(b.name))
+          : String(b.name).localeCompare(String(a.name));
+      }
+      // Default: wins desc, then losses asc (basketball standard)
+      if (sortCol === 'wins') {
+        return sortDir === 'asc'
+          ? a.wins - b.wins || b.losses - a.losses
+          : b.wins - a.wins || a.losses - b.losses;
+      }
       const av = a[sortCol] ?? 0;
       const bv = b[sortCol] ?? 0;
-      if (sortCol === 'name') return sortDir === 'asc'
-        ? String(av).localeCompare(String(bv))
-        : String(bv).localeCompare(String(av));
       return sortDir === 'asc' ? av - bv : bv - av;
     });
   }, [teamsWithStats, sortCol, sortDir]);
@@ -162,23 +203,22 @@ export default function League() {
           <table>
             <thead>
               <tr>
-                <th style={{ width: 40 }}>#</th>
+                <th style={{ width: 36, textAlign: 'center' }}>#</th>
                 <th style={{ cursor: 'pointer', minWidth: 160 }} onClick={() => handleSort('name')}>
                   Team <SortIcon col="name" />
                 </th>
-                <th style={{ cursor: 'pointer' }} onClick={() => handleSort('points')}>PTS <SortIcon col="points" /></th>
-                <th style={{ cursor: 'pointer' }} onClick={() => handleSort('played')}>P <SortIcon col="played" /></th>
-                <th style={{ cursor: 'pointer' }} onClick={() => handleSort('wins')}>W <SortIcon col="wins" /></th>
-                <th style={{ cursor: 'pointer' }} onClick={() => handleSort('losses')}>L <SortIcon col="losses" /></th>
-                <th style={{ cursor: 'pointer' }} onClick={() => handleSort('gf')}>GF <SortIcon col="gf" /></th>
-                <th style={{ cursor: 'pointer' }} onClick={() => handleSort('ga')}>GA <SortIcon col="ga" /></th>
-                <th style={{ cursor: 'pointer' }} onClick={() => handleSort('gd')}>GD <SortIcon col="gd" /></th>
-                <th style={{ cursor: 'pointer' }} onClick={() => handleSort('rep')}>REP <SortIcon col="rep" /></th>
+                <th style={{ cursor: 'pointer', textAlign: 'center' }} onClick={() => handleSort('wins')}>W <SortIcon col="wins" /></th>
+                <th style={{ cursor: 'pointer', textAlign: 'center' }} onClick={() => handleSort('losses')}>L <SortIcon col="losses" /></th>
+                <th style={{ cursor: 'pointer', textAlign: 'center' }} onClick={() => handleSort('pct')}>PCT <SortIcon col="pct" /></th>
+                <th style={{ textAlign: 'center' }}>GB</th>
+                <th style={{ textAlign: 'center' }}>L10</th>
+                <th style={{ textAlign: 'center', cursor: 'pointer' }} onClick={() => handleSort('played')}>GP <SortIcon col="played" /></th>
+                <th style={{ textAlign: 'center' }}>STRK</th>
               </tr>
             </thead>
             <tbody>
               {sorted.length === 0 && (
-                <tr><td colSpan={10} style={{ textAlign: 'center', padding: 32, color: 'var(--text-muted)' }}>No standings data available yet.</td></tr>
+                <tr><td colSpan={9} style={{ textAlign: 'center', padding: 32, color: 'var(--text-muted)' }}>No standings data available yet.</td></tr>
               )}
               {sorted.map((team, idx) => {
                 const rank = idx + 1;
@@ -218,20 +258,18 @@ export default function League() {
                         </div>
                       </div>
                     </td>
-                    <td><strong style={{ color: 'var(--color-primary)' }}>{team.points}</strong></td>
-                    <td>{team.played}</td>
-                    <td>{team.wins}</td>
-                    <td>{team.losses}</td>
-                    <td>{team.gf}</td>
-                    <td>{team.ga}</td>
-                    <td style={{ color: team.gd > 0 ? 'var(--color-success)' : team.gd < 0 ? 'var(--color-danger)' : 'var(--text-muted)', fontWeight: 600 }}>
-                      {team.gd > 0 ? '+' : ''}{team.gd}
+                    <td style={{ textAlign: 'center', fontWeight: 700 }}>{team.wins}</td>
+                    <td style={{ textAlign: 'center' }}>{team.losses}</td>
+                    <td style={{ textAlign: 'center', fontWeight: 700, color: 'var(--color-primary)' }}>
+                      {team.played > 0 ? (team.wins / team.played).toFixed(3).replace(/^0/, '') : '.000'}
                     </td>
-                    <td>
-                      <div className="flex items-center gap-1">
-                        <span className="text-xs font-bold" style={{ color: 'var(--color-primary)' }}>{team.rep}</span>
-                        <span className="text-xs text-muted">/100</span>
-                      </div>
+                    <td style={{ textAlign: 'center', color: 'var(--text-muted)' }}>
+                      {team.gb === null ? <strong>—</strong> : team.gb % 1 === 0 ? team.gb : team.gb.toFixed(1)}
+                    </td>
+                    <td style={{ textAlign: 'center', fontSize: 'var(--font-size-xs)', fontWeight: 600 }}>{team.l10}</td>
+                    <td style={{ textAlign: 'center', color: 'var(--text-muted)' }}>{team.played}</td>
+                    <td style={{ textAlign: 'center', fontWeight: 700, color: team.strk?.startsWith('W') ? 'var(--color-success)' : team.strk?.startsWith('L') ? 'var(--color-danger)' : 'var(--text-muted)', fontSize: 'var(--font-size-xs)' }}>
+                      {team.strk}
                     </td>
                   </tr>
                 );
