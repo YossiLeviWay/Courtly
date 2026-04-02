@@ -225,9 +225,6 @@ export default function Fans() {
   const seasonTicketRevenue = seasonTicketSeats * seasonTicketPrice * HOME_GAMES_PER_SEASON;
   const regularSeats = arenaCapacity - seasonTicketSeats;
 
-  // Computed values (attendance multiplier applied after recentMatches calc below)
-  const enthusiasmPct = Math.min(100, Math.max(0, fanEnthusiasm));
-  const weeklyNewFans = Math.round((enthusiasmPct / 100) * 50 + (enthusiasmPct > 50 ? 20 : 0));
   // Fan growth trend (based on recent match results — use result field or teamScore)
   const recentMatches = [...matchHistory].slice(0, 5);
   const recentWins = recentMatches.filter(m =>
