@@ -96,6 +96,8 @@ function buildUserTeam(leagues, userState) {
     reputation:     userState.reputation     ?? 10,
     matchHistory:   userState.matchHistory   ?? [],
     youthDraft:     userState.youthDraft     ?? null,
+    staff:          userState.staff          ?? {},
+    lastFanGrowthDate: userState.lastFanGrowthDate ?? null,
     wins:         userState.seasonRecord?.wins    ?? 0,
     losses:       userState.seasonRecord?.losses  ?? 0,
     seasonRecord: {
@@ -140,6 +142,8 @@ function extractUserState(state) {
     reputation:     t.reputation     ?? 10,
     matchHistory:   t.matchHistory   ?? [],
     youthDraft:     t.youthDraft     ?? null,
+    staff:          t.staff          ?? {},
+    lastFanGrowthDate: t.lastFanGrowthDate ?? null,
     seasonRecord:   { wins: t.wins ?? 0, losses: t.losses ?? 0 },
     profileData: {
       bio:                  state.user?.bio                  || '',
@@ -302,6 +306,30 @@ export function GameProvider({ children }) {
         }));
       } catch (simErr) {
         console.warn('Match simulation error (non-fatal):', simErr);
+      }
+
+      // ── Sunday fan growth ────────────────────────────────────────
+      // Once per week (Sunday), apply fan growth based on enthusiasm + results.
+      const now = Date.now();
+      const thisWeekSunday = (() => {
+        const d = new Date(now);
+        const day = d.getDay(); // 0=Sun
+        d.setHours(0, 0, 0, 0);
+        d.setDate(d.getDate() - day); // roll back to Sunday
+        return d.getTime();
+      })();
+      const lastFanGrowth = userStateRes.state?.lastFanGrowthDate ?? 0;
+      if (userStateRes.state && lastFanGrowth < thisWeekSunday) {
+        const enthusiasm = userStateRes.state.fanEnthusiasm ?? 20;
+        const history = userStateRes.state.matchHistory ?? [];
+        const recentWins = history.slice(0, 5).filter(m =>
+          m.result === 'W' || (m.teamScore ?? m.userScore ?? 0) > (m.oppScore ?? m.opponentScore ?? 0)
+        ).length;
+        const baseGrowth = Math.round((enthusiasm / 100) * 50 + (enthusiasm > 50 ? 20 : 0));
+        const resultBonus = (recentWins - 2) * 8; // -16..+24 based on last 5
+        const growth = Math.max(0, baseGrowth + resultBonus);
+        userStateRes.state.fanCount = (userStateRes.state.fanCount ?? 250) + growth;
+        userStateRes.state.lastFanGrowthDate = now;
       }
 
       const userTeam = buildUserTeam(simulatedLeagues, userStateRes.state);

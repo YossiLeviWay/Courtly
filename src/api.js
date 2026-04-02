@@ -97,7 +97,7 @@ export async function apiRegister(email, password, username, teamId, teamData, t
   batch.set(doc(db, 'user_team_state', uid), {
     userId: uid,
     teamId: teamId || null,
-    budget: 250,
+    budget: 1500,
     facilities: {},
     tactics: {},
     playersState: teamData?.players ?? [],
@@ -107,9 +107,39 @@ export async function apiRegister(email, password, username, teamId, teamData, t
     teamExposure: 0,
     chemistryGauge: 50,
     momentumBar: 65,
+    motivationBar: 60,
     reputation: 10,
     matchHistory: [],
     seasonRecord: { wins: 0, losses: 0 },
+    staff: {
+      headCoach: {
+        id: `hc_${uid}`,
+        role: 'Head Coach',
+        name: _randomStaffName('coach'),
+        level: 1,
+        abilities: { gamePlanning: 28, playerDevelopment: 25, motivation: 30, tacticalKnowledge: 27 },
+        salary: 180,
+        contractYears: 2,
+      },
+      scout1: {
+        id: `sc_${uid}`,
+        role: 'Scout',
+        name: _randomStaffName('scout'),
+        level: 1,
+        abilities: { playerEvaluation: 30, networking: 25, reporting: 28 },
+        salary: 90,
+        contractYears: 1,
+      },
+      teamManager: {
+        id: `tm_${uid}`,
+        role: 'Team Manager',
+        name: _randomStaffName('manager'),
+        level: 1,
+        abilities: { logistics: 28, budgetManagement: 25, communication: 30 },
+        salary: 120,
+        contractYears: 2,
+      },
+    },
     profileData: {
       bio: '', avatar: { type: 'initials', emoji: null },
       gender: '', teamName: customName, stadiumName: '',
@@ -128,6 +158,15 @@ export async function apiLogin(email, password) {
   const cred = await signInWithEmailAndPassword(auth, email, password);
   const snap = await getDoc(doc(db, 'users', cred.user.uid));
   return { userId: cred.user.uid, username: snap.data()?.username || '' };
+}
+
+// ── Staff name generator ──────────────────────────────────────────
+
+const STAFF_FIRST = ['Mike','Dave','James','Carlos','Tony','Kevin','Eric','Matt','Chris','Paul','Luis','Tom'];
+const STAFF_LAST  = ['Rivera','Johnson','Williams','Martinez','Smith','Brown','Davis','Garcia','Taylor','Lee'];
+function _randomStaffName(seed) {
+  const h = Math.abs([...seed].reduce((a, c) => (a * 31 + c.charCodeAt(0)) | 0, 0));
+  return `${STAFF_FIRST[h % STAFF_FIRST.length]} ${STAFF_LAST[(h >> 4) % STAFF_LAST.length]}`;
 }
 
 // ── Player contract normalization ─────────────────────────────────

@@ -94,14 +94,26 @@ export default function YouthAcademy() {
     if (!selected || alreadyDrafted) return;
     const newPlayer = { ...selected, id: `youth-${Date.now()}`, isYouthAcademy: true };
     const updatedPlayers = [...(userTeam.players || []), newPlayer];
+
+    // Fan buzz: higher-rated prospects generate more excitement
+    const ovr = newPlayer.overallRating || 60;
+    const enthusiasmBoost = ovr >= 80 ? 8 : ovr >= 70 ? 5 : ovr >= 60 ? 3 : 1;
+    const buzzMsg = ovr >= 80
+      ? `${newPlayer.name} is a highly-rated prospect — fans are buzzing about his potential!`
+      : ovr >= 70
+      ? `${newPlayer.name} joins from the academy. Supporters are optimistic about his future.`
+      : `${newPlayer.name} has been drafted. The academy continues to develop young talent.`;
+
     dispatch({
       type: 'UPDATE_TEAM', payload: {
         ...userTeam,
         players: updatedPlayers,
+        fanEnthusiasm: Math.min(100, (userTeam.fanEnthusiasm ?? 20) + enthusiasmBoost),
         youthDraft: { lastDraftedAt: Date.now(), lastDraftedPlayer: newPlayer.name }
       }
     });
-    addNotification(`${newPlayer.name} drafted and added to the squad!`, 'success');
+    addNotification(`${newPlayer.name} drafted and added to the squad! ${enthusiasmBoost > 3 ? '🔥 Fans are excited!' : ''}`, 'success');
+    addNotification(buzzMsg, 'info');
   };
 
   return (

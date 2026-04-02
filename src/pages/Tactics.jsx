@@ -445,6 +445,14 @@ export default function Tactics() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  // ── Pre-game warning (15 min before kickoff) ─────────────────
+  const nextMatch = (userTeam?.seasonMatches || []).find(m => !m.played);
+  const minsToMatch = nextMatch
+    ? Math.round((new Date(nextMatch.date || nextMatch.scheduledDate).getTime() - Date.now()) / 60000)
+    : null;
+  const lineupSet = Object.values(tactics.lineup || {}).filter(Boolean).length >= 5;
+  const showPreGameWarning = minsToMatch !== null && minsToMatch <= 15 && minsToMatch >= -5;
+
   if (!userTeam) {
     return (
       <div className="page-content animate-fade-in">
@@ -553,6 +561,32 @@ export default function Tactics() {
           </button>
         </div>
       </div>
+
+      {/* ── Pre-game alert ─────────────────────────────────────── */}
+      {showPreGameWarning && (
+        <div style={{
+          marginBottom: 'var(--space-5)',
+          padding: 'var(--space-4)',
+          borderRadius: 'var(--radius-lg)',
+          background: lineupSet ? 'var(--color-success-light)' : '#fff3cd',
+          border: `2px solid ${lineupSet ? 'var(--color-success)' : '#f59e0b'}`,
+          display: 'flex', alignItems: 'center', gap: 'var(--space-3)',
+        }}>
+          <span style={{ fontSize: '1.5rem' }}>{lineupSet ? '✅' : '⚠️'}</span>
+          <div>
+            <div style={{ fontWeight: 700, color: lineupSet ? 'var(--color-success)' : '#92400e', fontSize: 'var(--font-size-sm)' }}>
+              {minsToMatch > 0
+                ? `Match starts in ${minsToMatch} minute${minsToMatch !== 1 ? 's' : ''}!`
+                : 'Match is starting now!'}
+            </div>
+            <div style={{ fontSize: 'var(--font-size-xs)', color: lineupSet ? 'var(--color-success)' : '#b45309', marginTop: 2 }}>
+              {lineupSet
+                ? 'Lineup is set. Good luck!'
+                : 'Lineup not fully set — the game will auto-select the best available 5 players if you don\'t save a lineup before kickoff.'}
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* ── 1. Starting Lineup (Interactive Court) ─────────────── */}
       <div className="card mb-6">
