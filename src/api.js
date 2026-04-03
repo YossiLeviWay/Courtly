@@ -783,6 +783,76 @@ export async function apiMarkFeedbackRead(docId) {
   await updateDoc(doc(db, 'feedback', docId), { read: true });
 }
 
+// ── Admin: Seed transfer market ──────────────────────────────────
+
+/** Seed N generated free agents into the transfer_market collection (admin only). */
+export async function apiSeedFreeAgents(count = 15) {
+  const { generatePlayer } = await import('./engine/playerGenerator.js');
+  const POSITIONS = ['PG', 'SG', 'SF', 'PF', 'C'];
+  const batch = writeBatch(db);
+  for (let i = 0; i < count; i++) {
+    const pos = POSITIONS[i % POSITIONS.length];
+    const player = generatePlayer({ position: pos });
+    const ref = doc(collection(db, 'transfer_market'));
+    const salaryDemand = player.salary || Math.round(50 + player.overallRating * 1.5);
+    batch.set(ref, {
+      id: ref.id,
+      isFreeAgent: true,
+      playerId: player.id,
+      playerName: player.name,
+      position: player.position,
+      overallRating: player.overallRating,
+      age: player.age,
+      nationality: player.nationality,
+      salaryDemand,
+      contractYears: player.contractYears || 2,
+      releasedAt: Date.now() - Math.floor(Math.random() * 7 * 24 * 60 * 60 * 1000),
+      seeded: true,
+      playerData: player,
+    });
+  }
+  await batch.commit();
+  return count;
+}
+
+const STAFF_ROLE_DEFS = [
+  { role: 'Head Coach', abilities: ['tactics', 'motivation', 'playerDevelopment', 'matchPreparation'] },
+  { role: 'Scout', abilities: ['talentIdentification', 'opponentAnalysis', 'youthDevelopment', 'networkReach'] },
+  { role: 'Fitness Coach', abilities: ['conditioning', 'injuryPrevention', 'recovery', 'peakPerformance'] },
+  { role: 'Assistant Coach', abilities: ['offensiveSystems', 'defensiveSystems', 'setPlays', 'playerRelations'] },
+  { role: 'Team Manager', abilities: ['logistics', 'budgetManagement', 'teamHarmony', 'mediaRelations'] },
+];
+
+/** Seed staff members into the transfer_market (admin only). */
+export async function apiSeedStaffMarket(count = 8) {
+  const batch = writeBatch(db);
+  for (let i = 0; i < count; i++) {
+    const roleDef = STAFF_ROLE_DEFS[i % STAFF_ROLE_DEFS.length];
+    const avgAbility = 20 + Math.floor(Math.random() * 60); // 20-80
+    const abilities = {};
+    roleDef.abilities.forEach(k => {
+      abilities[k] = Math.max(10, Math.min(99, avgAbility - 10 + Math.floor(Math.random() * 20)));
+    });
+    const name = _randomStaffName(i + Date.now());
+    const monthlyWage = 200 + Math.round(avgAbility * 30);
+    const ref = doc(collection(db, 'transfer_market'));
+    batch.set(ref, {
+      id: ref.id,
+      isStaff: true,
+      staffRole: roleDef.role,
+      name,
+      abilities,
+      avgAbility,
+      monthlyWage,
+      hireCost: Math.round(avgAbility * 10),
+      seeded: true,
+      listedAt: Date.now(),
+    });
+  }
+  await batch.commit();
+  return count;
+}
+
 // ── Internal helper ──────────────────────────────────────────────
 
 async function _propagateTeamName(teamId, name) {

@@ -1,12 +1,13 @@
 import { useState, useMemo, useEffect, useCallback } from 'react';
 import { Navigate } from 'react-router-dom';
-import { Shield, Save, ChevronDown, ChevronRight, RefreshCw, Edit2, Check, X, Plus, Trophy } from 'lucide-react';
+import { Shield, Save, ChevronDown, ChevronRight, RefreshCw, Edit2, Check, X, Plus, Trophy, Brain } from 'lucide-react';
 import { useGame } from '../context/GameContext.jsx';
 import {
   apiUpdateMatchesBatch, apiUpdateMatch, apiGetMatchesFromCollection,
   apiGetAllUserStates, apiGetSeasonConfig, apiSaveSeasonConfig, apiCreateSeasonMatches,
   apiResetAllMatches, apiResetStandings, apiRegenerateSchedule,
   apiGetFeedback, apiMarkFeedbackRead,
+  apiSeedFreeAgents, apiSeedStaffMarket,
 } from '../api.js';
 import { buildRoundRobinRounds } from '../engine/gameScheduler.js';
 
@@ -807,6 +808,187 @@ function FeedbackInbox() {
   );
 }
 
+// ── Game Brain Panel ──────────────────────────────────────────
+
+function teamStrength(team) {
+  const players = team?.players ?? [];
+  if (players.length === 0) return 50;
+  const offKeys = ['threePtShooting', 'midRangeScoring', 'finishingAtTheRim', 'passingAccuracy', 'basketballIQ'];
+  const defKeys = ['perimeterDefense', 'interiorDefense', 'helpDefense', 'rebounding'];
+  let offTotal = 0, defTotal = 0, offN = 0, defN = 0;
+  for (const p of players) {
+    for (const k of offKeys) { if (p.attributes?.[k] != null) { offTotal += p.attributes[k]; offN++; } }
+    for (const k of defKeys) { if (p.attributes?.[k] != null) { defTotal += p.attributes[k]; defN++; } }
+  }
+  const offAvg = offN > 0 ? offTotal / offN : 55;
+  const defAvg = defN > 0 ? defTotal / defN : 55;
+  return Math.round((offAvg + defAvg) / 2);
+}
+
+function predictScore(homeStrength, awayStrength) {
+  const base = 100;
+  const homeAdv = 3;
+  const homeScore = Math.round(base + homeAdv + (homeStrength - 50) * 0.8 - (awayStrength - 50) * 0.3);
+  const awayScore = Math.round(base + (awayStrength - 50) * 0.8 - (homeStrength - 50) * 0.3);
+  return { homeScore: Math.max(70, homeScore), awayScore: Math.max(70, awayScore) };
+}
+
+function GameBrainPanel({ leagues, allTeams }) {
+  const allTeamMap = useMemo(() => Object.fromEntries((allTeams || []).map(t => [t.id, t])), [allTeams]);
+
+  // Gather upcoming unplayed matches from all leagues
+  const upcomingMatches = useMemo(() => {
+    const results = [];
+    for (const league of leagues) {
+      const schedule = league.schedule || [];
+      const unplayed = schedule.filter(m => !m.played).sort((a, b) => (a.scheduledDate || 0) - (b.scheduledDate || 0)).slice(0, 10);
+      for (const m of unplayed) {
+        const home = allTeamMap[m.homeTeamId];
+        const away = allTeamMap[m.awayTeamId];
+        const homeStr = teamStrength(home);
+        const awayStr = teamStrength(away);
+        const pred = predictScore(homeStr, awayStr);
+        results.push({ ...m, home, away, homeStr, awayStr, pred, leagueName: league.name || league.id });
+      }
+    }
+    return results;
+  }, [leagues, allTeamMap]);
+
+  if (upcomingMatches.length === 0) {
+    return (
+      <div className="empty-state" style={{ padding: '3rem' }}>
+        <div className="empty-state-icon">🧠</div>
+        <div className="empty-state-title">No upcoming matches</div>
+        <div className="empty-state-desc">Generate a schedule first to see match predictions.</div>
+      </div>
+    );
+  }
+
+  return (
+    <div>
+      <div className="card mb-4" style={{ padding: '12px 16px', background: 'rgba(99,102,241,0.06)', border: '1px solid rgba(99,102,241,0.2)' }}>
+        <div style={{ fontWeight: 700, marginBottom: 4 }}>🧠 Game Brain — Match Predictions</div>
+        <div style={{ fontSize: 'var(--font-size-sm)', color: 'var(--text-muted)' }}>
+          Strength ratings based on player attribute averages (offense + defense). Predicted scores include home advantage (+3 pts).
+        </div>
+      </div>
+
+      {upcomingMatches.map((m, i) => {
+        const homeWinChance = m.homeStr > m.awayStr
+          ? Math.min(75, 50 + (m.homeStr - m.awayStr) * 1.2)
+          : Math.max(25, 50 - (m.awayStr - m.homeStr) * 1.2);
+        const spread = m.pred.homeScore - m.pred.awayScore;
+        const scheduledStr = m.scheduledDate ? new Date(m.scheduledDate).toLocaleString('en-US', { weekday: 'short', month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' }) : 'TBD';
+
+        return (
+          <div key={m.id || i} className="card mb-3" style={{ padding: '14px 16px' }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', flexWrap: 'wrap', gap: 8 }}>
+              <div>
+                <div style={{ fontSize: 'var(--font-size-xs)', color: 'var(--text-muted)', marginBottom: 4 }}>{m.leagueName} · {scheduledStr}</div>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+                  <div style={{ textAlign: 'center', minWidth: 120 }}>
+                    <div style={{ fontWeight: 700 }}>{m.homeTeamName || 'Home'}</div>
+                    <div style={{ fontSize: 'var(--font-size-xs)', color: 'var(--color-primary)', fontWeight: 700 }}>STR {m.homeStr}</div>
+                  </div>
+                  <div style={{ fontWeight: 900, color: 'var(--text-muted)', fontSize: 'var(--font-size-lg)' }}>vs</div>
+                  <div style={{ textAlign: 'center', minWidth: 120 }}>
+                    <div style={{ fontWeight: 700 }}>{m.awayTeamName || 'Away'}</div>
+                    <div style={{ fontSize: 'var(--font-size-xs)', color: 'var(--color-primary)', fontWeight: 700 }}>STR {m.awayStr}</div>
+                  </div>
+                </div>
+              </div>
+              <div style={{ textAlign: 'right' }}>
+                <div style={{ fontWeight: 900, fontSize: 'var(--font-size-xl)', color: 'var(--color-primary)' }}>
+                  {m.pred.homeScore}–{m.pred.awayScore}
+                </div>
+                <div style={{ fontSize: 'var(--font-size-xs)', color: 'var(--text-muted)' }}>
+                  Predicted · Spread: {spread > 0 ? '+' : ''}{spread}
+                </div>
+                <div style={{ marginTop: 4 }}>
+                  <span className={`badge ${homeWinChance >= 50 ? 'badge-green' : 'badge-orange'}`} style={{ fontSize: '0.65rem' }}>
+                    {m.homeTeamName || 'Home'} {Math.round(homeWinChance)}% win
+                  </span>
+                </div>
+              </div>
+            </div>
+
+            {/* Strength bar comparison */}
+            <div style={{ marginTop: 12, display: 'grid', gridTemplateColumns: '1fr auto 1fr', gap: 8, alignItems: 'center' }}>
+              <div style={{ height: 6, background: 'var(--bg-muted)', borderRadius: 4, overflow: 'hidden' }}>
+                <div style={{ width: `${m.homeStr}%`, height: '100%', background: 'var(--color-primary)', borderRadius: 4, transition: 'width 0.4s ease' }} />
+              </div>
+              <span style={{ fontSize: '0.6rem', color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: 0.5 }}>Strength</span>
+              <div style={{ height: 6, background: 'var(--bg-muted)', borderRadius: 4, overflow: 'hidden' }}>
+                <div style={{ width: `${m.awayStr}%`, height: '100%', background: '#3b82f6', borderRadius: 4, transition: 'width 0.4s ease' }} />
+              </div>
+            </div>
+
+            {/* Player counts */}
+            {(m.home || m.away) && (
+              <div style={{ marginTop: 8, display: 'flex', gap: 16, fontSize: 'var(--font-size-xs)', color: 'var(--text-muted)' }}>
+                <span>🏀 {m.home?.players?.length ?? '?'} players · {(m.home?.players || []).filter(p => p.injuryStatus && p.injuryStatus !== 'healthy').length} injured</span>
+                <span>🏀 {m.away?.players?.length ?? '?'} players · {(m.away?.players || []).filter(p => p.injuryStatus && p.injuryStatus !== 'healthy').length} injured</span>
+              </div>
+            )}
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
+// ── Market Seed Panel ─────────────────────────────────────────
+
+function MarketSeedPanel() {
+  const [status, setStatus] = useState('');
+  const [loading, setLoading] = useState('');
+
+  async function seed(fn, label, count) {
+    setLoading(label);
+    setStatus('');
+    try {
+      const n = await fn(count);
+      setStatus(`✅ Seeded ${n} ${label.toLowerCase()}`);
+    } catch (err) {
+      setStatus(`❌ Error: ${err.message}`);
+    } finally {
+      setLoading('');
+    }
+  }
+
+  return (
+    <div>
+      <div className="card mb-4">
+        <div className="card-title mb-2">Transfer Market Seeding</div>
+        <p style={{ fontSize: 'var(--font-size-sm)', color: 'var(--text-muted)', marginBottom: 16 }}>
+          Add generated free agents and staff to the transfer market. Existing seeded entries will stack (not replaced).
+        </p>
+        <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap' }}>
+          <button
+            className="btn btn-primary"
+            disabled={!!loading}
+            onClick={() => seed(apiSeedFreeAgents, 'Free Agents', 15)}
+          >
+            {loading === 'Free Agents' ? 'Seeding…' : '+ Seed 15 Free Agents'}
+          </button>
+          <button
+            className="btn btn-primary"
+            disabled={!!loading}
+            onClick={() => seed(apiSeedStaffMarket, 'Staff', 8)}
+          >
+            {loading === 'Staff' ? 'Seeding…' : '+ Seed 8 Staff Members'}
+          </button>
+        </div>
+        {status && (
+          <div style={{ marginTop: 12, fontSize: 'var(--font-size-sm)', fontWeight: 600, color: status.startsWith('✅') ? 'var(--color-success)' : 'var(--color-danger)' }}>
+            {status}
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
 // ── Main Admin Page ───────────────────────────────────────────
 
 export default function Admin() {
@@ -833,11 +1015,13 @@ export default function Admin() {
 
       <div className="tabs" style={{ marginBottom: 24 }}>
         {[
-          ['schedule', '📅 Schedule'],
-          ['seasons',  '🏆 Seasons'],
-          ['teams',    '🏀 Teams'],
-          ['users',    '👤 Users'],
-          ['feedback', '💬 Feedback'],
+          ['schedule',  '📅 Schedule'],
+          ['seasons',   '🏆 Seasons'],
+          ['teams',     '🏀 Teams'],
+          ['users',     '👤 Users'],
+          ['gamebrain', '🧠 Game Brain'],
+          ['market',    '🛒 Market'],
+          ['feedback',  '💬 Feedback'],
         ].map(([k, l]) => (
           <button key={k} className={`tab${tab === k ? ' active' : ''}`} onClick={() => setTab(k)}>{l}</button>
         ))}
@@ -850,10 +1034,12 @@ export default function Admin() {
           <ResetZone />
         </>
       )}
-      {tab === 'seasons'  && <SeasonManager leagues={leagues} />}
-      {tab === 'teams'    && <TeamsView leagues={leagues} />}
-      {tab === 'users'    && <UsersView />}
-      {tab === 'feedback' && <FeedbackInbox />}
+      {tab === 'seasons'   && <SeasonManager leagues={leagues} />}
+      {tab === 'teams'     && <TeamsView leagues={leagues} />}
+      {tab === 'users'     && <UsersView />}
+      {tab === 'gamebrain' && <GameBrainPanel leagues={leagues} allTeams={state.allTeams || []} />}
+      {tab === 'market'    && <MarketSeedPanel />}
+      {tab === 'feedback'  && <FeedbackInbox />}
     </div>
   );
 }

@@ -32,6 +32,44 @@ const PLAYING_STYLES = [
     subtitle: 'Low Post Offense',
     description: 'Offense through big men in the low post',
     icon: '💪',
+    recommendedWhen: (stats) => (stats.avgPost || 0) >= 65,
+    recommendLabel: 'Strong post players',
+  },
+  {
+    id: 'Fast Break',
+    label: 'Fast Break',
+    subtitle: 'Transition Offense',
+    description: 'Push in transition, exploit numbers advantages before defense sets',
+    icon: '🏃',
+    recommendedWhen: (stats) => (stats.avgAgility || 0) >= 65 && (stats.avgStamina || 0) >= 60,
+    recommendLabel: 'High agility & stamina',
+  },
+  {
+    id: 'Triangle Offense',
+    label: 'Triangle Offense',
+    subtitle: 'Spacing & IQ',
+    description: 'Three-player triangles on each side; emphasizes basketball IQ and spacing',
+    icon: '🔺',
+    recommendedWhen: (stats) => (stats.avgIQ || 0) >= 65,
+    recommendLabel: 'High basketball IQ',
+  },
+  {
+    id: 'Isolation',
+    label: 'Isolation',
+    subtitle: 'Star-Driven',
+    description: 'Clear out and let your best scorer operate one-on-one',
+    icon: '⭐',
+    recommendedWhen: (stats) => (stats.topPlayerOvr || 0) >= 80,
+    recommendLabel: 'Elite star player',
+  },
+  {
+    id: 'Motion Offense',
+    label: 'Motion Offense',
+    subtitle: 'Read & React',
+    description: 'Continuous movement and cuts; team reads defense in real time',
+    icon: '🌀',
+    recommendedWhen: (stats) => (stats.avgPassing || 0) >= 62 && (stats.avgCourtVision || 0) >= 60,
+    recommendLabel: 'Good passing & vision',
   },
 ];
 
@@ -42,6 +80,7 @@ const DEFENSE_TYPES = [
   'Zone (Box-and-One)',
   'Press (Full)',
   'Press (Three-quarter)',
+  'Trap Defense',
 ];
 
 const PRESS_FREQUENCIES = ['High', 'Medium', 'Low'];
@@ -424,6 +463,26 @@ export default function Tactics() {
   const players = userTeam?.players ?? [];
   const headCoach = userTeam?.staff?.headCoach ?? null;
 
+  // Compute team attribute averages for style recommendations
+  const teamStyleStats = (() => {
+    if (players.length === 0) return {};
+    const avg = (keys) => {
+      let sum = 0, n = 0;
+      players.forEach(p => keys.forEach(k => { if (p.attributes?.[k] != null) { sum += p.attributes[k]; n++; } }));
+      return n > 0 ? sum / n : 0;
+    };
+    const topOvr = players.reduce((max, p) => Math.max(max, p.overallRating || 0), 0);
+    return {
+      avgAgility:     avg(['agilityLateralSpeed']),
+      avgStamina:     avg(['staminaEndurance', 'conditioningFitness']),
+      avgIQ:          avg(['basketballIQ', 'courtVision']),
+      avgPassing:     avg(['passingAccuracy']),
+      avgCourtVision: avg(['courtVision']),
+      avgPost:        avg(['postMoves', 'finishingAtTheRim']),
+      topPlayerOvr:   topOvr,
+    };
+  })();
+
   const [tactics, setTactics] = useState({
     ...DEFAULT_TACTICS,
     ...savedTactics,
@@ -677,6 +736,7 @@ export default function Tactics() {
           {PLAYING_STYLES.map((style, idx) => {
             const score = getTacticalScore(headCoach, idx);
             const isActive = tactics.playingStyle === style.id;
+            const isRecommended = style.recommendedWhen?.(teamStyleStats) ?? false;
             return (
               <div
                 key={style.id}
@@ -694,6 +754,11 @@ export default function Tactics() {
                 {isActive && (
                   <div style={{ position: 'absolute', top: 'var(--space-3)', right: 'var(--space-3)' }}>
                     <CheckCircle size={18} style={{ color: 'var(--color-primary)' }} />
+                  </div>
+                )}
+                {isRecommended && !isActive && (
+                  <div style={{ position: 'absolute', top: 'var(--space-3)', right: 'var(--space-3)' }}>
+                    <span className="badge badge-green" style={{ fontSize: '0.6rem', fontWeight: 800 }}>★ Recommended</span>
                   </div>
                 )}
                 <div style={{ fontSize: '1.5rem', marginBottom: 'var(--space-2)' }}>{style.icon}</div>

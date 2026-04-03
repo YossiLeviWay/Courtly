@@ -19,7 +19,7 @@ export function calcStaffMonthlyWage(staff) {
   const abilities = staff.abilities || {};
   const vals = Object.values(abilities);
   const avg = vals.length > 0 ? Math.round(vals.reduce((a, b) => a + b, 0) / vals.length) : 50;
-  return 500 + avg * 100;
+  return 200 + avg * 30;
 }
 
 // ── Format helpers ─────────────────────────────────────────────

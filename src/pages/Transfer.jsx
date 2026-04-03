@@ -802,7 +802,13 @@ export default function Transfer() {
 
   // Free agents from the Firestore transfer_market (loaded into state.transferMarket)
   const freeAgents = useMemo(
-    () => (state.transferMarket || []).filter(t => t.isFreeAgent),
+    () => (state.transferMarket || []).filter(t => t.isFreeAgent && !t.isStaff),
+    [state.transferMarket],
+  );
+
+  // Staff available for hire
+  const staffListings = useMemo(
+    () => (state.transferMarket || []).filter(t => t.isStaff),
     [state.transferMarket],
   );
 
@@ -931,6 +937,9 @@ export default function Transfer() {
             <span style={{ position: 'absolute', top: 2, right: 2, width: 8, height: 8, borderRadius: '50%', background: 'var(--color-success)' }} />
           )}
         </button>
+        <button className={`tab${activeTab === 'staff' ? ' active' : ''}`} onClick={() => setActiveTab('staff')}>
+          Staff ({staffListings.length})
+        </button>
         <button className={`tab${activeTab === 'mylistings' ? ' active' : ''}`} onClick={() => setActiveTab('mylistings')}>
           My Listings ({myListings.length})
         </button>
@@ -1008,6 +1017,79 @@ export default function Transfer() {
                   onView={setViewPlayer}
                 />
               ))}
+            </div>
+          )}
+        </div>
+      )}
+
+      {activeTab === 'staff' && (
+        <div>
+          <div className="card mb-4" style={{ padding: '10px 16px', background: 'rgba(99,102,241,0.06)', border: '1px solid rgba(99,102,241,0.2)' }}>
+            <div style={{ fontSize: 'var(--font-size-sm)', color: 'var(--text-secondary)' }}>
+              <strong style={{ color: '#6366f1' }}>Staff for hire</strong> — coaches, scouts and managers. Pay a one-time hire fee; their monthly wage is added to your weekly expenses.
+            </div>
+          </div>
+          {staffListings.length === 0 ? (
+            <div className="empty-state">
+              <div className="empty-state-icon">👔</div>
+              <div className="empty-state-title">No staff available</div>
+              <div className="empty-state-desc">The admin will seed new staff members periodically.</div>
+            </div>
+          ) : (
+            <div className="grid-auto">
+              {staffListings.map(listing => {
+                const avgAb = listing.avgAbility || 50;
+                const canAfford = (team?.budget || 0) >= (listing.hireCost || 0);
+                const alreadyHired = Object.values(team?.staff || {}).some(s => s.id === listing.id);
+                return (
+                  <div key={listing.id} className="card" style={{ padding: '14px 16px', border: '1.5px solid rgba(99,102,241,0.25)' }}>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 8 }}>
+                      <span className="badge" style={{ background: 'rgba(99,102,241,0.15)', color: '#6366f1', fontWeight: 700, fontSize: '0.65rem' }}>{listing.staffRole}</span>
+                      <span style={{ fontSize: 'var(--font-size-xs)', color: 'var(--text-muted)' }}>OVR {avgAb}</span>
+                    </div>
+                    <div style={{ fontWeight: 700, marginBottom: 4 }}>{listing.name}</div>
+                    <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', marginBottom: 10 }}>
+                      {Object.entries(listing.abilities || {}).slice(0, 3).map(([k, v]) => (
+                        <span key={k} className="badge" style={{ background: 'var(--bg-muted)', fontSize: '0.65rem' }}>{k.replace(/([A-Z])/g, ' $1').trim()}: {v}</span>
+                      ))}
+                    </div>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 'var(--font-size-xs)', color: 'var(--text-muted)', marginBottom: 10 }}>
+                      <span>Hire fee: <strong style={{ color: 'var(--text-primary)' }}>${listing.hireCost}k</strong></span>
+                      <span>Wage: <strong style={{ color: 'var(--color-danger)' }}>${listing.monthlyWage}/mo</strong></span>
+                    </div>
+                    <button
+                      className="btn btn-primary btn-sm"
+                      style={{ width: '100%' }}
+                      disabled={!canAfford || alreadyHired}
+                      onClick={() => {
+                        if (!canAfford || alreadyHired) return;
+                        const staffKey = listing.staffRole.toLowerCase().replace(/\s+/g, '_') + '_' + listing.id.slice(-4);
+                        const newStaff = {
+                          ...listing,
+                          id: listing.id,
+                          hiredAt: Date.now(),
+                        };
+                        dispatch({
+                          type: 'UPDATE_TEAM',
+                          payload: {
+                            ...team,
+                            budget: (team.budget || 0) - (listing.hireCost || 0),
+                            staff: { ...(team.staff || {}), [staffKey]: newStaff },
+                          },
+                        });
+                        dispatch({
+                          type: 'SET_TRANSFER_MARKET',
+                          payload: (state.transferMarket || []).filter(t => t.id !== listing.id),
+                        });
+                        addNotification(`${listing.name} hired as ${listing.staffRole}!`, 'success');
+                      }}
+                    >
+                      <UserPlus size={13} />
+                      {alreadyHired ? 'Already Hired' : canAfford ? `Hire — $${listing.hireCost}k` : 'Insufficient Budget'}
+                    </button>
+                  </div>
+                );
+              })}
             </div>
           )}
         </div>

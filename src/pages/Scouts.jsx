@@ -686,71 +686,11 @@ export default function Scouts() {
         </div>
       )}
 
-      {/* ── Hire Scout ───────────────────────────────────────── */}
-      {scouts.length < 3 && (
-        <div>
-          <h2 style={{ fontSize: 'var(--font-size-lg)', fontWeight: 700, marginBottom: 4 }}>
-            Hire a Scout
-          </h2>
-          <p style={{ color: 'var(--text-muted)', fontSize: 'var(--font-size-sm)', marginBottom: 16 }}>
-            Budget: <strong>${(userTeam.budget ?? 0).toLocaleString()}k</strong> available
-          </p>
-          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(260px, 1fr))', gap: 14 }}>
-            {hireableScouts.slice(0, 3 - scouts.length + 2).map(avail => {
-              const cost = hireCost(avail.level);
-              const canAfford = (userTeam.budget ?? 0) >= cost;
-              const full = scouts.length >= 3;
-              return (
-                <div key={avail.id} className="card" style={{ padding: '14px 16px' }}>
-                  <div style={{ display: 'flex', gap: 10, alignItems: 'flex-start', marginBottom: 10 }}>
-                    <div style={{
-                      width: 40, height: 40, borderRadius: '50%',
-                      background: 'var(--bg-muted)',
-                      display: 'flex', alignItems: 'center', justifyContent: 'center',
-                      fontSize: 20, flexShrink: 0,
-                    }}>🔭</div>
-                    <div>
-                      <div style={{ fontWeight: 700, marginBottom: 3 }}>{avail.name}</div>
-                      <div style={{ display: 'flex', gap: 3, marginBottom: 4 }}>
-                        {renderStars(avail.level)}
-                      </div>
-                      <div style={{ display: 'flex', gap: 5, flexWrap: 'wrap' }}>
-                        <span className="badge" style={{ background: 'var(--bg-muted)' }}>
-                          <MapPin size={10} style={{ marginRight: 2 }} />{avail.region}
-                        </span>
-                        <span className="badge" style={{ background: 'var(--bg-muted)' }}>
-                          ${(avail.salary / 1000).toFixed(0)}k/mo
-                        </span>
-                      </div>
-                    </div>
-                  </div>
-                  <button
-                    className="btn btn-primary"
-                    style={{ width: '100%', fontSize: 'var(--font-size-sm)' }}
-                    disabled={!canAfford || full}
-                    onClick={() => handleHireScout(avail)}
-                  >
-                    <UserPlus size={14} />
-                    Hire — ${cost}k
-                  </button>
-                  {!canAfford && (
-                    <div style={{ fontSize: 'var(--font-size-xs)', color: 'var(--color-danger, #ef4444)', marginTop: 6, textAlign: 'center' }}>
-                      Insufficient budget
-                    </div>
-                  )}
-                </div>
-              );
-            })}
-          </div>
-        </div>
-      )}
-
-      {scouts.length >= 3 && (
-        <div className="card" style={{ textAlign: 'center', padding: '24px', color: 'var(--text-muted)' }}>
-          <div style={{ fontWeight: 600 }}>Scout roster full (3/3)</div>
-          <div style={{ fontSize: 'var(--font-size-sm)', marginTop: 4 }}>Release a scout to hire a new one</div>
-        </div>
-      )}
+      {/* Scout hiring is available via the Transfer Market → Staff tab */}
+      <div className="card" style={{ padding: '14px 16px', border: '1px solid var(--border-color)', textAlign: 'center', color: 'var(--text-muted)' }}>
+        <div style={{ fontWeight: 600, marginBottom: 4 }}>Want to hire a new scout?</div>
+        <div style={{ fontSize: 'var(--font-size-sm)' }}>Visit the <strong>Transfer Market → Staff</strong> tab to browse and hire scouts &amp; staff.</div>
+      </div>
     </div>
   );
 }
