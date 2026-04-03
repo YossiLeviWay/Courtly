@@ -8,6 +8,7 @@ import {
   apiResetAllMatches, apiResetStandings, apiRegenerateSchedule,
   apiGetFeedback, apiMarkFeedbackRead,
   apiSeedFreeAgents, apiSeedStaffMarket,
+  apiGetGameBrainConfig, apiSaveGameBrainConfig,
 } from '../api.js';
 import { buildRoundRobinRounds } from '../engine/gameScheduler.js';
 
@@ -835,6 +836,17 @@ function predictScore(homeStrength, awayStrength) {
 
 function GameBrainPanel({ leagues, allTeams }) {
   const allTeamMap = useMemo(() => Object.fromEntries((allTeams || []).map(t => [t.id, t])), [allTeams]);
+  const [overrides, setOverrides] = useState({});   // { [matchId]: { forceWinner?, homeScore?, awayScore? } }
+  const [saveStatus, setSaveStatus] = useState('');
+  const [loadedOverrides, setLoadedOverrides] = useState(false);
+
+  // Load existing overrides on mount
+  useEffect(() => {
+    apiGetGameBrainConfig().then(data => {
+      setOverrides(data || {});
+      setLoadedOverrides(true);
+    });
+  }, []);
 
   // Gather upcoming unplayed matches from all leagues
   const upcomingMatches = useMemo(() => {
@@ -854,6 +866,41 @@ function GameBrainPanel({ leagues, allTeams }) {
     return results;
   }, [leagues, allTeamMap]);
 
+  function setOverride(matchId, field, value) {
+    setOverrides(prev => ({
+      ...prev,
+      [matchId]: { ...(prev[matchId] || {}), [field]: value === '' ? undefined : value },
+    }));
+  }
+
+  function clearOverride(matchId) {
+    setOverrides(prev => {
+      const next = { ...prev };
+      delete next[matchId];
+      return next;
+    });
+  }
+
+  async function saveOverrides() {
+    setSaveStatus('saving');
+    try {
+      // Strip undefined values
+      const cleaned = {};
+      Object.entries(overrides).forEach(([id, ov]) => {
+        const clean = {};
+        if (ov.forceWinner) clean.forceWinner = ov.forceWinner;
+        if (ov.homeScore != null && ov.homeScore !== '') clean.homeScore = Number(ov.homeScore);
+        if (ov.awayScore != null && ov.awayScore !== '') clean.awayScore = Number(ov.awayScore);
+        if (Object.keys(clean).length > 0) cleaned[id] = clean;
+      });
+      await apiSaveGameBrainConfig(cleaned);
+      setSaveStatus('saved');
+      setTimeout(() => setSaveStatus(''), 3000);
+    } catch (err) {
+      setSaveStatus('error');
+    }
+  }
+
   if (upcomingMatches.length === 0) {
     return (
       <div className="empty-state" style={{ padding: '3rem' }}>
@@ -864,34 +911,59 @@ function GameBrainPanel({ leagues, allTeams }) {
     );
   }
 
+  const hasOverrides = Object.keys(overrides).some(k => {
+    const o = overrides[k];
+    return o.forceWinner || o.homeScore != null || o.awayScore != null;
+  });
+
   return (
     <div>
       <div className="card mb-4" style={{ padding: '12px 16px', background: 'rgba(99,102,241,0.06)', border: '1px solid rgba(99,102,241,0.2)' }}>
-        <div style={{ fontWeight: 700, marginBottom: 4 }}>🧠 Game Brain — Match Predictions</div>
-        <div style={{ fontSize: 'var(--font-size-sm)', color: 'var(--text-muted)' }}>
-          Strength ratings based on player attribute averages (offense + defense). Predicted scores include home advantage (+3 pts).
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: 8 }}>
+          <div>
+            <div style={{ fontWeight: 700, marginBottom: 2 }}>🧠 Game Brain — Match Predictions &amp; Overrides</div>
+            <div style={{ fontSize: 'var(--font-size-sm)', color: 'var(--text-muted)' }}>
+              Predictions based on player attributes. Set overrides to control match outcomes.
+            </div>
+          </div>
+          <button
+            className={`btn btn-sm ${saveStatus === 'saved' ? 'btn-success' : 'btn-primary'}`}
+            onClick={saveOverrides}
+            disabled={saveStatus === 'saving'}
+          >
+            <Save size={13} />
+            {saveStatus === 'saving' ? 'Saving…' : saveStatus === 'saved' ? '✅ Saved' : saveStatus === 'error' ? '❌ Error' : 'Save Overrides'}
+          </button>
         </div>
+        {hasOverrides && (
+          <div style={{ marginTop: 8, fontSize: 'var(--font-size-xs)', color: 'var(--color-warning)', fontWeight: 600 }}>
+            ⚠️ Active overrides will affect next simulation run
+          </div>
+        )}
       </div>
 
       {upcomingMatches.map((m, i) => {
+        const ov = overrides[m.id] || {};
         const homeWinChance = m.homeStr > m.awayStr
           ? Math.min(75, 50 + (m.homeStr - m.awayStr) * 1.2)
           : Math.max(25, 50 - (m.awayStr - m.homeStr) * 1.2);
         const spread = m.pred.homeScore - m.pred.awayScore;
         const scheduledStr = m.scheduledDate ? new Date(m.scheduledDate).toLocaleString('en-US', { weekday: 'short', month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' }) : 'TBD';
+        const hasOv = ov.forceWinner || ov.homeScore != null || ov.awayScore != null;
 
         return (
-          <div key={m.id || i} className="card mb-3" style={{ padding: '14px 16px' }}>
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', flexWrap: 'wrap', gap: 8 }}>
+          <div key={m.id || i} className="card mb-3" style={{ padding: '14px 16px', border: hasOv ? '2px solid var(--color-warning)' : undefined }}>
+            {hasOv && <div className="badge badge-orange" style={{ fontSize: '0.6rem', marginBottom: 8 }}>OVERRIDE ACTIVE</div>}
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', flexWrap: 'wrap', gap: 8, marginBottom: 10 }}>
               <div>
                 <div style={{ fontSize: 'var(--font-size-xs)', color: 'var(--text-muted)', marginBottom: 4 }}>{m.leagueName} · {scheduledStr}</div>
                 <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
-                  <div style={{ textAlign: 'center', minWidth: 120 }}>
+                  <div style={{ textAlign: 'center', minWidth: 100 }}>
                     <div style={{ fontWeight: 700 }}>{m.homeTeamName || 'Home'}</div>
                     <div style={{ fontSize: 'var(--font-size-xs)', color: 'var(--color-primary)', fontWeight: 700 }}>STR {m.homeStr}</div>
                   </div>
                   <div style={{ fontWeight: 900, color: 'var(--text-muted)', fontSize: 'var(--font-size-lg)' }}>vs</div>
-                  <div style={{ textAlign: 'center', minWidth: 120 }}>
+                  <div style={{ textAlign: 'center', minWidth: 100 }}>
                     <div style={{ fontWeight: 700 }}>{m.awayTeamName || 'Away'}</div>
                     <div style={{ fontSize: 'var(--font-size-xs)', color: 'var(--color-primary)', fontWeight: 700 }}>STR {m.awayStr}</div>
                   </div>
@@ -904,32 +976,58 @@ function GameBrainPanel({ leagues, allTeams }) {
                 <div style={{ fontSize: 'var(--font-size-xs)', color: 'var(--text-muted)' }}>
                   Predicted · Spread: {spread > 0 ? '+' : ''}{spread}
                 </div>
-                <div style={{ marginTop: 4 }}>
-                  <span className={`badge ${homeWinChance >= 50 ? 'badge-green' : 'badge-orange'}`} style={{ fontSize: '0.65rem' }}>
-                    {m.homeTeamName || 'Home'} {Math.round(homeWinChance)}% win
-                  </span>
-                </div>
+                <span className={`badge ${homeWinChance >= 50 ? 'badge-green' : 'badge-orange'}`} style={{ fontSize: '0.65rem', marginTop: 4 }}>
+                  {m.homeTeamName || 'Home'} {Math.round(homeWinChance)}% win
+                </span>
               </div>
             </div>
 
-            {/* Strength bar comparison */}
-            <div style={{ marginTop: 12, display: 'grid', gridTemplateColumns: '1fr auto 1fr', gap: 8, alignItems: 'center' }}>
+            {/* Strength bars */}
+            <div style={{ marginBottom: 12, display: 'grid', gridTemplateColumns: '1fr auto 1fr', gap: 8, alignItems: 'center' }}>
               <div style={{ height: 6, background: 'var(--bg-muted)', borderRadius: 4, overflow: 'hidden' }}>
-                <div style={{ width: `${m.homeStr}%`, height: '100%', background: 'var(--color-primary)', borderRadius: 4, transition: 'width 0.4s ease' }} />
+                <div style={{ width: `${m.homeStr}%`, height: '100%', background: 'var(--color-primary)', borderRadius: 4 }} />
               </div>
-              <span style={{ fontSize: '0.6rem', color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: 0.5 }}>Strength</span>
+              <span style={{ fontSize: '0.6rem', color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: 0.5 }}>STR</span>
               <div style={{ height: 6, background: 'var(--bg-muted)', borderRadius: 4, overflow: 'hidden' }}>
-                <div style={{ width: `${m.awayStr}%`, height: '100%', background: '#3b82f6', borderRadius: 4, transition: 'width 0.4s ease' }} />
+                <div style={{ width: `${m.awayStr}%`, height: '100%', background: '#3b82f6', borderRadius: 4 }} />
               </div>
             </div>
 
-            {/* Player counts */}
-            {(m.home || m.away) && (
-              <div style={{ marginTop: 8, display: 'flex', gap: 16, fontSize: 'var(--font-size-xs)', color: 'var(--text-muted)' }}>
-                <span>🏀 {m.home?.players?.length ?? '?'} players · {(m.home?.players || []).filter(p => p.injuryStatus && p.injuryStatus !== 'healthy').length} injured</span>
-                <span>🏀 {m.away?.players?.length ?? '?'} players · {(m.away?.players || []).filter(p => p.injuryStatus && p.injuryStatus !== 'healthy').length} injured</span>
-              </div>
-            )}
+            {/* Override controls */}
+            <div style={{ borderTop: '1px solid var(--border-color)', paddingTop: 10, display: 'flex', flexWrap: 'wrap', gap: 10, alignItems: 'center' }}>
+              <span style={{ fontSize: 'var(--font-size-xs)', fontWeight: 700, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: 0.5 }}>Override:</span>
+              <select
+                className="form-select"
+                style={{ fontSize: 'var(--font-size-xs)', padding: '3px 6px', minWidth: 130 }}
+                value={ov.forceWinner || ''}
+                onChange={e => setOverride(m.id, 'forceWinner', e.target.value)}
+              >
+                <option value="">— Natural result</option>
+                <option value="home">Force {m.homeTeamName || 'Home'} win</option>
+                <option value="away">Force {m.awayTeamName || 'Away'} win</option>
+              </select>
+              <input
+                type="number"
+                className="form-input"
+                style={{ width: 60, fontSize: 'var(--font-size-xs)', padding: '3px 6px' }}
+                placeholder={`H: ${m.pred.homeScore}`}
+                value={ov.homeScore ?? ''}
+                onChange={e => setOverride(m.id, 'homeScore', e.target.value)}
+              />
+              <input
+                type="number"
+                className="form-input"
+                style={{ width: 60, fontSize: 'var(--font-size-xs)', padding: '3px 6px' }}
+                placeholder={`A: ${m.pred.awayScore}`}
+                value={ov.awayScore ?? ''}
+                onChange={e => setOverride(m.id, 'awayScore', e.target.value)}
+              />
+              {hasOv && (
+                <button className="btn btn-ghost btn-sm" style={{ fontSize: 'var(--font-size-xs)' }} onClick={() => clearOverride(m.id)}>
+                  <X size={11} /> Clear
+                </button>
+              )}
+            </div>
           </div>
         );
       })}

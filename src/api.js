@@ -605,6 +605,22 @@ export async function apiGetMatchesFromCollection(collectionName = 'matches') {
   } catch { return []; }
 }
 
+/** Get Game Brain match overrides from Firestore (admin only).
+ *  Returns { [matchId]: { forceWinner?: 'home'|'away', homeScore?: number, awayScore?: number } }
+ */
+export async function apiGetGameBrainConfig() {
+  try {
+    const snap = await getDoc(doc(db, 'app_config', 'gameBrain'));
+    if (snap.exists()) return snap.data().overrides || {};
+  } catch {}
+  return {};
+}
+
+/** Save Game Brain overrides (admin only). */
+export async function apiSaveGameBrainConfig(overrides) {
+  await setDoc(doc(db, 'app_config', 'gameBrain'), { overrides });
+}
+
 /** Get season configuration from Firestore. */
 export async function apiGetSeasonConfig() {
   try {

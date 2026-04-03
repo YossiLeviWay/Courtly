@@ -122,6 +122,67 @@ function EventFeed({ events, isLive, title }) {
   );
 }
 
+// ── Live Stats Panel ──────────────────────────────────────────
+
+function LiveStatsPanel({ visibleEvents, matchLog, homeTeamName, awayTeamName }) {
+  // Derive per-player scoring totals from visible events
+  const playerPoints = useMemo(() => {
+    const tally = {};
+    for (const ev of visibleEvents) {
+      if (!ev.playerId || !ev.playerName) continue;
+      if (!tally[ev.playerId]) tally[ev.playerId] = { name: ev.playerName, team: ev.teamId, pts: 0 };
+      if (ev.type === 'three_pointer') tally[ev.playerId].pts += 3;
+      else if (ev.type === 'dunk' || ev.type === 'layup') tally[ev.playerId].pts += 2;
+      else if (ev.type === 'free_throw') tally[ev.playerId].pts += 1;
+    }
+    return Object.values(tally).sort((a, b) => b.pts - a.pts).slice(0, 5);
+  }, [visibleEvents]);
+
+  const keyPlays = useMemo(() =>
+    visibleEvents.filter(ev =>
+      ['three_pointer', 'dunk', 'block', 'steal', 'comeback', 'injury'].includes(ev.type)
+    ).slice(-5),
+    [visibleEvents]
+  );
+
+  if (playerPoints.length === 0 && keyPlays.length === 0) return null;
+
+  return (
+    <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12, marginBottom: 16 }}>
+      {/* Top scorers */}
+      {playerPoints.length > 0 && (
+        <div className="card" style={{ padding: '10px 14px' }}>
+          <div style={{ fontWeight: 700, fontSize: 'var(--font-size-xs)', textTransform: 'uppercase', letterSpacing: 0.5, marginBottom: 8, color: 'var(--text-muted)' }}>
+            🏆 Top Scorers
+          </div>
+          {playerPoints.map((p, i) => (
+            <div key={p.name + i} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 5 }}>
+              <div style={{ fontSize: 'var(--font-size-xs)', fontWeight: i === 0 ? 700 : 400 }}>
+                {i === 0 && <span style={{ marginRight: 4 }}>⭐</span>}{p.name}
+              </div>
+              <div style={{ fontWeight: 900, color: 'var(--color-primary)', fontSize: 'var(--font-size-sm)' }}>{p.pts} PTS</div>
+            </div>
+          ))}
+        </div>
+      )}
+      {/* Key plays */}
+      {keyPlays.length > 0 && (
+        <div className="card" style={{ padding: '10px 14px' }}>
+          <div style={{ fontWeight: 700, fontSize: 'var(--font-size-xs)', textTransform: 'uppercase', letterSpacing: 0.5, marginBottom: 8, color: 'var(--text-muted)' }}>
+            🔥 Key Plays
+          </div>
+          {keyPlays.map((ev, i) => (
+            <div key={i} style={{ display: 'flex', gap: 6, alignItems: 'flex-start', marginBottom: 5, fontSize: 'var(--font-size-xs)' }}>
+              <span>{EVENT_ICONS[ev.type] || '🏀'}</span>
+              <span style={{ color: 'var(--text-secondary)', lineHeight: 1.3 }}>{ev.description}</span>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
 // ── Live Game Viewer (real-time sync) ─────────────────────────
 // Reveals pre-generated events based on elapsed real time so
 // every user sees the same play at the same second.
@@ -205,6 +266,14 @@ function LiveGameViewer({ fixture, matchLog, onGameEnd }) {
         badge={badge}
         controls={isGameOver ? finishedControls : liveIndicator}
       />
+      {!isGameOver && (
+        <LiveStatsPanel
+          visibleEvents={visibleEvents}
+          matchLog={matchLog}
+          homeTeamName={homeTeamName}
+          awayTeamName={awayTeamName}
+        />
+      )}
       <EventFeed
         events={visibleEvents}
         isLive={!isGameOver}
@@ -216,6 +285,8 @@ function LiveGameViewer({ fixture, matchLog, onGameEnd }) {
 
 // ── Match Replay (past matches) ───────────────────────────────
 
+const KEY_PLAY_TYPES = new Set(['three_pointer', 'dunk', 'block', 'steal', 'comeback', 'injury', 'quarter_end', 'half_time', 'technical_foul', 'fight']);
+
 function LiveMatchReplay({ latestMatch }) {
   const log = useMemo(() => latestMatch?.log || [], [latestMatch]);
 
@@ -223,6 +294,7 @@ function LiveMatchReplay({ latestMatch }) {
   const [isPlaying, setIsPlaying]       = useState(false);
   const [speedIdx, setSpeedIdx]         = useState(1);
   const [finished, setFinished]         = useState(false);
+  const [keyPlaysOnly, setKeyPlaysOnly] = useState(false);
 
   const timerRef = useRef(null);
 
@@ -343,7 +415,16 @@ function LiveMatchReplay({ latestMatch }) {
       <div className="card">
         <div className="card-header">
           <div className="card-title">Match Log — Highlights</div>
-          {isPlaying && !finished && <div className="live-badge"><span className="live-dot" /> REPLAY</div>}
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+            {isPlaying && !finished && <div className="live-badge"><span className="live-dot" /> REPLAY</div>}
+            <button
+              className={`btn btn-sm ${keyPlaysOnly ? 'btn-primary' : 'btn-ghost'}`}
+              style={{ fontSize: 'var(--font-size-xs)' }}
+              onClick={() => setKeyPlaysOnly(v => !v)}
+            >
+              🔥 Key Plays
+            </button>
+          </div>
         </div>
         <div className="match-log" style={{ maxHeight: 420, overflowY: 'auto' }}>
           {visibleCount === 0 && !isPlaying ? (
@@ -354,24 +435,31 @@ function LiveMatchReplay({ latestMatch }) {
                 Choose a speed: Fast (~30s) · Normal (~5 min) · Live (real-time ~1hr)
               </div>
             </div>
-          ) : shownEvents.map((ev, i) => (
-            <div
-              key={i}
-              className={`match-event ${ev.type === 'quarter_end' || ev.type === 'half_time' ? 'quarter-break' : ''}`}
-              style={{ animationDelay: `${i * 20}ms` }}
-            >
-              <span className="match-event-time">
-                {typeof ev.time === 'number' ? `${ev.time.toFixed(0)}'` : ev.time || `${i + 1}'`}
-              </span>
-              <span className="match-event-icon">{EVENT_ICONS[ev.type] || '🏀'}</span>
-              <span className="match-event-text">{ev.description}</span>
-              {ev.score && (
-                <span className="match-event-score">
-                  {typeof ev.score === 'string' ? ev.score : `${ev.score.home}-${ev.score.away}`}
+          ) : (keyPlaysOnly ? shownEvents.filter(ev => KEY_PLAY_TYPES.has(ev.type)) : shownEvents).map((ev, i) => {
+            const isHighlight = KEY_PLAY_TYPES.has(ev.type) && ev.type !== 'quarter_end' && ev.type !== 'half_time';
+            return (
+              <div
+                key={i}
+                className={`match-event ${ev.type === 'quarter_end' || ev.type === 'half_time' ? 'quarter-break' : ''}`}
+                style={{
+                  animationDelay: `${i * 20}ms`,
+                  ...(isHighlight && ev.type !== 'injury' ? { background: 'rgba(249,115,22,0.07)', borderLeft: '3px solid var(--color-primary)', paddingLeft: 8, borderRadius: 4 } : {}),
+                  ...(ev.type === 'injury' ? { background: 'rgba(239,68,68,0.07)', borderLeft: '3px solid var(--color-danger)', paddingLeft: 8, borderRadius: 4 } : {}),
+                }}
+              >
+                <span className="match-event-time">
+                  {typeof ev.time === 'number' ? `${ev.time.toFixed(0)}'` : ev.time || `${i + 1}'`}
                 </span>
-              )}
-            </div>
-          ))}
+                <span className="match-event-icon">{EVENT_ICONS[ev.type] || '🏀'}</span>
+                <span className="match-event-text">{ev.description}</span>
+                {ev.score && (
+                  <span className="match-event-score">
+                    {typeof ev.score === 'string' ? ev.score : `${ev.score.home}-${ev.score.away}`}
+                  </span>
+                )}
+              </div>
+            );
+          })}
         </div>
       </div>
     </div>

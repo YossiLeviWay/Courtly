@@ -4,6 +4,7 @@ import { auth } from '../firebase.js';
 import {
   apiGetWorld, apiGetMatches, apiGetStandings, apiGetUserState,
   apiGetTransferMarket, apiSaveUserState, apiRecordMatchResult,
+  apiGetGameBrainConfig,
 } from '../api.js';
 import { processPendingMatches } from '../engine/gameScheduler.js';
 
@@ -97,7 +98,8 @@ function buildUserTeam(leagues, userState) {
     matchHistory:   userState.matchHistory   ?? [],
     youthDraft:     userState.youthDraft     ?? null,
     staff:          userState.staff          ?? {},
-    lastFanGrowthDate: userState.lastFanGrowthDate ?? null,
+    lastFanGrowthDate:     userState.lastFanGrowthDate     ?? null,
+    lastTrainingApplied:   userState.lastTrainingApplied   ?? 0,
     wins:         userState.seasonRecord?.wins    ?? 0,
     losses:       userState.seasonRecord?.losses  ?? 0,
     seasonRecord: {
@@ -143,7 +145,8 @@ function extractUserState(state) {
     matchHistory:   t.matchHistory   ?? [],
     youthDraft:     t.youthDraft     ?? null,
     staff:          t.staff          ?? {},
-    lastFanGrowthDate: t.lastFanGrowthDate ?? null,
+    lastFanGrowthDate:   t.lastFanGrowthDate   ?? null,
+    lastTrainingApplied: t.lastTrainingApplied ?? 0,
     seasonRecord:   { wins: t.wins ?? 0, losses: t.losses ?? 0 },
     profileData: {
       bio:                  state.user?.bio                  || '',
@@ -244,12 +247,13 @@ export function GameProvider({ children }) {
     if (!auth.currentUser) return;
 
     try {
-      const [world, dbMatches, dbStandings, userStateRes, transferMarket] = await Promise.all([
+      const [world, dbMatches, dbStandings, userStateRes, transferMarket, gameBrainOverrides] = await Promise.all([
         apiGetWorld(),
         apiGetMatches(),
         apiGetStandings(),
         apiGetUserState(),
         apiGetTransferMarket(),
+        apiGetGameBrainConfig(),
       ]);
 
       const isAdminUser = userStateRes?.user?.isAdmin ?? false;
@@ -281,6 +285,30 @@ export function GameProvider({ children }) {
         const fullSchedule   = leagues.flatMap(l => l.schedule || []);
         const simResult = processPendingMatches(allTeamsForSim, fullSchedule);
         processedMatchData = simResult.processedMatchData;
+
+        // Apply Game Brain admin overrides to processed results
+        if (gameBrainOverrides && processedMatchData.length > 0) {
+          processedMatchData = processedMatchData.map(md => {
+            const ov = gameBrainOverrides[md.matchId];
+            if (!ov) return md;
+            let { homeScore, awayScore } = md;
+            if (ov.homeScore != null) homeScore = ov.homeScore;
+            if (ov.awayScore != null) awayScore = ov.awayScore;
+            if (ov.forceWinner === 'home' && homeScore <= awayScore) homeScore = awayScore + 5;
+            if (ov.forceWinner === 'away' && awayScore <= homeScore) awayScore = homeScore + 5;
+            return { ...md, homeScore, awayScore };
+          });
+          // Also update schedule with overridden scores
+          processedMatchData.forEach(md => {
+            const idx = simResult.updatedSchedule.findIndex(m => m.id === md.matchId);
+            if (idx >= 0) {
+              simResult.updatedSchedule[idx] = {
+                ...simResult.updatedSchedule[idx],
+                result: { homeScore: md.homeScore, awayScore: md.awayScore },
+              };
+            }
+          });
+        }
 
         // Persist results to Firebase: mark matches played + update standings
         for (const matchData of processedMatchData) {
@@ -330,6 +358,43 @@ export function GameProvider({ children }) {
         const growth = Math.max(0, baseGrowth + resultBonus);
         userStateRes.state.fanCount = (userStateRes.state.fanCount ?? 250) + growth;
         userStateRes.state.lastFanGrowthDate = now;
+      }
+
+      // ── Weekly training progression ──────────────────────────────
+      // Once per week (Sunday), apply attribute gains based on training plan.
+      const TRAINING_ATTR_MAP = {
+        offensiveSchemes:  ['courtVision', 'passingAccuracy', 'basketballIQ'],
+        defensiveDrills:   ['perimeterDefense', 'interiorDefense', 'helpDefense'],
+        skillWorkShooting: ['threePtShooting', 'midRangeScoring', 'freeThrowShooting'],
+        conditioning:      ['staminaEndurance', 'conditioningFitness', 'agilityLateralSpeed'],
+        teamBuilding:      ['teamFirstAttitude', 'leadershipCommunication', 'handlePressureMental'],
+        gymStrength:       ['verticalLeapingAbility', 'bodyControl', 'agilityLateralSpeed'],
+      };
+      const lastTrainingApplied = userStateRes.state?.lastTrainingApplied ?? 0;
+      if (userStateRes.state && lastTrainingApplied < thisWeekSunday) {
+        const trainingPlan  = userStateRes.state.profileData?.training ?? {};
+        const focusPlayers  = trainingPlan.focusPlayers ?? [];
+        const players       = userStateRes.state.playersState ?? [];
+        userStateRes.state.playersState = players.map(p => {
+          // Injured players don't develop this week
+          if (p.injuryStatus && p.injuryStatus !== 'healthy') return p;
+          const isFocus   = focusPlayers.includes(p.id);
+          const newAttrs  = { ...(p.attributes || {}) };
+          for (const [area, keys] of Object.entries(TRAINING_ATTR_MAP)) {
+            const pts      = trainingPlan[area] ?? 0;
+            if (pts <= 0) continue;
+            // base gain: up to ~0.6 per attribute at max 40 pts; focus doubles it
+            const baseGain = (pts / 100) * 1.5;
+            const gain     = isFocus ? baseGain * 2 : baseGain;
+            keys.forEach(k => {
+              if (newAttrs[k] != null) {
+                newAttrs[k] = Math.min(99, newAttrs[k] + gain);
+              }
+            });
+          }
+          return { ...p, attributes: newAttrs };
+        });
+        userStateRes.state.lastTrainingApplied = now;
       }
 
       const userTeam = buildUserTeam(simulatedLeagues, userStateRes.state);
