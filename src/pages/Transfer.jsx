@@ -318,18 +318,83 @@ function FilterModal({ onClose, playerFilters, setPlayerFilters, staffFilters, s
 
 // ── Transfer Compare Modal ─────────────────────────────────────
 
-const TRANSFER_COMPARE_STATS = [
-  { key: 'courtVision', label: 'Court Vision' },
-  { key: 'threePtShooting', label: '3PT Shooting' },
-  { key: 'finishingAtTheRim', label: 'Finishing' },
-  { key: 'perimeterDefense', label: 'Perimeter Def' },
-  { key: 'interiorDefense', label: 'Interior Def' },
-  { key: 'rebounding', label: 'Rebounding' },
+const NATIONALITY_FLAGS = {
+  American: '🇺🇸', Canadian: '🇨🇦', Brazilian: '🇧🇷', Argentinian: '🇦🇷',
+  Spanish: '🇪🇸', French: '🇫🇷', German: '🇩🇪', Italian: '🇮🇹',
+  Greek: '🇬🇷', Turkish: '🇹🇷', Serbian: '🇷🇸', Croatian: '🇭🇷',
+  Slovenian: '🇸🇮', Lithuanian: '🇱🇹', Latvian: '🇱🇻', Australian: '🇦🇺',
+  Nigerian: '🇳🇬', Senegalese: '🇸🇳', Cameroonian: '🇨🇲', Congolese: '🇨🇩',
+  Angolan: '🇦🇴', 'South African': '🇿🇦', Chinese: '🇨🇳', Japanese: '🇯🇵',
+  'South Korean': '🇰🇷', Filipino: '🇵🇭', Lebanese: '🇱🇧', Israeli: '🇮🇱',
+  Iranian: '🇮🇷', Sudanese: '🇸🇩', British: '🇬🇧', Dutch: '🇳🇱',
+  Polish: '🇵🇱', Czech: '🇨🇿', Montenegrin: '🇲🇪', Venezuelan: '🇻🇪',
+  Dominican: '🇩🇴', 'Puerto Rican': '🇵🇷', 'New Zealander': '🇳🇿', Icelandic: '🇮🇸',
+};
+
+const TRANSFER_COMPARE_STATS_CORE = [
+  { key: 'courtVision',           label: 'Court Vision' },
+  { key: 'threePtShooting',       label: '3PT Shooting' },
+  { key: 'finishingAtTheRim',     label: 'Finishing' },
+  { key: 'perimeterDefense',      label: 'Perimeter Def' },
+  { key: 'interiorDefense',       label: 'Interior Def' },
+  { key: 'rebounding',            label: 'Rebounding' },
   { key: 'ballHandlingDribbling', label: 'Ball Handling' },
-  { key: 'passingAccuracy', label: 'Passing' },
-  { key: 'staminaEndurance', label: 'Stamina' },
-  { key: 'agilityLateralSpeed', label: 'Agility' },
+  { key: 'passingAccuracy',       label: 'Passing' },
+  { key: 'staminaEndurance',      label: 'Stamina' },
+  { key: 'agilityLateralSpeed',   label: 'Agility' },
 ];
+
+const TRANSFER_COMPARE_STATS_EXTRA = [
+  { key: 'midRangeScoring',         label: 'Mid-Range' },
+  { key: 'offBallMovement',         label: 'Off-Ball Move' },
+  { key: 'helpDefense',             label: 'Help Defense' },
+  { key: 'clutchPerformance',       label: 'Clutch' },
+  { key: 'leadershipCommunication', label: 'Leadership' },
+  { key: 'postMoves',               label: 'Post Moves' },
+  { key: 'basketballIQ',            label: 'Basketball IQ' },
+  { key: 'verticalLeapingAbility',  label: 'Vertical' },
+  { key: 'settingScreens',          label: 'Screens' },
+  { key: 'freeThrowShooting',       label: 'Free Throws' },
+  { key: 'consistencyPerformance',  label: 'Consistency' },
+  { key: 'handlePressureMental',    label: 'Mental' },
+];
+
+function PlayerHeader({ player, ovr, accentColor, label, isTarget }) {
+  const form = player?.recentForm ?? 0;
+  const formArrow = form > 0 ? '↑' : form < 0 ? '↓' : '→';
+  const formColor = form > 0 ? '#22c55e' : form < 0 ? '#ef4444' : 'var(--text-muted)';
+  const flag = NATIONALITY_FLAGS[player?.nationality] || '🌍';
+  return (
+    <div style={{
+      textAlign: 'center', padding: 'var(--space-3)',
+      background: player ? `rgba(${isTarget ? '249,115,22' : '59,130,246'},0.08)` : 'var(--bg-muted)',
+      borderRadius: 'var(--radius-md)',
+      border: `2px solid ${player ? accentColor : 'var(--border-color)'}`,
+    }}>
+      <div style={{ fontSize: '0.6rem', color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: 0.5, marginBottom: 2, fontWeight: 700 }}>{label}</div>
+      {player ? (
+        <>
+          <div style={{ fontWeight: 800, fontSize: 'var(--font-size-sm)', color: 'var(--text-primary)', marginBottom: 2 }}>{player.name}</div>
+          <div style={{ fontSize: 'var(--font-size-xs)', color: 'var(--text-muted)', marginBottom: 2 }}>
+            {player.position} · Age {player.age ?? '—'} · {flag}
+          </div>
+          {player.contractYears != null && (
+            <div style={{ fontSize: '0.6rem', color: 'var(--text-muted)', marginBottom: 4 }}>
+              📝 {player.contractYears}yr contract
+            </div>
+          )}
+          <div style={{ fontWeight: 900, fontSize: 'var(--font-size-xl)', color: accentColor, lineHeight: 1 }}>{ovr}</div>
+          <div style={{ fontSize: '0.6rem', color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: 0.5 }}>OVR</div>
+          <div style={{ marginTop: 4, fontWeight: 700, fontSize: 'var(--font-size-xs)', color: formColor }}>
+            {formArrow} Form {form > 0 ? '+' : ''}{form}
+          </div>
+        </>
+      ) : (
+        <div style={{ color: 'var(--text-muted)', fontSize: 'var(--font-size-xs)', fontWeight: 600, padding: 'var(--space-2) 0' }}>Select a player</div>
+      )}
+    </div>
+  );
+}
 
 function TransferCompareModal({ target, mySquad, onClose }) {
   const samePos = mySquad.filter(p => p.position === target.position);
@@ -337,8 +402,13 @@ function TransferCompareModal({ target, mySquad, onClose }) {
     ? samePos.reduce((best, p) => (p.overallRating || 0) > (best.overallRating || 0) ? p : best, samePos[0])
     : mySquad[0] || null;
 
-  const [compId, setCompId] = useState(defaultComp?.id || '');
+  const [compId, setCompId]   = useState(defaultComp?.id || '');
+  const [showAll, setShowAll] = useState(false);
   const compPlayer = mySquad.find(p => p.id === compId) || null;
+
+  const TRANSFER_COMPARE_STATS = showAll
+    ? [...TRANSFER_COMPARE_STATS_CORE, ...TRANSFER_COMPARE_STATS_EXTRA]
+    : TRANSFER_COMPARE_STATS_CORE;
 
   const targetOvr = calcOvr(target);
   const compOvr = compPlayer ? (compPlayer.overallRating || calcOvr(compPlayer)) : 0;
@@ -380,37 +450,24 @@ function TransferCompareModal({ target, mySquad, onClose }) {
       <div className="modal" onClick={e => e.stopPropagation()} style={{ maxWidth: 560, maxHeight: '90vh', display: 'flex', flexDirection: 'column' }}>
         <div className="modal-header">
           <h3 className="card-title">Compare to My Squad</h3>
-          <button className="btn btn-ghost btn-sm" onClick={onClose}>✕</button>
+          <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+            <button
+              className={`btn btn-sm ${showAll ? 'btn-primary' : 'btn-ghost'}`}
+              style={{ fontSize: '0.7rem' }}
+              onClick={() => setShowAll(v => !v)}
+            >
+              {showAll ? 'Core stats' : 'All attrs'}
+            </button>
+            <button className="btn btn-ghost btn-sm" onClick={onClose}>✕</button>
+          </div>
         </div>
 
         <div className="modal-body" style={{ overflowY: 'auto', flex: 1 }}>
           {/* Player headers */}
           <div style={{ display: 'grid', gridTemplateColumns: '1fr auto 1fr', gap: 'var(--space-2)', marginBottom: 'var(--space-4)', alignItems: 'start' }}>
-            {/* Target */}
-            <div style={{ textAlign: 'center', padding: 'var(--space-3)', background: 'rgba(249,115,22,0.08)', borderRadius: 'var(--radius-md)', border: '2px solid var(--color-primary)' }}>
-              <div style={{ fontSize: '0.6rem', color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: 0.5, marginBottom: 2, fontWeight: 700 }}>Transfer Target</div>
-              <div style={{ fontWeight: 800, fontSize: 'var(--font-size-sm)', color: 'var(--text-primary)', marginBottom: 2 }}>{target.name}</div>
-              <div style={{ fontSize: 'var(--font-size-xs)', color: 'var(--text-muted)', marginBottom: 4 }}>{target.position}</div>
-              <div style={{ fontWeight: 900, fontSize: 'var(--font-size-xl)', color: 'var(--color-primary)', lineHeight: 1 }}>{targetOvr}</div>
-              <div style={{ fontSize: '0.6rem', color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: 0.5 }}>OVR</div>
-            </div>
-
+            <PlayerHeader player={target}     ovr={targetOvr} accentColor="var(--color-primary)" label="Transfer Target" isTarget />
             <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', fontWeight: 900, fontSize: 'var(--font-size-lg)', color: 'var(--text-muted)' }}>VS</div>
-
-            {/* Your player */}
-            <div style={{ textAlign: 'center', padding: 'var(--space-3)', background: compPlayer ? 'rgba(59,130,246,0.08)' : 'var(--bg-muted)', borderRadius: 'var(--radius-md)', border: `2px solid ${compPlayer ? '#3b82f6' : 'var(--border-color)'}` }}>
-              <div style={{ fontSize: '0.6rem', color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: 0.5, marginBottom: 2, fontWeight: 700 }}>Your Player</div>
-              {compPlayer ? (
-                <>
-                  <div style={{ fontWeight: 800, fontSize: 'var(--font-size-sm)', color: 'var(--text-primary)', marginBottom: 2 }}>{compPlayer.name}</div>
-                  <div style={{ fontSize: 'var(--font-size-xs)', color: 'var(--text-muted)', marginBottom: 4 }}>{compPlayer.position}</div>
-                  <div style={{ fontWeight: 900, fontSize: 'var(--font-size-xl)', color: '#3b82f6', lineHeight: 1 }}>{compOvr}</div>
-                  <div style={{ fontSize: '0.6rem', color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: 0.5 }}>OVR</div>
-                </>
-              ) : (
-                <div style={{ color: 'var(--text-muted)', fontSize: 'var(--font-size-xs)', fontWeight: 600, padding: 'var(--space-2) 0' }}>Select a player</div>
-              )}
-            </div>
+            <PlayerHeader player={compPlayer} ovr={compOvr}   accentColor="#3b82f6"              label="Your Player" isTarget={false} />
           </div>
 
           {/* Dropdown */}

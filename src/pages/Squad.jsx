@@ -5,6 +5,7 @@ import { apiFreeAgentRelease } from '../api.js';
 import GaugeBar from '../components/ui/GaugeBar.jsx';
 import AttrBar from '../components/ui/AttrBar.jsx';
 import PlayerAvatar from '../components/ui/PlayerAvatar.jsx';
+import SquadCompare from '../components/SquadCompare.jsx';
 
 // ── Nationality flag emoji map ─────────────────────────────────
 
@@ -481,6 +482,7 @@ export default function Squad() {
   const [sortBy, setSortBy] = useState('rating');
   const [releaseConfirm, setReleaseConfirm] = useState(null); // playerId
   const [comparePlayer, setComparePlayer] = useState(null);
+  const [showSquadCompare, setShowSquadCompare] = useState(false);
 
   if (!userTeam) {
     return (
@@ -587,6 +589,13 @@ export default function Squad() {
           ))}
         </div>
         <div style={{ display: 'flex', alignItems: 'center', gap: 'var(--space-2)', marginLeft: 'auto' }}>
+          <button
+            className="btn btn-ghost btn-sm"
+            style={{ fontSize: '0.7rem' }}
+            onClick={() => setShowSquadCompare(true)}
+          >
+            📊 Compare Position
+          </button>
           <span style={{ fontSize: 'var(--font-size-xs)', color: 'var(--text-muted)', fontWeight: 600, textTransform: 'uppercase', letterSpacing: 0.5 }}>Sort by</span>
           <select
             value={sortBy}
@@ -639,6 +648,15 @@ export default function Squad() {
           primaryPlayer={comparePlayer}
           allPlayers={players}
           onClose={() => setComparePlayer(null)}
+        />
+      )}
+
+      {/* Position Comparison Table */}
+      {showSquadCompare && (
+        <SquadCompare
+          players={players}
+          initialPosition={filterPosition === 'ALL' ? 'PG' : filterPosition}
+          onClose={() => setShowSquadCompare(false)}
         />
       )}
     </div>

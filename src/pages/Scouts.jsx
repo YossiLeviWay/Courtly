@@ -258,9 +258,9 @@ export default function Scouts() {
   const userTeam = state.userTeam;
   const scouts = useMemo(() => userTeam?.scouts ?? [], [userTeam]);
 
-  // Staff members with Scout role
+  // Staff members with Scout role — staff is a plain object keyed by role, not an array
   const staffScouts = useMemo(() =>
-    (userTeam?.staff ?? []).filter(s => s.role === 'Scout' || s.position === 'Scout'),
+    Object.values(userTeam?.staff ?? {}).filter(s => s.role === 'Scout' || s.position === 'Scout'),
     [userTeam]
   );
 

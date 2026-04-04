@@ -4,6 +4,22 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>Courtly</title>
+    <script>
+      // Restore path redirected from 404.html (GitHub Pages SPA routing trick)
+      (function () {
+        var q = window.location.search;
+        if (q.indexOf('?p=') === 0) {
+          var decoded = decodeURIComponent(q.slice(3));
+          var idx = decoded.indexOf('?');
+          var path = idx === -1 ? decoded : decoded.slice(0, idx);
+          var rest = idx === -1 ? '' : decoded.slice(idx);
+          window.history.replaceState(
+            null, '',
+            '/Courtly' + (path || '/') + rest + window.location.hash
+          );
+        }
+      })();
+    </script>
     <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
     <link rel="shortcut icon" href="/favicon.svg" />
   </head>

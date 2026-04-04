@@ -57,6 +57,26 @@ const FACILITY_DEFS = [
     primary: 'Supporter capacity (start: 600) & home advantage',
     secondary: 'Larger crowds amplify home court edge',
   },
+  {
+    key: 'medicalCenter',
+    name: 'Medical Center',
+    icon: '🏥',
+    primary: 'Injury risk reduction & faster recovery',
+    secondary: 'Each level cuts injury risk by 8% and speeds up healing',
+    maxLevel: 5,
+    baseCost: 80,
+    baseTime: 8,
+  },
+  {
+    key: 'scoutingOffice',
+    name: 'Scouting Office',
+    icon: '🔭',
+    primary: 'Transfer insight & youth scouting perks',
+    secondary: 'Reveals hidden attributes, unlocks regions, free scout reports',
+    maxLevel: 5,
+    baseCost: 60,
+    baseTime: 7,
+  },
 ];
 
 const BASE_COST = 100;
@@ -131,6 +151,18 @@ function getUpgradeBenefits(key, nextLevel) {
       { icon: '🎤', text: `Crowd intimidation ×${(1 + lv * 0.05).toFixed(2)}` },
       { icon: '💰', text: `Gate revenue +${lv * 10}%` },
     ],
+    medicalCenter: [
+      { icon: '🩺', text: `Injury risk −${lv * 8}%` },
+      { icon: '💊', text: `Recovery speed +${lv} day/week` },
+      lv >= 3 ? { icon: '🧬', text: 'Rehab programs unlock at L3' } : { icon: '🔒', text: 'Advanced rehab at L3' },
+      lv >= 5 ? { icon: '🌟', text: 'Full injury prevention suite at L5' } : { icon: '🔒', text: 'Prevention suite at L5' },
+    ],
+    scoutingOffice: [
+      { icon: '🔍', text: 'Exact attribute values in transfer market' },
+      lv >= 3 ? { icon: '🌍', text: 'Extra scout region unlocked at L3' } : { icon: '🔒', text: 'Extra region at L3' },
+      lv >= 5 ? { icon: '🎓', text: 'Free Youth Academy scout report at L5' } : { icon: '🔒', text: 'Free scout at L5' },
+      { icon: '📊', text: `Scouting accuracy +${lv * 12}%` },
+    ],
   };
   return map[key] ?? [];
 }
@@ -184,7 +216,6 @@ function UpgradeTooltip({ facilityKey, nextLevel, visible, anchorRef }) {
         position: 'absolute',
         bottom: -7,
         left: '50%',
-        transform: 'translateX(-50%)',
         width: 12,
         height: 12,
         background: 'var(--bg-card)',
@@ -197,8 +228,10 @@ function UpgradeTooltip({ facilityKey, nextLevel, visible, anchorRef }) {
   );
 }
 
-function getUpgradeCost(level) {
-  return Math.round(BASE_COST * Math.pow(1.5, level));
+function getUpgradeCost(level, facilityKey) {
+  const def = FACILITY_DEFS.find(d => d.key === facilityKey);
+  const base = def?.baseCost ?? BASE_COST;
+  return Math.round(base * Math.pow(1.5, level));
 }
 
 function getUpgradeTime(level) {
@@ -236,8 +269,9 @@ function FacilityCard({ def, facilityData, budget, onUpgrade }) {
   const level = getFacilityLevel(facilityData);
   const upgradeProgress = getUpgradeProgress(facilityData);
   const isUpgrading = upgradeProgress && !upgradeProgress.done;
-  const isMaxed = level >= 10;
-  const cost = getUpgradeCost(level);
+  const facilityMaxLevel = def?.maxLevel ?? 10;
+  const isMaxed = level >= facilityMaxLevel;
+  const cost = getUpgradeCost(level, def.key);
   const hours = getUpgradeTime(level);
   const canAfford = budget >= cost;
   const [showTooltip, setShowTooltip] = useState(false);
@@ -496,12 +530,15 @@ export default function Facilities() {
     }
 
     const currentLevel = getFacilityLevel(facilities[key]);
-    if (currentLevel >= 10) {
+    const def = FACILITY_DEFS.find(d => d.key === key);
+    const facilityMaxLevel = def?.maxLevel ?? 10;
+    if (currentLevel >= facilityMaxLevel) {
       addNotification('This facility is already at max level.', 'info');
       return;
     }
 
-    const upgradeHours = Math.round(BASE_TIME * Math.pow(1.15, currentLevel));
+    const facilityBaseTime = def?.baseTime ?? BASE_TIME;
+    const upgradeHours = Math.round(facilityBaseTime * Math.pow(1.15, currentLevel));
     const newFacilities = {
       ...facilities,
       [key]: { level: currentLevel, upgradeStarted: Date.now(), upgradeHours },
@@ -517,7 +554,6 @@ export default function Facilities() {
 
     dispatch({ type: 'UPDATE_TEAM', payload: updatedTeam });
 
-    const def = FACILITY_DEFS.find(d => d.key === key);
     addNotification(`Upgrading ${def?.name ?? key}… ${formatCost(cost)} deducted. Will complete in ${upgradeHours}h.`, 'info');
   }
 

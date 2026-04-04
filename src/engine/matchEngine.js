@@ -80,8 +80,34 @@ function teamAttackFactor(team) {
     }
   }
   const avg = count > 0 ? total / count : 55;
-  // Map avg (30-90) to factor (0.7-1.3)
-  return 0.7 + ((avg - 30) / 60) * 0.6;
+  let factor = 0.7 + ((avg - 30) / 60) * 0.6;
+
+  // recentForm bonus: each player's form (-5..+5) adds a small modifier
+  const avgForm = players.reduce((s, p) => s + (p.recentForm ?? 0), 0) / Math.max(players.length, 1);
+  factor += clamp(avgForm * 0.01, -0.05, 0.05);
+
+  // Tactics modifier
+  const style = team.tactics?.playingStyle;
+  if (style === 'Fast Break') {
+    factor *= 1.08;
+  } else if (style === 'Isolation') {
+    const topOVR = players.reduce((best, p) => Math.max(best, p.overall ?? p.attributes?.basketballIQ ?? 70), 0);
+    factor *= topOVR >= 80 ? 1.12 : 0.95;
+  } else if (style === 'Triangle Offense') {
+    const avgIQ = players.reduce((s, p) => s + (p.attributes?.basketballIQ ?? 60), 0) / Math.max(players.length, 1);
+    if (avgIQ >= 65) factor *= 1.07;
+  } else if (style === 'Post-Up') {
+    // Post-Up rewards interior scorers
+    const avgFinish = players.reduce((s, p) => s + (p.attributes?.finishingAtTheRim ?? 60), 0) / Math.max(players.length, 1);
+    if (avgFinish >= 65) factor *= 1.06;
+  }
+
+  // Pace modifier
+  const pace = team.tactics?.paceControl;
+  if (pace === 'Up-tempo') factor *= 1.05;
+  else if (pace === 'Slow') factor *= 0.95;
+
+  return clamp(factor, 0.5, 1.6);
 }
 
 /** Get a team's "defense strength" factor (0.5–1.5) */
@@ -101,7 +127,22 @@ function teamDefenseFactor(team) {
     }
   }
   const avg = count > 0 ? total / count : 55;
-  return 0.7 + ((avg - 30) / 60) * 0.6;
+  let factor = 0.7 + ((avg - 30) / 60) * 0.6;
+
+  // Tactics modifier
+  const style = team.tactics?.playingStyle;
+  if (style === 'Fast Break') {
+    factor *= 0.95; // aggressive offense sacrifices some D
+  } else if (style === 'Motion Offense') {
+    factor *= 0.97; // slight D sacrifice for motion
+  }
+
+  // Closeout strategy
+  const closeout = team.tactics?.closeoutStrategy;
+  if (closeout === 'Aggressive') factor *= 1.06;
+  else if (closeout === 'Protect Lead') factor *= 1.03;
+
+  return clamp(factor, 0.5, 1.6);
 }
 
 /** Motivation / chemistry modifier (0.85–1.15) */

@@ -1,6 +1,6 @@
 import { useState, useMemo } from 'react';
 import { useGame } from '../context/GameContext.jsx';
-import { Star, Users, Calendar, CheckCircle } from 'lucide-react';
+import { Star, Users, Calendar, CheckCircle, Eye } from 'lucide-react';
 
 // ── Seeded random ──────────────────────────────────────────────
 
@@ -82,13 +82,25 @@ export default function YouthAcademy() {
   const facilityLevel = typeof youthLevel === 'object' ? (youthLevel?.level ?? 0) : (youthLevel ?? 0);
   const reputation = userTeam?.reputation ?? 10;
 
-  // Generate 3 prospects deterministically for this month
+  // Generate 3 prospects deterministically for this week (unique per team + week)
+  const draftedProspectIds = userTeam?.youthDraft?.draftedProspectIds ?? [];
   const prospects = useMemo(() => {
-    const monthSeed = now.getFullYear() * 100 + now.getMonth();
-    return [0, 1, 2].map(i => generateDraftProspect(facilityLevel, reputation, monthSeed * 3 + i));
-  }, [facilityLevel, reputation, now.getFullYear(), now.getMonth()]);
+    // Week number since Unix epoch
+    const weekNumber = Math.floor(Date.now() / (7 * 24 * 60 * 60 * 1000));
+    // Team-specific hash so different teams get different prospects
+    const teamHash = (userTeam?.id ?? 'team').split('').reduce((a, c) => a + c.charCodeAt(0), 0);
+    const weekSeed = weekNumber * 1000 + (teamHash % 1000);
+    return [0, 1, 2]
+      .map(i => generateDraftProspect(facilityLevel, reputation, weekSeed * 3 + i))
+      .filter(p => !draftedProspectIds.includes(p.id));
+  }, [facilityLevel, reputation, userTeam?.id, draftedProspectIds]);
 
   const [selected, setSelected] = useState(null);
+  const [revealedIds, setRevealedIds] = useState(new Set());
+
+  function revealProspect(id) {
+    setRevealedIds(prev => new Set([...prev, id]));
+  }
 
   const handleDraft = () => {
     if (!selected || alreadyDrafted) return;
@@ -104,12 +116,17 @@ export default function YouthAcademy() {
       ? `${newPlayer.name} joins from the academy. Supporters are optimistic about his future.`
       : `${newPlayer.name} has been drafted. The academy continues to develop young talent.`;
 
+    const updatedDraftedIds = [...draftedProspectIds, selected.id];
     dispatch({
       type: 'UPDATE_TEAM', payload: {
         ...userTeam,
         players: updatedPlayers,
         fanEnthusiasm: Math.min(100, (userTeam.fanEnthusiasm ?? 20) + enthusiasmBoost),
-        youthDraft: { lastDraftedAt: Date.now(), lastDraftedPlayer: newPlayer.name }
+        youthDraft: {
+          lastDraftedAt: Date.now(),
+          lastDraftedPlayer: newPlayer.name,
+          draftedProspectIds: updatedDraftedIds,
+        }
       }
     });
     addNotification(`${newPlayer.name} drafted and added to the squad! ${enthusiasmBoost > 3 ? '🔥 Fans are excited!' : ''}`, 'success');
@@ -120,7 +137,7 @@ export default function YouthAcademy() {
     <div className="animate-fade-in">
       <div className="page-header">
         <h1>🌱 Youth Academy</h1>
-        <p>Draft one young prospect per month to grow your squad</p>
+        <p>A fresh prospect arrives every week — scout them before drafting</p>
       </div>
 
       {/* Draft window info */}
@@ -144,43 +161,87 @@ export default function YouthAcademy() {
       </div>
 
       {/* Prospects grid */}
-      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(280px, 1fr))', gap: 16, marginBottom: 24 }}>
-        {prospects.map(p => (
-          <div key={p.id}
-            onClick={() => !alreadyDrafted && setSelected(selected?.id === p.id ? null : p)}
-            style={{
-              padding: 16, borderRadius: 'var(--radius-lg)',
-              border: selected?.id === p.id ? '2px solid var(--color-primary)' : '2px solid var(--border-color)',
-              background: selected?.id === p.id ? 'var(--color-primary-100)' : 'var(--bg-card)',
-              cursor: alreadyDrafted ? 'default' : 'pointer',
-              transition: 'all 0.15s',
-              opacity: alreadyDrafted ? 0.6 : 1,
-            }}>
-            <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 10 }}>
-              <div>
-                <div style={{ fontWeight: 700 }}>{p.name}</div>
-                <div style={{ fontSize: 'var(--font-size-xs)', color: 'var(--text-muted)' }}>{p.position} · Age {p.age}</div>
-              </div>
-              <div style={{ textAlign: 'right' }}>
-                <div style={{ fontSize: 'var(--font-size-xl)', fontWeight: 900, color: 'var(--color-primary)' }}>{p.overallRating}</div>
-                <div style={{ fontSize: 'var(--font-size-xs)', color: 'var(--text-muted)' }}>OVR</div>
-              </div>
-            </div>
-            <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', marginBottom: 8 }}>
-              <span className="badge badge-orange">Potential: {p.potential}</span>
-              <span className="badge" style={{ background: 'var(--bg-muted)' }}>${p.salary}k/yr</span>
-              <span className="badge" style={{ background: 'var(--bg-muted)' }}>{p.contractYears} seasons</span>
-            </div>
-            {selected?.id === p.id && (
-              <div style={{ marginTop: 8, fontSize: 'var(--font-size-xs)', color: 'var(--color-primary)', fontWeight: 600 }}>
-                ✓ Selected — click "Draft Player" below to confirm
-              </div>
-            )}
-          </div>
-        ))}
-      </div>
+      {prospects.length === 0 ? (
+        <div className="card" style={{ textAlign: 'center', padding: 32 }}>
+          <div style={{ fontSize: 32, marginBottom: 8 }}>🎓</div>
+          <div style={{ fontWeight: 700, marginBottom: 4 }}>All this week's prospects have been drafted</div>
+          <div style={{ fontSize: 'var(--font-size-sm)', color: 'var(--text-muted)' }}>New prospects arrive every Sunday. Check back next week!</div>
+        </div>
+      ) : (
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(280px, 1fr))', gap: 16, marginBottom: 24 }}>
+          {prospects.map(p => {
+            const isRevealed = revealedIds.has(p.id);
+            const isSelected = selected?.id === p.id;
+            const starCount = p.potential >= 85 ? 5 : p.potential >= 75 ? 4 : p.potential >= 65 ? 3 : p.potential >= 55 ? 2 : 1;
+            return (
+              <div key={p.id}
+                style={{
+                  padding: 16, borderRadius: 'var(--radius-lg)',
+                  border: isSelected ? '2px solid var(--color-primary)' : '2px solid var(--border-color)',
+                  background: isSelected ? 'var(--color-primary-100)' : 'var(--bg-card)',
+                  transition: 'all 0.15s',
+                  opacity: alreadyDrafted ? 0.6 : 1,
+                }}>
 
-      {!alreadyDrafted && (
+                {!isRevealed ? (
+                  /* ── Silhouette (unrevealed) ── */
+                  <div style={{ textAlign: 'center', padding: '8px 0 12px' }}>
+                    <div style={{ position: 'relative', display: 'inline-block', marginBottom: 8 }}>
+                      {/* Basketball player silhouette SVG */}
+                      <svg width="70" height="90" viewBox="0 0 70 90" fill="none" xmlns="http://www.w3.org/2000/svg" style={{ filter: 'grayscale(1) brightness(0.3)', opacity: 0.7 }}>
+                        <ellipse cx="35" cy="14" rx="10" ry="10" fill="#888"/>
+                        <rect x="22" y="24" width="26" height="28" rx="5" fill="#888"/>
+                        <rect x="10" y="26" width="14" height="8" rx="4" fill="#888"/>
+                        <rect x="46" y="26" width="14" height="8" rx="4" fill="#888"/>
+                        <rect x="24" y="50" width="10" height="26" rx="4" fill="#888"/>
+                        <rect x="36" y="50" width="10" height="26" rx="4" fill="#888"/>
+                        <ellipse cx="17" cy="36" rx="6" ry="6" fill="#aaa"/>
+                      </svg>
+                      <div style={{ position: 'absolute', top: '50%', left: '50%', transform: 'translate(-50%, -50%)', fontSize: 28, fontWeight: 900, color: 'rgba(255,255,255,0.7)' }}>?</div>
+                    </div>
+                    <div style={{ marginBottom: 6 }}>
+                      <span style={{ fontSize: 'var(--font-size-sm)', fontWeight: 700, letterSpacing: 1 }}>??? · {p.position}</span>
+                    </div>
+                    <div style={{ marginBottom: 10 }}>
+                      {'★'.repeat(starCount)}{'☆'.repeat(5 - starCount)}
+                    </div>
+                    <button className="btn btn-primary btn-sm" onClick={() => revealProspect(p.id)}>
+                      <Eye size={14} /> Scout Report
+                    </button>
+                  </div>
+                ) : (
+                  /* ── Revealed card ── */
+                  <div onClick={() => !alreadyDrafted && setSelected(isSelected ? null : p)}
+                    style={{ cursor: alreadyDrafted ? 'default' : 'pointer' }}>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 10 }}>
+                      <div>
+                        <div style={{ fontWeight: 700 }}>{p.name}</div>
+                        <div style={{ fontSize: 'var(--font-size-xs)', color: 'var(--text-muted)' }}>{p.position} · Age {p.age}</div>
+                      </div>
+                      <div style={{ textAlign: 'right' }}>
+                        <div style={{ fontSize: 'var(--font-size-xl)', fontWeight: 900, color: 'var(--color-primary)' }}>{p.overallRating}</div>
+                        <div style={{ fontSize: 'var(--font-size-xs)', color: 'var(--text-muted)' }}>OVR</div>
+                      </div>
+                    </div>
+                    <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', marginBottom: 8 }}>
+                      <span className="badge badge-orange">Potential: {p.potential}</span>
+                      <span className="badge" style={{ background: 'var(--bg-muted)' }}>${p.salary}k/yr</span>
+                      <span className="badge" style={{ background: 'var(--bg-muted)' }}>{p.contractYears} seasons</span>
+                    </div>
+                    {isSelected && (
+                      <div style={{ marginTop: 8, fontSize: 'var(--font-size-xs)', color: 'var(--color-primary)', fontWeight: 600 }}>
+                        ✓ Selected — click "Draft Player" below to confirm
+                      </div>
+                    )}
+                  </div>
+                )}
+              </div>
+            );
+          })}
+        </div>
+      )}
+
+      {!alreadyDrafted && prospects.length > 0 && (
         <button
           className="btn btn-primary btn-lg"
           disabled={!selected}

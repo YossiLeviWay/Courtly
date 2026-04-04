@@ -9,6 +9,7 @@ import {
   apiGetFeedback, apiMarkFeedbackRead,
   apiSeedFreeAgents, apiSeedStaffMarket,
   apiGetGameBrainConfig, apiSaveGameBrainConfig,
+  apiAdminSetBudget,
 } from '../api.js';
 import { buildRoundRobinRounds } from '../engine/gameScheduler.js';
 
@@ -660,12 +661,66 @@ function TeamsView({ leagues }) {
   );
 }
 
+// ── Budget Edit Modal ─────────────────────────────────────────
+
+function BudgetEditModal({ user, uState, onClose }) {
+  const [newBudget, setNewBudget] = useState(uState?.budget ?? 250);
+  const [saving, setSaving]       = useState(false);
+  const [msg, setMsg]             = useState('');
+
+  async function handleSave() {
+    setSaving(true);
+    try {
+      await apiAdminSetBudget(user.id, newBudget);
+      setMsg(`Budget updated to $${newBudget}k`);
+      setTimeout(onClose, 1200);
+    } catch (e) {
+      setMsg('Error: ' + e.message);
+    }
+    setSaving(false);
+  }
+
+  return (
+    <div className="modal-overlay" onClick={onClose}>
+      <div className="modal" onClick={e => e.stopPropagation()} style={{ maxWidth: 400 }}>
+        <div className="modal-header">
+          <h3 className="card-title">Edit Budget — {user.username || user.email}</h3>
+          <button className="btn btn-ghost btn-sm" onClick={onClose}><X size={16} /></button>
+        </div>
+        <div className="modal-body">
+          <div style={{ marginBottom: 12 }}>
+            <label style={{ display: 'block', fontWeight: 600, marginBottom: 6, fontSize: 'var(--font-size-sm)' }}>Budget (in $k)</label>
+            <input
+              type="number" className="input" value={newBudget}
+              onChange={e => setNewBudget(Number(e.target.value))}
+              style={{ width: '100%' }}
+            />
+          </div>
+          <div style={{ display: 'flex', gap: 8, marginBottom: 16, flexWrap: 'wrap' }}>
+            {[100, 500, 1000].map(bonus => (
+              <button key={bonus} className="btn btn-sm" style={{ background: 'var(--bg-muted)' }}
+                onClick={() => setNewBudget(v => v + bonus)}>
+                +${bonus}k
+              </button>
+            ))}
+          </div>
+          {msg && <div style={{ marginBottom: 12, color: msg.startsWith('Error') ? 'var(--color-danger)' : 'var(--color-success)', fontWeight: 600, fontSize: 'var(--font-size-sm)' }}>{msg}</div>}
+          <button className="btn btn-primary btn-sm" onClick={handleSave} disabled={saving}>
+            {saving ? 'Saving…' : <><Check size={14} /> Save Budget</>}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 // ── Users View ────────────────────────────────────────────────
 
 function UsersView() {
   const { state } = useGame();
-  const [users, setUsers]   = useState([]);
+  const [users, setUsers]     = useState([]);
   const [loading, setLoading] = useState(true);
+  const [editingUser, setEditingUser] = useState(null);
 
   useEffect(() => {
     apiGetAllUserStates().then(data => { setUsers(data.filter(u => u.user)); setLoading(false); });
@@ -698,16 +753,28 @@ function UsersView() {
                     {user.email} · {teamName}
                   </div>
                 </div>
-                <div style={{ display: 'flex', gap: 12, fontSize: 'var(--font-size-xs)', color: 'var(--text-muted)' }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 12, fontSize: 'var(--font-size-xs)', color: 'var(--text-muted)', flexWrap: 'wrap' }}>
                   {uState?.budget != null && <span style={{ fontWeight: 600, color: 'var(--color-success)' }}>${uState.budget}k</span>}
                   <span>{uState?.seasonRecord?.wins || 0}W – {uState?.seasonRecord?.losses || 0}L</span>
                   <span>{played} played</span>
+                  <button className="btn btn-ghost btn-sm" style={{ fontSize: '0.65rem', padding: '2px 8px' }}
+                    onClick={() => setEditingUser({ user, uState })}>
+                    <Edit2 size={11} /> Budget
+                  </button>
                 </div>
               </div>
             </div>
           );
         })}
       </div>
+
+      {editingUser && (
+        <BudgetEditModal
+          user={editingUser.user}
+          uState={editingUser.uState}
+          onClose={() => setEditingUser(null)}
+        />
+      )}
     </div>
   );
 }

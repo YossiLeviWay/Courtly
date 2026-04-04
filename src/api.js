@@ -7,7 +7,7 @@ import {
 } from 'firebase/auth';
 import {
   doc, getDoc, getDocs, setDoc, deleteDoc, addDoc, updateDoc,
-  collection, query, where, orderBy, writeBatch,
+  collection, query, where, orderBy, writeBatch, serverTimestamp,
 } from 'firebase/firestore';
 import { auth, db } from './firebase.js';
 import { buildRoundRobinRounds } from './engine/gameScheduler.js';
@@ -568,6 +568,11 @@ export async function apiSaveUserState(payload) {
 
 // ── Admin APIs ───────────────────────────────────────────────
 
+/** Admin: set a user's team budget directly by userId. */
+export async function apiAdminSetBudget(userId, newBudget) {
+  await updateDoc(doc(db, 'user_team_state', userId), { budget: Number(newBudget) });
+}
+
 /** Batch-update the scheduledDate of a set of match documents (one round). */
 export async function apiUpdateRoundDates(matchIds, newTimestampMs) {
   if (!matchIds?.length) return;
@@ -867,6 +872,26 @@ export async function apiSeedStaffMarket(count = 8) {
   }
   await batch.commit();
   return count;
+}
+
+// ── App config / world state ──────────────────────────────────────
+
+/** Read the world_state config doc (returns plain object or null). */
+export async function apiGetWorldState() {
+  try {
+    const snap = await getDoc(doc(db, 'app_config', 'world_state'));
+    if (snap.exists()) return snap.data();
+  } catch {}
+  return null;
+}
+
+/** Stamp the current server time as lastMarketSeedDate on world_state. */
+export async function apiStampMarketSeedDate() {
+  await setDoc(
+    doc(db, 'app_config', 'world_state'),
+    { lastMarketSeedDate: serverTimestamp() },
+    { merge: true },
+  );
 }
 
 // ── Internal helper ──────────────────────────────────────────────

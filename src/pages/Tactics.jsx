@@ -100,6 +100,10 @@ const INJURY_MANAGEMENT_OPTIONS = [
   'Star-focused — protect key players, use depth elsewhere',
 ];
 
+const PACE_CONTROLS    = ['Slow', 'Normal', 'Up-tempo'];
+const ROTATION_DEPTHS  = ['8-man', '10-man', '12-man'];
+const CLOSEOUT_STRATS  = ['Normal', 'Aggressive', 'Protect Lead'];
+
 const DEFAULT_TACTICS = {
   playingStyle: 'Half-Court Sets',
   defenseType: 'Man-to-Man',
@@ -111,6 +115,9 @@ const DEFAULT_TACTICS = {
   benchPlayers: [],
   timeoutTriggers: [],
   injuryManagement: 'Balanced — standard rotation, monitor closely',
+  paceControl: 'Normal',
+  rotationDepth: '10-man',
+  closeoutStrategy: 'Normal',
 };
 
 const COURT_POSITIONS = [
@@ -813,6 +820,24 @@ export default function Tactics() {
             Effectiveness scores based on Head Coach <strong>{headCoach.name}</strong>'s ability rating.
           </p>
         )}
+
+        {/* Tactic mismatch warning */}
+        {(() => {
+          const activeStyle = PLAYING_STYLES.find(s => s.id === tactics.playingStyle);
+          const isRecommended = activeStyle?.recommendedWhen?.(teamStyleStats) ?? null;
+          if (isRecommended === false) {
+            return (
+              <div style={{
+                marginTop: 12, padding: '10px 14px', borderRadius: 'var(--radius-md)',
+                background: 'rgba(234,179,8,0.08)', border: '1px solid rgba(234,179,8,0.4)',
+                fontSize: 'var(--font-size-sm)', color: '#b45309', fontWeight: 600,
+              }}>
+                ⚠️ This style doesn't fit your squad — requires: {activeStyle?.recommendLabel}. Match effectiveness may be reduced.
+              </div>
+            );
+          }
+          return null;
+        })()}
       </div>
 
       {/* ── 3. Defensive Style ─────────────────────────────────── */}
@@ -963,6 +988,59 @@ export default function Tactics() {
           }}
         >
           ⚠ Aggressive management increases injury risk. Conservative management may reduce player minutes.
+        </div>
+      </div>
+
+      {/* ── Advanced Tactics ─── */}
+      <div className="card mb-5">
+        <div className="card-header"><span className="card-title">⚙️ Advanced Tactics</span></div>
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(200px, 1fr))', gap: 20 }}>
+
+          {/* Pace Control */}
+          <div className="form-group">
+            <label className="form-label">Pace Control</label>
+            <select className="form-select"
+              value={tactics.paceControl ?? 'Normal'}
+              onChange={e => setTactics(prev => ({ ...prev, paceControl: e.target.value }))}>
+              {PACE_CONTROLS.map(p => <option key={p} value={p}>{p}</option>)}
+            </select>
+            <span style={{ fontSize: 'var(--font-size-xs)', color: 'var(--text-muted)', marginTop: 4 }}>
+              {tactics.paceControl === 'Up-tempo' && '⚡ More possessions — attack ×1.05, slightly tiring'}
+              {tactics.paceControl === 'Slow' && '🐢 Fewer possessions — attack ×0.95, saves stamina'}
+              {tactics.paceControl === 'Normal' && 'Standard possession rate'}
+            </span>
+          </div>
+
+          {/* Rotation Depth */}
+          <div className="form-group">
+            <label className="form-label">Rotation Depth</label>
+            <select className="form-select"
+              value={tactics.rotationDepth ?? '10-man'}
+              onChange={e => setTactics(prev => ({ ...prev, rotationDepth: e.target.value }))}>
+              {ROTATION_DEPTHS.map(r => <option key={r} value={r}>{r}</option>)}
+            </select>
+            <span style={{ fontSize: 'var(--font-size-xs)', color: 'var(--text-muted)', marginTop: 4 }}>
+              {tactics.rotationDepth === '8-man' && 'Shorter bench — starters play more, higher fatigue'}
+              {tactics.rotationDepth === '10-man' && 'Balanced rotation'}
+              {tactics.rotationDepth === '12-man' && 'Deep bench — fresher legs, less concentrated talent'}
+            </span>
+          </div>
+
+          {/* Closeout Strategy */}
+          <div className="form-group">
+            <label className="form-label">Closeout Strategy</label>
+            <select className="form-select"
+              value={tactics.closeoutStrategy ?? 'Normal'}
+              onChange={e => setTactics(prev => ({ ...prev, closeoutStrategy: e.target.value }))}>
+              {CLOSEOUT_STRATS.map(s => <option key={s} value={s}>{s}</option>)}
+            </select>
+            <span style={{ fontSize: 'var(--font-size-xs)', color: 'var(--text-muted)', marginTop: 4 }}>
+              {tactics.closeoutStrategy === 'Aggressive' && '🛡️ Defense ×1.06 — risks more fouls'}
+              {tactics.closeoutStrategy === 'Protect Lead' && '🔒 Defense ×1.03 — conservative when ahead'}
+              {tactics.closeoutStrategy === 'Normal' && 'Standard closeout discipline'}
+            </span>
+          </div>
+
         </div>
       </div>
 

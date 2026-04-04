@@ -5,6 +5,8 @@ import {
   apiGetWorld, apiGetMatches, apiGetStandings, apiGetUserState,
   apiGetTransferMarket, apiSaveUserState, apiRecordMatchResult,
   apiGetGameBrainConfig,
+  apiGetWorldState, apiStampMarketSeedDate,
+  apiSeedFreeAgents, apiSeedStaffMarket,
 } from '../api.js';
 import { processPendingMatches } from '../engine/gameScheduler.js';
 
@@ -100,6 +102,10 @@ function buildUserTeam(leagues, userState) {
     staff:          userState.staff          ?? {},
     lastFanGrowthDate:     userState.lastFanGrowthDate     ?? null,
     lastTrainingApplied:   userState.lastTrainingApplied   ?? 0,
+    weeksPlayed:           userState.weeksPlayed           ?? 0,
+    lastMatchBrainHighlights: userState.lastMatchBrainHighlights ?? [],
+    lastWeekFanGrowth:     userState.lastWeekFanGrowth     ?? null,
+    trainingHighlights:    userState.trainingHighlights    ?? [],
     wins:         userState.seasonRecord?.wins    ?? 0,
     losses:       userState.seasonRecord?.losses  ?? 0,
     seasonRecord: {
@@ -147,6 +153,10 @@ function extractUserState(state) {
     staff:          t.staff          ?? {},
     lastFanGrowthDate:   t.lastFanGrowthDate   ?? null,
     lastTrainingApplied: t.lastTrainingApplied ?? 0,
+    weeksPlayed:         t.weeksPlayed         ?? 0,
+    lastMatchBrainHighlights: t.lastMatchBrainHighlights ?? [],
+    lastWeekFanGrowth:   t.lastWeekFanGrowth   ?? null,
+    trainingHighlights:  t.trainingHighlights  ?? [],
     seasonRecord:   { wins: t.wins ?? 0, losses: t.losses ?? 0 },
     profileData: {
       bio:                  state.user?.bio                  || '',
@@ -277,6 +287,21 @@ export function GameProvider({ children }) {
       const leagues = buildLeagues(world.leagues, dbMatches, dbStandings);
       const user    = buildUserProfile(userStateRes.user, userStateRes.state?.profileData || {});
 
+      // ── Auto-seed transfer market (admin only, max once per 7 days) ─
+      if (isAdminUser) {
+        try {
+          const worldState = await apiGetWorldState();
+          const lastSeedMs = worldState?.lastMarketSeedDate?.toMillis?.()
+            ?? worldState?.lastMarketSeedDate?.seconds * 1000
+            ?? 0;
+          const daysSinceSeed = (Date.now() - lastSeedMs) / 86_400_000;
+          if (daysSinceSeed > 7) {
+            await Promise.all([apiSeedFreeAgents(5), apiSeedStaffMarket(3)]);
+            await apiStampMarketSeedDate();
+          }
+        } catch { /* non-fatal */ }
+      }
+
       // ── Simulate any pending matches ────────────────────────────
       let simulatedLeagues = leagues;
       let processedMatchData = [];
@@ -353,11 +378,18 @@ export function GameProvider({ children }) {
         const recentWins = history.slice(0, 5).filter(m =>
           m.result === 'W' || (m.teamScore ?? m.userScore ?? 0) > (m.oppScore ?? m.opponentScore ?? 0)
         ).length;
+        const recentLosses = Math.min(5, history.slice(0, 5).length) - recentWins;
         const baseGrowth = Math.round((enthusiasm / 100) * 50 + (enthusiasm > 50 ? 20 : 0));
         const resultBonus = (recentWins - 2) * 8; // -16..+24 based on last 5
-        const growth = Math.max(0, baseGrowth + resultBonus);
+        // Seniority bonus: each week played adds 1% growth (max 50% bonus)
+        const weeksPlayed = userStateRes.state.weeksPlayed ?? 0;
+        const seniorityMult = Math.min(1 + weeksPlayed * 0.01, 1.5);
+        const growth = Math.max(0, Math.round((baseGrowth + resultBonus) * seniorityMult));
         userStateRes.state.fanCount = (userStateRes.state.fanCount ?? 250) + growth;
         userStateRes.state.lastFanGrowthDate = now;
+        userStateRes.state.weeksPlayed = weeksPlayed + 1;
+        // Store fan growth info for display in Fans.jsx
+        userStateRes.state.lastWeekFanGrowth = { growth, recentWins, recentLosses };
       }
 
       // ── Weekly training progression ──────────────────────────────
@@ -375,11 +407,15 @@ export function GameProvider({ children }) {
         const trainingPlan  = userStateRes.state.profileData?.training ?? {};
         const focusPlayers  = trainingPlan.focusPlayers ?? [];
         const players       = userStateRes.state.playersState ?? [];
+        const trainingHighlights = [];
         userStateRes.state.playersState = players.map(p => {
           // Injured players don't develop this week
           if (p.injuryStatus && p.injuryStatus !== 'healthy') return p;
           const isFocus   = focusPlayers.includes(p.id);
           const newAttrs  = { ...(p.attributes || {}) };
+          let topGainKey  = null;
+          let topGainVal  = 0;
+
           for (const [area, keys] of Object.entries(TRAINING_ATTR_MAP)) {
             const pts      = trainingPlan[area] ?? 0;
             if (pts <= 0) continue;
@@ -389,12 +425,40 @@ export function GameProvider({ children }) {
             keys.forEach(k => {
               if (newAttrs[k] != null) {
                 newAttrs[k] = Math.min(99, newAttrs[k] + gain);
+                if (gain > topGainVal) { topGainVal = gain; topGainKey = k; }
               }
             });
           }
-          return { ...p, attributes: newAttrs };
+
+          // Training Brain: track streak and apply breakthrough
+          const prevKey     = p.trainingStreakKey ?? null;
+          const prevStreak  = p.trainingStreak    ?? 0;
+          const newStreakKey = topGainKey;
+          const newStreak   = newStreakKey === prevKey ? prevStreak + 1 : (topGainKey ? 1 : 0);
+
+          // Breakthrough: 3+ weeks on same attribute → +0.5 bonus
+          if (newStreak >= 3 && topGainKey && newAttrs[topGainKey] != null) {
+            newAttrs[topGainKey] = Math.min(99, newAttrs[topGainKey] + 0.5);
+            trainingHighlights.push(`${p.name} hit a breakthrough week in ${topGainKey.replace(/([A-Z])/g, ' $1').toLowerCase()}!`);
+          }
+
+          // Focus player: 20% chance of +1 on best attribute
+          if (isFocus && topGainKey && Math.random() < 0.2 && newAttrs[topGainKey] != null) {
+            newAttrs[topGainKey] = Math.min(99, newAttrs[topGainKey] + 1);
+            trainingHighlights.push(`${p.name} had a standout focus session this week!`);
+          }
+
+          return {
+            ...p,
+            attributes:       newAttrs,
+            trainingStreak:   newStreak,
+            trainingStreakKey: newStreakKey,
+          };
         });
         userStateRes.state.lastTrainingApplied = now;
+        if (trainingHighlights.length > 0) {
+          userStateRes.state.trainingHighlights = trainingHighlights;
+        }
       }
 
       const userTeam = buildUserTeam(simulatedLeagues, userStateRes.state);

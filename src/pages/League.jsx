@@ -52,13 +52,22 @@ export default function League() {
     const schedule  = currentLeague?.schedule  || [];
     const playedMatches = schedule.filter(m => m.played);
 
+    // Build W/L from schedule directly (always fresh, even for auto-simulated matches)
+    const winsMap = {}, lossesMap = {};
+    schedule.filter(m => m.homeScore != null && m.awayScore != null).forEach(m => {
+      const homeWon = m.homeScore > m.awayScore;
+      winsMap[m.homeTeamId]   = (winsMap[m.homeTeamId]   ?? 0) + (homeWon ? 1 : 0);
+      lossesMap[m.homeTeamId] = (lossesMap[m.homeTeamId] ?? 0) + (homeWon ? 0 : 1);
+      winsMap[m.awayTeamId]   = (winsMap[m.awayTeamId]   ?? 0) + (homeWon ? 0 : 1);
+      lossesMap[m.awayTeamId] = (lossesMap[m.awayTeamId] ?? 0) + (homeWon ? 1 : 0);
+    });
+
     const rows = leagueTeams.filter(Boolean).map(t => {
-      const full     = allTeams.find(a => a?.id === t.id) || t;
-      const standing = standings.find(s => s.teamId === t.id);
-      const wins     = standing?.wins   ?? full.seasonRecord?.wins   ?? 0;
-      const losses   = standing?.losses ?? full.seasonRecord?.losses ?? 0;
-      const played   = wins + losses;
-      const pct      = played > 0 ? wins / played : 0;
+      const full   = allTeams.find(a => a?.id === t.id) || t;
+      const wins   = winsMap[t.id]   ?? 0;
+      const losses = lossesMap[t.id] ?? 0;
+      const played = wins + losses;
+      const pct    = played > 0 ? wins / played : 0;
 
       // L10 and Strk: derive from league schedule
       const teamMatches = playedMatches

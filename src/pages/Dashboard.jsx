@@ -1,5 +1,7 @@
+import { useState } from 'react';
 import { useGame } from '../context/GameContext.jsx';
 import GaugeBar from '../components/ui/GaugeBar.jsx';
+import MatchDetailModal from '../components/MatchDetailModal.jsx';
 import {
   Trophy,
   TrendingUp,
@@ -12,6 +14,7 @@ import {
   ArrowRight,
   Zap,
   AlertCircle,
+  Newspaper,
 } from 'lucide-react';
 
 // ── Helpers ───────────────────────────────────────────────────
@@ -132,6 +135,9 @@ export default function Dashboard() {
     );
   }
 
+  const [selectedMatch, setSelectedMatch] = useState(null);
+  const [selectedPlayer, setSelectedPlayer] = useState(null);
+
   const { seasonRecord, motivationBar, momentumBar, chemistryGauge, budget, fanCount, matchHistory, seasonMatches, players } = userTeam;
 
   // ── Next match ────────────────────────────────────────────
@@ -143,18 +149,22 @@ export default function Dashboard() {
   // ── Recent results (last 3) ───────────────────────────────
   const recentMatches = matchHistory ? [...matchHistory].reverse().slice(0, 3) : [];
 
-  // ── Top players ───────────────────────────────────────────
+  // ── Top players (deduplicated — each player can only win one category) ─────
   const activePlayers = players || [];
   const statPlayers = activePlayers.filter(p => p?.seasonStats);
-  const topScorer = [...statPlayers].sort(
-    (a, b) => (b.seasonStats.points ?? 0) / (b.seasonStats.gamesPlayed || 1) - (a.seasonStats.points ?? 0) / (a.seasonStats.gamesPlayed || 1)
-  )[0];
-  const topRebounder = [...statPlayers].sort(
-    (a, b) => (b.seasonStats.rebounds ?? 0) / (b.seasonStats.gamesPlayed || 1) - (a.seasonStats.rebounds ?? 0) / (a.seasonStats.gamesPlayed || 1)
-  )[0];
-  const topAssister = [...statPlayers].sort(
-    (a, b) => (b.seasonStats.assists ?? 0) / (b.seasonStats.gamesPlayed || 1) - (a.seasonStats.assists ?? 0) / (a.seasonStats.gamesPlayed || 1)
-  )[0];
+  const _usedPerformerIds = new Set();
+  function _topUnique(arr, key) {
+    const eligible = arr.filter(p => !_usedPerformerIds.has(p.id));
+    const sorted = [...eligible].sort(
+      (a, b) => (b.seasonStats[key] ?? 0) / (b.seasonStats.gamesPlayed || 1) - (a.seasonStats[key] ?? 0) / (a.seasonStats.gamesPlayed || 1)
+    );
+    const winner = sorted[0] || null;
+    if (winner) _usedPerformerIds.add(winner.id);
+    return winner;
+  }
+  const topScorer    = _topUnique(statPlayers, 'points');
+  const topRebounder = _topUnique(statPlayers, 'rebounds');
+  const topAssister  = _topUnique(statPlayers, 'assists');
 
   // ── Expiring contracts ────────────────────────────────────
   const expiringContracts = activePlayers.filter(p => (p.contractYears ?? 99) <= 1);
@@ -366,9 +376,20 @@ export default function Dashboard() {
               {recentMatches.map((m, i) => {
                 const won = m.result === 'W' || (m.teamScore ?? m.userScore ?? 0) > (m.oppScore ?? m.opponentScore ?? 0);
                 const displayScore = `${m.teamScore ?? m.userScore ?? '?'}–${m.oppScore ?? m.opponentScore ?? '?'}`;
+                const hasMatchId = !!m.matchId;
                 return (
                   <div
                     key={i}
+                    onClick={hasMatchId ? () => setSelectedMatch({
+                      id: m.matchId,
+                      homeTeamId: m.isHome ? userTeam.id : m.opponentId,
+                      awayTeamId: m.isHome ? m.opponentId : userTeam.id,
+                      homeTeamName: m.homeTeam || (m.isHome ? userTeam.name : m.opponent),
+                      awayTeamName: m.awayTeam || (m.isHome ? m.opponent : userTeam.name),
+                      scheduledDate: m.date || m.matchDate,
+                      homeScore: m.homeScore,
+                      awayScore: m.awayScore,
+                    }) : undefined}
                     style={{
                       display: 'flex',
                       alignItems: 'center',
@@ -376,7 +397,11 @@ export default function Dashboard() {
                       padding: 'var(--space-2) var(--space-3)',
                       borderRadius: 'var(--radius-md)',
                       background: 'var(--bg-muted)',
+                      cursor: hasMatchId ? 'pointer' : 'default',
+                      transition: 'background 0.15s',
                     }}
+                    onMouseEnter={e => { if (hasMatchId) e.currentTarget.style.background = 'var(--bg-elevated)'; }}
+                    onMouseLeave={e => { e.currentTarget.style.background = 'var(--bg-muted)'; }}
                   >
                     <WLBadge won={won} />
                     <span style={{ flex: 1, fontSize: 'var(--font-size-sm)', fontWeight: 600, color: 'var(--text-secondary)' }}>
@@ -390,6 +415,7 @@ export default function Dashboard() {
                         {formatDate(m.date)}
                       </span>
                     )}
+                    {hasMatchId && <span style={{ fontSize: 'var(--font-size-xs)', color: 'var(--color-primary)' }}>›</span>}
                   </div>
                 );
               })}
@@ -413,6 +439,7 @@ export default function Dashboard() {
             ].map(({ label, player, stat }) => (
               <div
                 key={label}
+                onClick={player ? () => setSelectedPlayer(player) : undefined}
                 style={{
                   display: 'flex',
                   alignItems: 'center',
@@ -420,7 +447,11 @@ export default function Dashboard() {
                   padding: 'var(--space-2) var(--space-3)',
                   borderRadius: 'var(--radius-md)',
                   background: 'var(--bg-muted)',
+                  cursor: player ? 'pointer' : 'default',
+                  transition: 'background 0.15s',
                 }}
+                onMouseEnter={e => { if (player) e.currentTarget.style.background = 'var(--bg-elevated)'; }}
+                onMouseLeave={e => { e.currentTarget.style.background = 'var(--bg-muted)'; }}
               >
                 <div
                   style={{
@@ -443,7 +474,14 @@ export default function Dashboard() {
                   <p style={{ fontWeight: 700, fontSize: 'var(--font-size-sm)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
                     {player?.name || 'N/A'}
                   </p>
-                  <p style={{ fontSize: 'var(--font-size-xs)', color: 'var(--text-muted)' }}>{label}</p>
+                  <p style={{ fontSize: 'var(--font-size-xs)', color: 'var(--text-muted)' }}>
+                    {label}
+                    {player?.recentForm != null && (
+                      <span style={{ marginLeft: 6, color: player.recentForm > 0 ? 'var(--color-success)' : player.recentForm < 0 ? 'var(--color-danger)' : 'var(--text-muted)', fontWeight: 700 }}>
+                        {player.recentForm > 0 ? `↑ +${player.recentForm}` : player.recentForm < 0 ? `↓ ${player.recentForm}` : '→ 0'} form
+                      </span>
+                    )}
+                  </p>
                 </div>
                 <span style={{ fontWeight: 800, color: 'var(--color-primary)', fontSize: 'var(--font-size-sm)', whiteSpace: 'nowrap' }}>
                   {stat}
@@ -608,6 +646,124 @@ export default function Dashboard() {
           </div>
         </div>
       </div>
+
+      {/* Club News feed */}
+      {(() => {
+        const clubNews = [];
+        const lastMatch = recentMatches[0];
+        if (lastMatch) {
+          const won = lastMatch.result === 'W' || (lastMatch.teamScore ?? lastMatch.userScore ?? 0) > (lastMatch.oppScore ?? lastMatch.opponentScore ?? 0);
+          const oppName = lastMatch.opponent || lastMatch.opponentName || 'the opponent';
+          const topscorerInMatch = topScorer;
+          const pts = topscorerInMatch ? getPlayerStats(topscorerInMatch).pts : null;
+          clubNews.push({
+            icon: won ? '🏆' : '😤',
+            title: `${won ? 'Victory' : 'Defeat'} vs ${oppName}`,
+            body: topscorerInMatch && pts
+              ? `${topscorerInMatch.name} led the team with ${pts} PPG in the recent fixture.`
+              : `The team ${won ? 'picked up a win' : 'suffered a defeat'} against ${oppName}.`,
+          });
+        }
+        const trainingHighlights = userTeam.trainingHighlights ?? [];
+        trainingHighlights.slice(0, 2).forEach(h => clubNews.push({ icon: '🏋️', title: 'Training Milestone', body: h }));
+        const lastGrowth = userTeam.lastWeekFanGrowth;
+        if (lastGrowth?.growth > 0) {
+          clubNews.push({ icon: '📈', title: `+${lastGrowth.growth} new fans this week!`, body: `Your recent ${lastGrowth.recentWins}W-${lastGrowth.recentLosses}L record brought new supporters to the club.` });
+        }
+        const fanCount2 = userTeam.fanCount ?? 0;
+        const milestones = [500, 1000, 2500, 5000, 10000, 25000];
+        const reachedMilestone = milestones.find(m => fanCount2 >= m && fanCount2 < m * 1.05);
+        if (reachedMilestone) {
+          clubNews.push({ icon: '🎉', title: `${reachedMilestone.toLocaleString()} fans milestone!`, body: `Your fanbase has grown to over ${reachedMilestone.toLocaleString()} supporters. The city is buzzing!` });
+        }
+        if (clubNews.length === 0) return null;
+        return (
+          <div className="card mb-6">
+            <div className="card-header">
+              <span className="card-title" style={{ display: 'flex', alignItems: 'center', gap: 'var(--space-2)' }}>
+                <Newspaper size={16} style={{ color: 'var(--color-primary)' }} />
+                Club News
+              </span>
+            </div>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-3)' }}>
+              {clubNews.slice(0, 4).map((item, i) => (
+                <NewsItem key={i} icon={item.icon} title={item.title} body={item.body} />
+              ))}
+            </div>
+          </div>
+        );
+      })()}
+
+      {/* Match detail modal (triggered by clicking recent results) */}
+      {selectedMatch && (
+        <MatchDetailModal
+          match={selectedMatch}
+          allTeams={state.allTeams}
+          userTeamId={userTeam.id}
+          onClose={() => setSelectedMatch(null)}
+        />
+      )}
+
+      {/* Player detail drawer (triggered by clicking top performers) */}
+      {selectedPlayer && (
+        <div className="modal-overlay" onClick={() => setSelectedPlayer(null)}>
+          <div className="modal" onClick={e => e.stopPropagation()} style={{ maxWidth: 480 }}>
+            <div className="modal-header">
+              <div>
+                <h3 className="card-title">{selectedPlayer.name}</h3>
+                <div style={{ fontSize: 'var(--font-size-xs)', color: 'var(--text-muted)' }}>
+                  {selectedPlayer.position} · Age {selectedPlayer.age ?? '?'} · {selectedPlayer.nationality ?? ''}
+                  {selectedPlayer.recentForm != null && (
+                    <span style={{ marginLeft: 8, fontWeight: 700, color: selectedPlayer.recentForm > 0 ? 'var(--color-success)' : selectedPlayer.recentForm < 0 ? 'var(--color-danger)' : 'var(--text-muted)' }}>
+                      Form: {selectedPlayer.recentForm > 0 ? `+${selectedPlayer.recentForm}` : selectedPlayer.recentForm}
+                    </span>
+                  )}
+                </div>
+              </div>
+              <button className="btn btn-ghost btn-sm" onClick={() => setSelectedPlayer(null)}>✕</button>
+            </div>
+            <div className="modal-body" style={{ maxHeight: '65vh', overflowY: 'auto' }}>
+              {/* Season stats */}
+              {selectedPlayer.seasonStats && (
+                <div style={{ marginBottom: 16 }}>
+                  <div style={{ fontWeight: 700, fontSize: 'var(--font-size-sm)', marginBottom: 8, color: 'var(--color-primary)' }}>Season Stats</div>
+                  <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 8 }}>
+                    {['points', 'rebounds', 'assists', 'steals', 'blocks', 'turnovers'].map(k => {
+                      const gp = selectedPlayer.seasonStats.gamesPlayed || 1;
+                      const val = ((selectedPlayer.seasonStats[k] ?? 0) / gp).toFixed(1);
+                      return (
+                        <div key={k} style={{ textAlign: 'center', background: 'var(--bg-muted)', borderRadius: 'var(--radius-sm)', padding: '6px 4px' }}>
+                          <div style={{ fontWeight: 800, fontSize: 'var(--font-size-sm)', color: 'var(--text-primary)' }}>{val}</div>
+                          <div style={{ fontSize: '0.6rem', color: 'var(--text-muted)', textTransform: 'uppercase' }}>{k.slice(0, 3)}</div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                </div>
+              )}
+              {/* Attributes */}
+              {selectedPlayer.attributes && (
+                <div>
+                  <div style={{ fontWeight: 700, fontSize: 'var(--font-size-sm)', marginBottom: 8, color: 'var(--color-primary)' }}>Attributes</div>
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+                    {Object.entries(selectedPlayer.attributes).slice(0, 12).map(([key, val]) => (
+                      <div key={key} style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                        <span style={{ width: 160, fontSize: 'var(--font-size-xs)', color: 'var(--text-muted)', textTransform: 'capitalize', flexShrink: 0 }}>
+                          {key.replace(/([A-Z])/g, ' $1').toLowerCase()}
+                        </span>
+                        <div style={{ flex: 1, height: 6, background: 'var(--bg-muted)', borderRadius: 3, overflow: 'hidden' }}>
+                          <div style={{ width: `${val}%`, height: '100%', background: val >= 75 ? 'var(--color-success)' : val >= 55 ? 'var(--color-primary)' : 'var(--color-danger)', transition: 'width 0.3s' }} />
+                        </div>
+                        <span style={{ width: 28, fontWeight: 700, fontSize: 'var(--font-size-xs)', textAlign: 'right' }}>{Math.round(val)}</span>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

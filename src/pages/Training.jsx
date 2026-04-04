@@ -281,6 +281,7 @@ export default function Training() {
   });
 
   const [saved, setSaved] = useState(false);
+  const [activeTab, setActiveTab] = useState('allocation');
 
   const used = totalPoints(training);
   const remaining = MAX_POINTS - used;
@@ -394,8 +395,26 @@ export default function Training() {
         </div>
       </div>
 
+      {/* ── Tab bar ─────────────────────────────────────────── */}
+      <div className="tabs" style={{ marginBottom: 'var(--space-5)' }}>
+        {[
+          { id: 'allocation',  label: '🏋️ Allocation'     },
+          { id: 'focus',       label: '🎯 Focus Players'   },
+          { id: 'fitness',     label: '💪 Player Fitness'  },
+          { id: 'chemistry',   label: '🤝 Chemistry'       },
+        ].map(tab => (
+          <button
+            key={tab.id}
+            className={`tab${activeTab === tab.id ? ' active' : ''}`}
+            onClick={() => setActiveTab(tab.id)}
+          >
+            {tab.label}
+          </button>
+        ))}
+      </div>
+
       {/* ── 1. Training Focus Allocation ──────────────────────── */}
-      <div className="card mb-6">
+      {activeTab === 'allocation' && <div className="card mb-6">
         <SectionHeader
           icon={<Zap size={18} />}
           title="Training Focus Allocation"
@@ -529,8 +548,10 @@ export default function Training() {
         </div>
       </div>
 
+      }
+
       {/* ── 2. Individual Player Focus ─────────────────────────── */}
-      <div className="card mb-6">
+      {activeTab === 'focus' && <div className="card mb-6">
         <SectionHeader
           icon={<Users size={18} />}
           title="Individual Player Focus"
@@ -668,8 +689,10 @@ export default function Training() {
         )}
       </div>
 
+      }
+
       {/* ── 3. Fatigue Management ─────────────────────────────── */}
-      <div className="card mb-6">
+      {activeTab === 'fitness' && <div className="card mb-6">
         <SectionHeader
           icon={<Activity size={18} />}
           title="Fatigue Management"
@@ -768,9 +791,10 @@ export default function Training() {
           </div>
         )}
       </div>
+      }
 
       {/* ── 3b. Weekly Training Review ───────────────────────── */}
-      <div className="card mb-6">
+      {activeTab === 'allocation' && <div className="card mb-6">
         <SectionHeader
           icon={<CheckCircle size={18} />}
           title="Weekly Training Review"
@@ -811,8 +835,10 @@ export default function Training() {
         </div>
       </div>
 
+      }
+
       {/* ── 4. Team Chemistry Gauge ───────────────────────────── */}
-      <div className="card mb-6">
+      {activeTab === 'chemistry' && <div className="card mb-6">
         <SectionHeader
           icon={<Heart size={18} />}
           title="Team Chemistry"
@@ -993,6 +1019,7 @@ export default function Training() {
           </div>
         </div>
       </div>
+      }
 
       {/* Sticky save bar */}
       <div

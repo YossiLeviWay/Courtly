@@ -15,13 +15,29 @@ function getRepLevel(rep) {
 
 function getTopPlayer(players, stat) {
   if (!players?.length) return null;
-  const withStats = players.filter(p => p.seasonStats && (p.seasonStats[stat] || 0) > 0);
+  const withStats = players.filter(p => p.seasonStats && (p.seasonStats[stat] || 0) > 0 && (p.seasonStats.gamesPlayed || 0) >= 1);
   if (!withStats.length) return null;
   return withStats.sort((a, b) => {
     const agp = a.seasonStats.gamesPlayed || 1;
     const bgp = b.seasonStats.gamesPlayed || 1;
     return (b.seasonStats[stat] / bgp) - (a.seasonStats[stat] / agp);
   })[0];
+}
+
+function getUniqueLeaders(players) {
+  const usedIds = new Set();
+  const categories = [
+    { stat: 'points',   label: 'Points Leader',   icon: '🏀' },
+    { stat: 'rebounds', label: 'Rebound Leader',   icon: '💪' },
+    { stat: 'assists',  label: 'Assists Leader',   icon: '🎯' },
+    { stat: 'blocks',   label: 'Blocks Leader',    icon: '🛡️' },
+  ];
+  return categories.map(({ stat, label, icon }) => {
+    const eligible = (players || []).filter(p => !usedIds.has(p.id));
+    const player = getTopPlayer(eligible, stat);
+    if (player) usedIds.add(player.id);
+    return { stat, label, icon, player };
+  });
 }
 
 function perGame(player, stat) {
@@ -64,10 +80,11 @@ export default function TeamInfo() {
   );
   const position = sorted.findIndex(t => t.id === team.id) + 1 || '-';
 
-  const topScorer = getTopPlayer(team.players, 'points');
-  const topRebounder = getTopPlayer(team.players, 'rebounds');
-  const topPlaymaker = getTopPlayer(team.players, 'assists');
-  const topDefender = getTopPlayer(team.players, 'blocks');
+  const leaders = getUniqueLeaders(team.players);
+  const topScorer    = leaders.find(l => l.stat === 'points')?.player;
+  const topRebounder = leaders.find(l => l.stat === 'rebounds')?.player;
+  const topPlaymaker = leaders.find(l => l.stat === 'assists')?.player;
+  const topDefender  = leaders.find(l => l.stat === 'blocks')?.player;
 
   const repInfo = getRepLevel(team.reputation || 10);
   const repPct = team.reputation || 10;
