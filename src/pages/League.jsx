@@ -52,10 +52,11 @@ export default function League() {
     const schedule  = currentLeague?.schedule  || [];
     const playedMatches = schedule.filter(m => m.played);
 
-    // Build W/L from schedule directly (always fresh, even for auto-simulated matches)
+    // Build W/L from schedule directly (always fresh, even for auto-simulated matches).
+    // Scores live in m.result.homeScore / m.result.awayScore (never at the top level).
     const winsMap = {}, lossesMap = {};
-    schedule.filter(m => m.homeScore != null && m.awayScore != null).forEach(m => {
-      const homeWon = m.homeScore > m.awayScore;
+    schedule.filter(m => m.played && m.result?.homeScore != null).forEach(m => {
+      const homeWon = m.result.homeScore > m.result.awayScore;
       winsMap[m.homeTeamId]   = (winsMap[m.homeTeamId]   ?? 0) + (homeWon ? 1 : 0);
       lossesMap[m.homeTeamId] = (lossesMap[m.homeTeamId] ?? 0) + (homeWon ? 0 : 1);
       winsMap[m.awayTeamId]   = (winsMap[m.awayTeamId]   ?? 0) + (homeWon ? 0 : 1);
@@ -75,7 +76,11 @@ export default function League() {
         .sort((a, b) => (a.scheduledDate || 0) - (b.scheduledDate || 0));
 
       const last10 = teamMatches.slice(-10);
-      const l10Wins   = last10.filter(m => (m.homeTeamId === t.id ? m.homeScore : m.awayScore) > (m.homeTeamId === t.id ? m.awayScore : m.homeScore)).length;
+      const l10Wins = last10.filter(m => {
+        const us   = m.homeTeamId === t.id ? m.result?.homeScore : m.result?.awayScore;
+        const them = m.homeTeamId === t.id ? m.result?.awayScore : m.result?.homeScore;
+        return (us ?? 0) > (them ?? 0);
+      }).length;
       const l10Losses = last10.length - l10Wins;
       const l10 = last10.length > 0 ? `${l10Wins}-${l10Losses}` : '—';
 
@@ -83,9 +88,9 @@ export default function League() {
       let streak = 0, streakType = '';
       for (let i = teamMatches.length - 1; i >= 0; i--) {
         const m = teamMatches[i];
-        const teamScore = m.homeTeamId === t.id ? m.homeScore : m.awayScore;
-        const oppScore  = m.homeTeamId === t.id ? m.awayScore : m.homeScore;
-        const won = teamScore > oppScore;
+        const teamScore = m.homeTeamId === t.id ? m.result?.homeScore : m.result?.awayScore;
+        const oppScore  = m.homeTeamId === t.id ? m.result?.awayScore : m.result?.homeScore;
+        const won = (teamScore ?? 0) > (oppScore ?? 0);
         if (streak === 0) { streakType = won ? 'W' : 'L'; streak = 1; }
         else if ((won && streakType === 'W') || (!won && streakType === 'L')) streak++;
         else break;
