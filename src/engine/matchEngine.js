@@ -107,6 +107,16 @@ function teamAttackFactor(team) {
   if (pace === 'Up-tempo') factor *= 1.05;
   else if (pace === 'Slow') factor *= 0.95;
 
+  // Seven Seconds or Less: extreme up-tempo attack boost
+  if (team.tactics?.sevenSeconds) {
+    factor *= 1.12;
+  }
+
+  // Crash the Glass: second-chance points boost offense slightly
+  if (team.tactics?.crashGlass) {
+    factor *= 1.04;
+  }
+
   return clamp(factor, 0.5, 1.6);
 }
 
@@ -141,6 +151,21 @@ function teamDefenseFactor(team) {
   const closeout = team.tactics?.closeoutStrategy;
   if (closeout === 'Aggressive') factor *= 1.06;
   else if (closeout === 'Protect Lead') factor *= 1.03;
+
+  // Protect the Paint: interior defense boost
+  if (team.tactics?.protectPaint) {
+    factor *= 1.10;
+  }
+
+  // Seven Seconds or Less: defense penalty for all-out attack
+  if (team.tactics?.sevenSeconds) {
+    factor *= 0.88;
+  }
+
+  // Crash the Glass: weaker transition defense
+  if (team.tactics?.crashGlass) {
+    factor *= 0.93;
+  }
 
   return clamp(factor, 0.5, 1.6);
 }
