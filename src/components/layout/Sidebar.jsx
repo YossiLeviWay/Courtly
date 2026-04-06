@@ -39,7 +39,7 @@ const NAV_GROUPS = [
   {
     label: 'Competition',
     items: [
-      { to: '/calendar', icon: Calendar, label: 'Calendar' },
+      { to: '/fixtures', icon: Calendar, label: 'Fixtures' },
       { to: '/league', icon: Trophy, label: 'League' },
       { to: '/transfer', icon: ArrowLeftRight, label: 'Transfer' },
     ]

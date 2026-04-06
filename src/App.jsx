@@ -10,7 +10,7 @@ import Staff from './pages/Staff.jsx';
 import Training from './pages/Training.jsx';
 import Facilities from './pages/Facilities.jsx';
 import Fans from './pages/Fans.jsx';
-import Calendar from './pages/Calendar.jsx';
+import Fixtures from './pages/Fixtures.jsx';
 import League from './pages/League.jsx';
 import Transfer from './pages/Transfer.jsx';
 import TeamInfo from './pages/TeamInfo.jsx';
@@ -66,7 +66,8 @@ export default function App() {
           <Route path="training" element={<Training />} />
           <Route path="facilities" element={<Facilities />} />
           <Route path="fans" element={<Fans />} />
-          <Route path="calendar" element={<Calendar />} />
+          <Route path="fixtures" element={<Fixtures />} />
+          <Route path="calendar" element={<Fixtures />} />
           <Route path="league" element={<League />} />
           <Route path="transfer" element={<Transfer />} />
           <Route path="team" element={<TeamInfo />} />

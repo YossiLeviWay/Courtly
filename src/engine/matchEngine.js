@@ -385,8 +385,19 @@ function generateHighlightEvents(homeTeam, awayTeam, quarterScores) {
   let awayFoulsThisQuarter = 0;
   let eventId = 0;
 
+  // Game start event
+  events.push({
+    id: eventId++,
+    time: 0,
+    type: 'game_start',
+    description: `🏀 Tip-off! ${homeTeam.name} host ${awayTeam.name}. The crowd is ready — let's play!`,
+    player: null, playerId: null,
+    team: homeTeam.name, teamId: homeTeam.id,
+    score: '0-0', quarter: 1, relativeTime: 0,
+  });
+
   const quarterStarts = [0, 10, 20, 30];
-  const scoringEvents = 28; // target total highlight events
+  const scoringEvents = 35; // target total highlight events
   const eventsPerQuarter = Math.ceil(scoringEvents / 4);
 
   for (let q = 0; q < 4; q++) {
