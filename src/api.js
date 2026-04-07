@@ -365,18 +365,22 @@ export async function apiRecordMatchResult({
   homeScore, awayScore,
   log, playerStats, quarterScores,
 }) {
+  // Always save the match log first — independently of other writes so a
+  // failed match-document update never blocks highlight/stats storage.
+  await apiSaveMatchLog(matchId, { events: log, playerStats, quarterScores, homeScore, awayScore, homeTeamName, awayTeamName, leagueId });
+
   try {
-    // 1. Mark match as played (no log embedded – stored in match_logs)
-    const matchBatch = writeBatch(db);
-    matchBatch.update(doc(db, 'matches', matchId), {
+    // Mark match as played — use setDoc+merge so it works whether or not
+    // the document already exists in Firestore.
+    await setDoc(doc(db, 'matches', matchId), {
       played: true, homeScore, awayScore,
-    });
-    await matchBatch.commit();
+    }, { merge: true });
+  } catch (err) {
+    console.warn('Could not update match document (non-fatal):', err);
+  }
 
-    // 1b. Save log to separate collection
-    await apiSaveMatchLog(matchId, { events: log, playerStats, quarterScores, homeScore, awayScore, homeTeamName, awayTeamName, leagueId });
-
-    // 2. Increment standings (requires a read first)
+  try {
+    // Increment standings (requires a read first)
     const homeRef = doc(db, 'standings', `${leagueId}_${homeTeamId}`);
     const awayRef = doc(db, 'standings', `${leagueId}_${awayTeamId}`);
     const [homeSnap, awaySnap] = await Promise.all([getDoc(homeRef), getDoc(awayRef)]);
@@ -401,7 +405,7 @@ export async function apiRecordMatchResult({
     });
     await standBatch.commit();
   } catch (err) {
-    console.error('Record match error:', err);
+    console.error('Record match standings error:', err);
   }
 }
 
