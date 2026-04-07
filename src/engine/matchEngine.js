@@ -280,52 +280,67 @@ function simulatePossession(shotQuality) {
 // ── Event Generation ──────────────────────────────────────────
 
 const DUNK_DESCRIPTIONS = [
-  '{player} rises up and THROWS IT DOWN!',
-  '{player} with a thunderous two-handed slam!',
-  '{player} posterises the defender for a massive dunk!',
-  '{player} catches the lob and hammers it home!',
-  'BOOM! {player} with an emphatic finish at the rim!',
+  '{player} rises up and THROWS IT DOWN! +2',
+  '{player} with a thunderous two-handed slam! +2',
+  '{player} posterises the defender for a massive dunk! +2',
+  '{player} catches the lob and hammers it home! +2',
+  'BOOM! {player} with an emphatic finish at the rim! +2',
+  '{player} goes coast-to-coast and DUNKS on the break! +2',
 ];
 
 const LAYUP_DESCRIPTIONS = [
-  '{player} glides in for the finger roll!',
-  '{player} splits the defense and lays it in softly.',
-  '{player} with a quick drive and a smooth layup.',
-  '{player} converts the reverse layup!',
-  'Clever footwork from {player} for the easy two.',
+  '{player} glides in for the finger roll! +2',
+  '{player} splits the defense and lays it in softly. +2',
+  '{player} with a quick drive and a smooth layup. +2',
+  '{player} converts the reverse layup! +2',
+  'Clever footwork from {player} — easy two off the glass. +2',
+  '{player} draws the defense and kisses it off the board. +2',
 ];
 
 const THREE_DESCRIPTIONS = [
-  '{player} steps back and drains the triple!',
-  'SPLASH! {player} from well beyond the arc!',
-  '{player} fires from the corner — BANG, three!',
-  'Ice in the veins from {player}! Triple!',
-  '{player} pulls up from deep — it\'s good!',
+  '{player} steps back and drains the triple! +3',
+  'SPLASH! {player} from well beyond the arc! +3',
+  '{player} fires from the corner — BANG, three! +3',
+  'Ice in the veins from {player}! Triple! +3',
+  '{player} pulls up from deep — it\'s good! +3',
+  '{player} catches and fires — THREE! +3',
+  'Nothing but net for {player} from downtown! +3',
 ];
 
 const MIDRANGE_DESCRIPTIONS = [
-  '{player} hits the mid-range jumper!',
-  '{player} with the pull-up from 18 feet.',
-  'Textbook form from {player} — mid-range money.',
-  '{player} fades away and hits the jumper!',
+  '{player} hits the mid-range jumper! +2',
+  '{player} with the pull-up from 18 feet. +2',
+  'Textbook form from {player} — mid-range money. +2',
+  '{player} fades away and hits the jumper! +2',
+  '{player} stops on a dime and knocks it down. +2',
+];
+
+const FREE_THROW_DESCRIPTIONS = [
+  '{player} steps to the line and converts. +1',
+  'Cool and calm — {player} makes the free throw. +1',
+  '{player} sinks the charity stripe shot. +1',
+  'No sweat — {player} nails the free throw. +1',
 ];
 
 const STEAL_DESCRIPTIONS = [
   '{player} reads the pass and picks the pocket!',
-  'Quickhands from {player} — steal and push!',
-  '{player} strips the ball and the crowd erupts!',
+  'Quick hands from {player} — steal and push!',
+  '{player} strips the ball clean on the drive!',
+  '{player} deflects the pass and pounces on it!',
 ];
 
 const BLOCK_DESCRIPTIONS = [
-  '{player} rejects the shot at the rim!',
+  '{player} rejects the shot at the rim! No good!',
   'DENIED! {player} with the emphatic block!',
-  '{player} sends it into the third row!',
+  '{player} swats it away — sent into the crowd!',
+  '{player} comes from behind with the chase-down block!',
 ];
 
 const FOUL_DESCRIPTIONS = [
   '{player} picks up a foul. Referee calls it quickly.',
   'Whistled on {player} — that\'s a personal foul.',
   '{player} reaches in and the referee blows the whistle.',
+  'Foul on {player} — too aggressive on the drive.',
 ];
 
 const TURNOVER_DESCRIPTIONS = [
@@ -333,12 +348,14 @@ const TURNOVER_DESCRIPTIONS = [
   'Bad pass from {player}. Turnover.',
   '{player} dribbles off their own foot. Turnover.',
   'Ball knocked away — {player} coughs it up.',
+  '{player} telegraphs the pass and it\'s intercepted.',
 ];
 
 const TIMEOUT_DESCRIPTIONS = [
   '{team} calls a timeout to regroup.',
   'Timeout on the floor — {team} needs a breather.',
   '{team}\'s bench calls for a stoppage.',
+  'TV timeout — {team} huddles up to discuss strategy.',
 ];
 
 const INJURY_DESCRIPTIONS = [
@@ -350,7 +367,7 @@ const INJURY_DESCRIPTIONS = [
 const FIGHT_DESCRIPTIONS = [
   'Tempers flare! {player} and an opponent jaw at each other — officials step in.',
   'A scuffle breaks out near the paint! {player} is restrained by teammates.',
-  'Pushing and shoving after the whistle — {player} is involved in the altercation.',
+  'Pushing and shoving after the whistle — {player} is involved.',
 ];
 
 const TECHNICAL_DESCRIPTIONS = [
@@ -362,7 +379,7 @@ const TECHNICAL_DESCRIPTIONS = [
 const COMEBACK_DESCRIPTIONS = [
   '{team} storms back! They\'re cutting into the lead!',
   'Incredible run from {team} — this game is not over!',
-  '{team} with a 7-0 burst to get back in it!',
+  '{team} with a quick burst to get back in it!',
 ];
 
 function fillTemplate(template, player, team) {
@@ -371,302 +388,238 @@ function fillTemplate(template, player, team) {
     .replace('{team}', team?.name ?? 'The team');
 }
 
+/**
+ * Build scoring plays for a team that sum EXACTLY to targetPts.
+ * Returns array of raw play objects (no time assigned yet).
+ */
+function buildScoringPlays(team, targetPts) {
+  const plays = [];
+  let pts = 0;
+  while (pts < targetPts) {
+    const remaining = targetPts - pts;
+    let type, playPts;
+    if (remaining === 1) {
+      type = 'free_throw'; playPts = 1;
+    } else if (remaining === 2) {
+      const r = _rng();
+      type = r < 0.45 ? 'dunk' : r < 0.80 ? 'layup' : 'midrange';
+      playPts = 2;
+    } else {
+      const r = _rng();
+      if (r < 0.25) { type = 'three_pointer'; playPts = 3; }
+      else {
+        const r2 = _rng();
+        type = r2 < 0.40 ? 'dunk' : r2 < 0.72 ? 'layup' : r2 < 0.88 ? 'midrange' : 'free_throw';
+        playPts = type === 'free_throw' ? 1 : 2;
+      }
+    }
+    const player = pickPlayer(team);
+    const templates = {
+      three_pointer: THREE_DESCRIPTIONS,
+      dunk: DUNK_DESCRIPTIONS,
+      layup: LAYUP_DESCRIPTIONS,
+      midrange: MIDRANGE_DESCRIPTIONS,
+      free_throw: FREE_THROW_DESCRIPTIONS,
+    };
+    plays.push({
+      type,
+      pts: playPts,
+      player: player.name,
+      playerId: player.id,
+      team: team.name,
+      teamId: team.id,
+      description: fillTemplate(randomFrom(templates[type]), player, team),
+    });
+    pts += playPts;
+  }
+  return plays;
+}
+
+/**
+ * Build non-scoring event objects (fouls, steals, blocks, turnovers, subs, etc.)
+ * for a single quarter. No time or score assigned yet.
+ */
+function buildNonScoringEvents(homeTeam, awayTeam) {
+  const evts = [];
+  const mk = (type, team, player, desc) => ({
+    type, pts: 0,
+    player: player?.name ?? null,
+    playerId: player?.id ?? null,
+    team: team?.name ?? null,
+    teamId: team?.id ?? null,
+    description: desc,
+  });
+
+  // Fouls: 2-4
+  const fouls = 2 + Math.floor(_rng() * 3);
+  for (let i = 0; i < fouls; i++) {
+    const t = _rng() < 0.5 ? homeTeam : awayTeam;
+    const p = pickPlayer(t);
+    evts.push(mk('foul', t, p, fillTemplate(randomFrom(FOUL_DESCRIPTIONS), p, t)));
+  }
+  // Steals: 1-3
+  const steals = 1 + Math.floor(_rng() * 3);
+  for (let i = 0; i < steals; i++) {
+    const t = _rng() < 0.5 ? homeTeam : awayTeam;
+    const p = pickPlayer(t);
+    evts.push(mk('steal', t, p, fillTemplate(randomFrom(STEAL_DESCRIPTIONS), p, t)));
+  }
+  // Blocks: 1-2
+  const blocks = 1 + Math.floor(_rng() * 2);
+  for (let i = 0; i < blocks; i++) {
+    const t = _rng() < 0.5 ? homeTeam : awayTeam;
+    const p = pickPlayer(t);
+    evts.push(mk('block', t, p, fillTemplate(randomFrom(BLOCK_DESCRIPTIONS), p, t)));
+  }
+  // Turnovers: 1-3
+  const tovs = 1 + Math.floor(_rng() * 3);
+  for (let i = 0; i < tovs; i++) {
+    const t = _rng() < 0.5 ? homeTeam : awayTeam;
+    const p = pickPlayer(t);
+    evts.push(mk('turnover', t, p, fillTemplate(randomFrom(TURNOVER_DESCRIPTIONS), p, t)));
+  }
+  // Substitutions: 1-2 per team
+  for (const t of [homeTeam, awayTeam]) {
+    const subs = 1 + Math.floor(_rng() * 2);
+    for (let i = 0; i < subs; i++) {
+      const outP = pickPlayer(t);
+      const inP  = pickPlayer(t);
+      evts.push(mk('substitution', t, inP,
+        `${t.name} makes a change: ${inP.name} comes on for ${outP.name}.`));
+    }
+  }
+  // Timeout: 0-1 per side
+  if (_rng() < 0.40) {
+    const t = _rng() < 0.5 ? homeTeam : awayTeam;
+    evts.push(mk('timeout', t, null, fillTemplate(randomFrom(TIMEOUT_DESCRIPTIONS), null, t)));
+  }
+  // Rare: injury (~10%), technical (~8%), fight (~4%)
+  if (_rng() < 0.10) {
+    const t = _rng() < 0.5 ? homeTeam : awayTeam;
+    const p = pickPlayer(t);
+    evts.push(mk('injury', t, p, fillTemplate(randomFrom(INJURY_DESCRIPTIONS), p, t)));
+  }
+  if (_rng() < 0.08) {
+    const t = _rng() < 0.5 ? homeTeam : awayTeam;
+    const p = pickPlayer(t);
+    evts.push(mk('technical_foul', t, p, fillTemplate(randomFrom(TECHNICAL_DESCRIPTIONS), p, t)));
+  }
+  if (_rng() < 0.04) {
+    const t = _rng() < 0.5 ? homeTeam : awayTeam;
+    const p = pickPlayer(t);
+    evts.push(mk('fight', t, p, fillTemplate(randomFrom(FIGHT_DESCRIPTIONS), p, t)));
+  }
+  return evts;
+}
+
+/**
+ * generateHighlightEvents — fully synced to quarter scores.
+ *
+ * For each quarter:
+ *  1. Build scoring plays for home + away that sum EXACTLY to qScore.home / qScore.away
+ *  2. Build non-scoring events (fouls, steals, subs, etc.)
+ *  3. Merge, shuffle, assign evenly-spaced unique times within the 10-min window
+ *  4. Walk in time order, increment running score as each scoring event fires
+ *  5. Every event carries the LIVE score AFTER it was processed
+ */
 function generateHighlightEvents(homeTeam, awayTeam, quarterScores) {
   const events = [];
-  const totalMinutes = 40;
-  const quarterLength = 10;
-
-  // Track running score for context
-  let homeRunning = 0;
-  let awayRunning = 0;
-  let homeTOsLeft = [2, 2]; // timeouts per half [0]=first half, [1]=second half
-  let awayTOsLeft = [2, 2];
-  let homeFoulsThisQuarter = 0;
-  let awayFoulsThisQuarter = 0;
+  let homeTotal = 0;
+  let awayTotal = 0;
   let eventId = 0;
 
-  // Game start event
+  // Tip-off
   events.push({
-    id: eventId++,
-    time: 0,
+    id: eventId++, time: 0, quarter: 1,
     type: 'game_start',
     description: `🏀 Tip-off! ${homeTeam.name} host ${awayTeam.name}. The crowd is ready — let's play!`,
     player: null, playerId: null,
     team: homeTeam.name, teamId: homeTeam.id,
-    score: '0-0', quarter: 1, relativeTime: 0,
+    score: '0-0', relativeTime: 0,
   });
 
-  const quarterStarts = [0, 10, 20, 30];
-  const scoringEvents = 35; // target total highlight events
-  const eventsPerQuarter = Math.ceil(scoringEvents / 4);
-
   for (let q = 0; q < 4; q++) {
-    const qStart = quarterStarts[q];
-    const qScore = quarterScores[q];
-    homeRunning += qScore.home;
-    awayRunning += qScore.away;
+    const qStart = q * 10;
+    const { home: targetHome, away: targetAway } = quarterScores[q];
 
-    homeFoulsThisQuarter = 0;
-    awayFoulsThisQuarter = 0;
+    // 1. Scoring plays (exact totals)
+    const homePlays = buildScoringPlays(homeTeam, targetHome);
+    const awayPlays = buildScoringPlays(awayTeam, targetAway);
+    // 2. Non-scoring events
+    const nonScoring = buildNonScoringEvents(homeTeam, awayTeam);
 
-    // Spread events within the quarter
-    const minuteSlots = [];
-    for (let i = 0; i < eventsPerQuarter; i++) {
-      minuteSlots.push(parseFloat((qStart + _rng() * quarterLength).toFixed(1)));
+    // 3. Merge and shuffle (Fisher-Yates)
+    const pool = [...homePlays, ...awayPlays, ...nonScoring];
+    for (let i = pool.length - 1; i > 0; i--) {
+      const j = Math.floor(_rng() * (i + 1));
+      [pool[i], pool[j]] = [pool[j], pool[i]];
     }
-    minuteSlots.sort((a, b) => a - b);
 
-    for (const minute of minuteSlots) {
-      eventId++;
-      const roll = _rng();
-      let event;
+    // 4. Assign evenly-spread times within [qStart+0.2, qStart+9.7]
+    //    Each slot is separated by at least 0.3 min, with light jitter.
+    const n = pool.length;
+    const span = 9.5;
+    pool.forEach((ev, i) => {
+      const frac = n <= 1 ? 0.5 : i / (n - 1);
+      const base = qStart + 0.2 + frac * span;
+      const jitter = (_rng() - 0.5) * Math.min(0.4, span / (n + 1));
+      ev.time = parseFloat(Math.max(qStart + 0.1, Math.min(qStart + 9.8, base + jitter)).toFixed(1));
+      ev.quarter = q + 1;
+    });
+    // Sort by assigned time
+    pool.sort((a, b) => a.time - b.time);
 
-      if (roll < 0.22) {
-        // Three pointer
-        const team = _rng() < 0.5 ? homeTeam : awayTeam;
-        const player = pickPlayer(team);
-        event = {
-          id: eventId,
-          time: minute,
-          type: 'three_pointer',
-          description: fillTemplate(randomFrom(THREE_DESCRIPTIONS), player, team),
-          player: player.name,
-          playerId: player.id,
-          team: team.name,
-          teamId: team.id,
-          score: `${homeRunning}-${awayRunning}`,
+    // 5. Walk in order — update running score after each scoring play
+    let homeQ = 0, awayQ = 0;
+    for (const ev of pool) {
+      if (ev.pts) {
+        if (ev.teamId === homeTeam.id) homeQ += ev.pts;
+        else awayQ += ev.pts;
+      }
+      ev.score = `${homeTotal + homeQ}-${awayTotal + awayQ}`;
+      ev.id = eventId++;
+      events.push(ev);
+    }
+
+    homeTotal += targetHome;
+    awayTotal += targetAway;
+
+    // Quarter / halftime break marker
+    const isHalf = q === 1;
+    events.push({
+      id: eventId++,
+      time: qStart + 10,
+      quarter: q + 1,
+      type: isHalf ? 'half_time' : 'quarter_end',
+      description: isHalf
+        ? `HALF TIME: ${homeTeam.name} ${homeTotal} – ${awayTotal} ${awayTeam.name}`
+        : `End of Q${q + 1}: ${homeTeam.name} ${homeTotal} – ${awayTotal} ${awayTeam.name}`,
+      player: null, playerId: null, team: null, teamId: null,
+      score: `${homeTotal}-${awayTotal}`,
+    });
+
+    // Momentum commentary mid-game (halves only, when big gap)
+    if (q === 1 || q === 3) {
+      const diff = homeTotal - awayTotal;
+      if (Math.abs(diff) >= 10) {
+        const trailingTeam = diff > 0 ? awayTeam : homeTeam;
+        events.push({
+          id: eventId++,
+          time: qStart + 10.05,
           quarter: q + 1,
-        };
-      } else if (roll < 0.42) {
-        // Dunk
-        const team = _rng() < 0.5 ? homeTeam : awayTeam;
-        const player = pickPlayer(team);
-        event = {
-          id: eventId,
-          time: minute,
-          type: 'dunk',
-          description: fillTemplate(randomFrom(DUNK_DESCRIPTIONS), player, team),
-          player: player.name,
-          playerId: player.id,
-          team: team.name,
-          teamId: team.id,
-          score: `${homeRunning}-${awayRunning}`,
-          quarter: q + 1,
-        };
-      } else if (roll < 0.55) {
-        // Layup
-        const team = _rng() < 0.5 ? homeTeam : awayTeam;
-        const player = pickPlayer(team);
-        event = {
-          id: eventId,
-          time: minute,
-          type: 'layup',
-          description: fillTemplate(randomFrom(LAYUP_DESCRIPTIONS), player, team),
-          player: player.name,
-          playerId: player.id,
-          team: team.name,
-          teamId: team.id,
-          score: `${homeRunning}-${awayRunning}`,
-          quarter: q + 1,
-        };
-      } else if (roll < 0.63) {
-        // Foul
-        const team = _rng() < 0.5 ? homeTeam : awayTeam;
-        const player = pickPlayer(team);
-        if (team === homeTeam) homeFoulsThisQuarter++;
-        else awayFoulsThisQuarter++;
-        event = {
-          id: eventId,
-          time: minute,
-          type: 'foul',
-          description: fillTemplate(randomFrom(FOUL_DESCRIPTIONS), player, team),
-          player: player.name,
-          playerId: player.id,
-          team: team.name,
-          teamId: team.id,
-          score: `${homeRunning}-${awayRunning}`,
-          quarter: q + 1,
-        };
-      } else if (roll < 0.70) {
-        // Turnover
-        const team = _rng() < 0.5 ? homeTeam : awayTeam;
-        const player = pickPlayer(team);
-        event = {
-          id: eventId,
-          time: minute,
-          type: 'turnover',
-          description: fillTemplate(randomFrom(TURNOVER_DESCRIPTIONS), player, team),
-          player: player.name,
-          playerId: player.id,
-          team: team.name,
-          teamId: team.id,
-          score: `${homeRunning}-${awayRunning}`,
-          quarter: q + 1,
-        };
-      } else if (roll < 0.75) {
-        // Steal
-        const team = _rng() < 0.5 ? homeTeam : awayTeam;
-        const player = pickPlayer(team);
-        event = {
-          id: eventId,
-          time: minute,
-          type: 'steal',
-          description: fillTemplate(randomFrom(STEAL_DESCRIPTIONS), player, team),
-          player: player.name,
-          playerId: player.id,
-          team: team.name,
-          teamId: team.id,
-          score: `${homeRunning}-${awayRunning}`,
-          quarter: q + 1,
-        };
-      } else if (roll < 0.79) {
-        // Block
-        const team = _rng() < 0.5 ? homeTeam : awayTeam;
-        const player = pickPlayer(team);
-        event = {
-          id: eventId,
-          time: minute,
-          type: 'block',
-          description: fillTemplate(randomFrom(BLOCK_DESCRIPTIONS), player, team),
-          player: player.name,
-          playerId: player.id,
-          team: team.name,
-          teamId: team.id,
-          score: `${homeRunning}-${awayRunning}`,
-          quarter: q + 1,
-        };
-      } else if (roll < 0.84) {
-        // Timeout
-        const halfIdx = q < 2 ? 0 : 1;
-        let team, teamTOs;
-        if (_rng() < 0.5 && homeTOsLeft[halfIdx] > 0) {
-          team = homeTeam; homeTOsLeft[halfIdx]--;
-        } else if (awayTOsLeft[halfIdx] > 0) {
-          team = awayTeam; awayTOsLeft[halfIdx]--;
-        } else {
-          team = homeTeam;
-        }
-        event = {
-          id: eventId,
-          time: minute,
-          type: 'timeout',
-          description: fillTemplate(randomFrom(TIMEOUT_DESCRIPTIONS), null, team),
-          player: null,
-          playerId: null,
-          team: team.name,
-          teamId: team.id,
-          score: `${homeRunning}-${awayRunning}`,
-          quarter: q + 1,
-        };
-      } else if (roll < 0.87) {
-        // Substitution
-        const team = _rng() < 0.5 ? homeTeam : awayTeam;
-        const outPlayer = pickPlayer(team);
-        const inPlayer = pickPlayer(team);
-        event = {
-          id: eventId,
-          time: minute,
-          type: 'substitution',
-          description: `${team.name} makes a change: ${inPlayer.name} comes on for ${outPlayer.name}.`,
-          player: inPlayer.name,
-          playerId: inPlayer.id,
-          team: team.name,
-          teamId: team.id,
-          score: `${homeRunning}-${awayRunning}`,
-          quarter: q + 1,
-        };
-      } else if (roll < 0.90) {
-        // Technical foul (rare)
-        const team = _rng() < 0.5 ? homeTeam : awayTeam;
-        const player = pickPlayer(team);
-        event = {
-          id: eventId,
-          time: minute,
-          type: 'technical_foul',
-          description: fillTemplate(randomFrom(TECHNICAL_DESCRIPTIONS), player, team),
-          player: player.name,
-          playerId: player.id,
-          team: team.name,
-          teamId: team.id,
-          score: `${homeRunning}-${awayRunning}`,
-          quarter: q + 1,
-        };
-      } else if (roll < 0.93) {
-        // Comeback moment
-        const leadDiff = homeRunning - awayRunning;
-        let trailingTeam = leadDiff < 0 ? homeTeam : awayTeam;
-        event = {
-          id: eventId,
-          time: minute,
           type: 'comeback',
           description: fillTemplate(randomFrom(COMEBACK_DESCRIPTIONS), null, trailingTeam),
-          player: null,
-          playerId: null,
-          team: trailingTeam.name,
-          teamId: trailingTeam.id,
-          score: `${homeRunning}-${awayRunning}`,
-          quarter: q + 1,
-        };
-      } else if (roll < 0.96) {
-        // Injury (rare)
-        const team = _rng() < 0.5 ? homeTeam : awayTeam;
-        const player = pickPlayer(team);
-        event = {
-          id: eventId,
-          time: minute,
-          type: 'injury',
-          description: fillTemplate(randomFrom(INJURY_DESCRIPTIONS), player, team),
-          player: player.name,
-          playerId: player.id,
-          team: team.name,
-          teamId: team.id,
-          score: `${homeRunning}-${awayRunning}`,
-          quarter: q + 1,
-        };
-      } else {
-        // Fight (very rare)
-        const team = _rng() < 0.5 ? homeTeam : awayTeam;
-        const player = pickPlayer(team);
-        event = {
-          id: eventId,
-          time: minute,
-          type: 'fight',
-          description: fillTemplate(randomFrom(FIGHT_DESCRIPTIONS), player, team),
-          player: player.name,
-          playerId: player.id,
-          team: team.name,
-          teamId: team.id,
-          score: `${homeRunning}-${awayRunning}`,
-          quarter: q + 1,
-        };
+          player: null, playerId: null,
+          team: trailingTeam.name, teamId: trailingTeam.id,
+          score: `${homeTotal}-${awayTotal}`,
+        });
       }
-
-      events.push(event);
     }
-
-    // Quarter / half-time marker
-    const isHalfTime = q === 1;
-    eventId++;
-    events.push({
-      id: eventId,
-      time: qStart + quarterLength,
-      quarter: q + 1,
-      type: isHalfTime ? 'half_time' : 'quarter_end',
-      description: isHalfTime
-        ? `HALF TIME: ${homeTeam.name} ${homeRunning} – ${awayRunning} ${awayTeam.name}`
-        : `End of Q${q + 1}: ${homeTeam.name} ${homeRunning} – ${awayRunning} ${awayTeam.name}`,
-      player: null,
-      playerId: null,
-      team: null,
-      teamId: null,
-      score: `${homeRunning}-${awayRunning}`,
-    });
   }
 
-  // Stamp every event with its real-time offset from tip-off so the
-  // Live viewer can reveal events in sync across all users.
+  // Stamp real-time offsets for live-mode sync
   events.forEach(ev => {
-    ev.relativeTime = gameMinToRelSec(ev.time, ev.quarter);
+    ev.relativeTime = gameMinToRelSec(ev.time ?? 0, ev.quarter ?? 1);
   });
 
   return events;
