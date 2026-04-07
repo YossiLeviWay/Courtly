@@ -1,7 +1,8 @@
 import { useState, useEffect } from 'react';
 import { X } from 'lucide-react';
-import { apiGetMatchLog } from '../api.js';
+import { apiGetMatchLog, apiSaveMatchLog } from '../api.js';
 import { formatMatchDate } from '../engine/gameScheduler.js';
+import { simulateMatch } from '../engine/matchEngine.js';
 
 const GAME_DURATION_MS = 6900 * 1000;
 
@@ -55,6 +56,22 @@ function TeamStatsRow({ label, home, away, higherIsBetter = true }) {
   );
 }
 
+/** Convert simulateMatch result → log shape expected by this modal */
+function simResultToLog(result, match) {
+  return {
+    matchId:      match.id,
+    leagueId:     match.leagueId || '',
+    homeTeamName: match.homeTeamName || result.homeTeamName || '',
+    awayTeamName: match.awayTeamName || result.awayTeamName || '',
+    homeScore:    result.homeScore,
+    awayScore:    result.awayScore,
+    events:       result.log    || result.events || [],
+    playerStats:  result.playerStats || {},
+    quarterScores: result.quarterScores || [],
+    reconstructed: true,
+  };
+}
+
 export default function MatchDetailModal({ match, allTeams, userTeamId, onClose }) {
   const [log, setLog]         = useState(null);
   const [loading, setLoading] = useState(true);
@@ -65,9 +82,41 @@ export default function MatchDetailModal({ match, allTeams, userTeamId, onClose 
     Date.now() >= match.scheduledDate &&
     Date.now() - match.scheduledDate < GAME_DURATION_MS;
 
+  const homeTeam = allTeams?.find(t => t.id === match.homeTeamId);
+  const awayTeam = allTeams?.find(t => t.id === match.awayTeamId);
+
   useEffect(() => {
     setLoading(true); setLog(null);
-    apiGetMatchLog(match.id).then(d => { setLog(d); setLoading(false); }).catch(() => setLoading(false));
+    apiGetMatchLog(match.id).then(firestoreLog => {
+      if (firestoreLog) {
+        setLog(firestoreLog);
+        setLoading(false);
+        return;
+      }
+      // No Firestore log — re-simulate with same seed (deterministic) for played matches
+      if (match.played && homeTeam && awayTeam) {
+        try {
+          const result = simulateMatch(homeTeam, awayTeam, match.scheduledDate, match.id);
+          const reconstructed = simResultToLog(result, match);
+          setLog(reconstructed);
+          // Save to Firestore so future loads skip re-simulation
+          apiSaveMatchLog(match.id, {
+            events:       reconstructed.events,
+            playerStats:  reconstructed.playerStats,
+            quarterScores: reconstructed.quarterScores,
+            homeScore:    reconstructed.homeScore,
+            awayScore:    reconstructed.awayScore,
+            homeTeamName: reconstructed.homeTeamName,
+            awayTeamName: reconstructed.awayTeamName,
+            leagueId:     reconstructed.leagueId,
+          }).catch(() => {});
+        } catch (e) {
+          console.warn('Could not reconstruct match log:', e);
+        }
+      }
+      setLoading(false);
+    }).catch(() => setLoading(false));
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [match.id]);
 
   useEffect(() => {
@@ -87,24 +136,18 @@ export default function MatchDetailModal({ match, allTeams, userTeamId, onClose 
   const oppTeamName  = isUserHome ? match.awayTeamName : match.homeTeamName;
   const userWon      = (userScore ?? -1) > (oppScore ?? -1);
 
+  // quarterScores stored as [{home, away}, {home, away}, ...]
   const rawQS  = log?.quarterScores || [];
-  const homeQS = rawQS[0] || [];
-  const awayQS = rawQS[1] || [];
+  const homeQS = rawQS.map(q => (typeof q === 'object' ? q.home : q));
+  const awayQS = rawQS.map(q => (typeof q === 'object' ? q.away : q));
   const userQS = isUserHome ? homeQS : awayQS;
   const oppQS  = isUserHome ? awayQS : homeQS;
 
   const events      = log?.events      || [];
   const playerStats = log?.playerStats || {};
 
-  const homeTeam    = allTeams?.find(t => t.id === match.homeTeamId);
-  const awayTeam    = allTeams?.find(t => t.id === match.awayTeamId);
   const homePids    = new Set((homeTeam?.players || []).map(p => p.id));
   const awayPids    = new Set((awayTeam?.players || []).map(p => p.id));
-
-  // Fallback: if teams aren't in allTeams, partition by log playerStats teamId
-  const homeStatsPlayers = Object.values(playerStats).filter(s =>
-    homePids.size > 0 ? homePids.has(s.playerId) : true
-  );
 
   const userTeamObj = isUserHome ? homeTeam : awayTeam;
   const oppTeamObj  = isUserHome ? awayTeam : homeTeam;
@@ -250,7 +293,7 @@ export default function MatchDetailModal({ match, allTeams, userTeamId, onClose 
             <div className="empty-state">
               <div className="empty-state-icon">📋</div>
               <div className="empty-state-title">No detailed log available</div>
-              <div className="empty-state-desc">This match was played before detailed logs were recorded.</div>
+              <div className="empty-state-desc">Match data could not be loaded for this game.</div>
             </div>
           )}
 
