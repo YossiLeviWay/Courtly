@@ -898,6 +898,22 @@ export async function apiStampMarketSeedDate() {
   );
 }
 
+/** Returns a map of { [teamId]: username } for all registered users who have a teamId. */
+export async function apiGetTeamUserMap() {
+  try {
+    const snap = await getDocs(collection(db, 'users'));
+    const map = {};
+    snap.docs.forEach(d => {
+      const data = d.data();
+      if (data.teamId) map[data.teamId] = data.username || 'Player';
+    });
+    return map;
+  } catch (err) {
+    console.warn('Could not load team-user map:', err);
+    return {};
+  }
+}
+
 // ── Internal helper ──────────────────────────────────────────────
 
 async function _propagateTeamName(teamId, name) {

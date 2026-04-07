@@ -3,6 +3,7 @@ import { useGame } from '../context/GameContext.jsx';
 import { Calendar as CalendarIcon, Clock, MapPin, Plus, ChevronLeft, ChevronRight, Zap, X, MessageCircle, Send } from 'lucide-react';
 import { getNextMatch, formatMatchDate, getTimeUntilMatch } from '../engine/gameScheduler.js';
 import { useNavigate } from 'react-router-dom';
+import { apiGetTeamUserMap } from '../api.js';
 import MatchDetailModal from '../components/MatchDetailModal.jsx';
 
 const MONTHS = ['January','February','March','April','May','June','July','August','September','October','November','December'];
@@ -139,7 +140,7 @@ function ScoutReport({ team, matches, userTeamId }) {
 
 // ── Opponent Modal (enhanced) ──────────────────────────────────
 
-function OpponentModal({ team, opponentId, userTeam, allMatches, allTeams, scouts, teamScoutTargets, onClose, onMatchClick, onAssignScout, onSendMessage }) {
+function OpponentModal({ team, opponentId, userTeam, allMatches, allTeams, scouts, teamScoutTargets, teamUserMap, onClose, onMatchClick, onAssignScout, onSendMessage }) {
   const [showMessage, setShowMessage] = useState(false);
   const [msgText, setMsgText]         = useState('');
 
@@ -160,7 +161,8 @@ function OpponentModal({ team, opponentId, userTeam, allMatches, allTeams, scout
   // Scout assignment check
   const scoutAssigned = teamScoutTargets?.[opponentId];
   const hasIdleScout  = (scouts || []).some(s => s.missionStatus === 'idle' || !s.missionStatus);
-  const isUserTeam    = !!team?.isUserTeam || !!team?.userId;
+  const managerName   = teamUserMap?.[opponentId];
+  const isUserTeam    = !!managerName;
   const teamType      = isUserTeam ? 'USER' : 'BOT';
 
   const fullTeam      = allTeams?.find(t => t.id === opponentId) || team;
@@ -177,7 +179,7 @@ function OpponentModal({ team, opponentId, userTeam, allMatches, allTeams, scout
               </span>
             </h3>
             <div style={{ fontSize: 'var(--font-size-xs)', color: 'var(--text-muted)' }}>
-              {isUserTeam ? `👤 Managed by: ${team?.managerName || 'a player'}` : '🤖 Managed by AI'}
+              {isUserTeam ? `👤 Managed by: ${managerName}` : '🤖 Managed by AI'}
               &nbsp;·&nbsp;Season: {opponentWins}W – {opponentLosses}L
             </div>
           </div>
@@ -282,7 +284,7 @@ function OpponentModal({ team, opponentId, userTeam, allMatches, allTeams, scout
 
 // ── Create Friendly Modal ──────────────────────────────────────
 
-function CreateFriendlyModal({ teams, onClose, onCreate }) {
+function CreateFriendlyModal({ teams, teamUserMap, onClose, onCreate }) {
   const [selectedTeam, setSelectedTeam] = useState('');
   const [selectedDate, setSelectedDate] = useState(() => {
     const d = new Date();
@@ -306,7 +308,7 @@ function CreateFriendlyModal({ teams, onClose, onCreate }) {
             <select className="form-select" value={selectedTeam} onChange={e => setSelectedTeam(e.target.value)}>
               <option value="">Select a team…</option>
               {(teams || []).map(t => (
-                <option key={t.id} value={t.id}>{t.name} {t.isUserTeam ? '(User)' : '(BOT)'}</option>
+                <option key={t.id} value={t.id}>{t.name} {teamUserMap?.[t.id] ? `(${teamUserMap[t.id]})` : '(BOT)'}</option>
               ))}
             </select>
           </div>
@@ -343,6 +345,12 @@ export default function Fixtures() {
   const [newEvent, setNewEvent]             = useState({ title: '', date: '', description: '' });
   const [selectedOpponent, setSelectedOpponent] = useState(null);
   const [selectedMatch, setSelectedMatch]   = useState(null);
+  const [teamUserMap, setTeamUserMap]       = useState({});
+
+  // Load team → username map from Firestore once
+  useEffect(() => {
+    apiGetTeamUserMap().then(map => setTeamUserMap(map));
+  }, []);
 
   // Team scouting assignments: { [teamId]: { assignedAt } }
   const teamScoutTargets = team?.teamScoutTargets || {};
@@ -736,7 +744,7 @@ export default function Fixtures() {
       )}
 
       {showFriendly && (
-        <CreateFriendlyModal teams={opponentTeams} onClose={() => setShowFriendly(false)} onCreate={handleCreateFriendly} />
+        <CreateFriendlyModal teams={opponentTeams} teamUserMap={teamUserMap} onClose={() => setShowFriendly(false)} onCreate={handleCreateFriendly} />
       )}
 
       {selectedOpponent && (
@@ -748,6 +756,7 @@ export default function Fixtures() {
           allTeams={state.allTeams}
           scouts={scouts}
           teamScoutTargets={teamScoutTargets}
+          teamUserMap={teamUserMap}
           onClose={() => setSelectedOpponent(null)}
           onMatchClick={m => { setSelectedOpponent(null); setSelectedMatch(m); }}
           onAssignScout={handleAssignScout}
