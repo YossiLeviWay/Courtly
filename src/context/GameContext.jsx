@@ -288,21 +288,29 @@ export function GameProvider({ children }) {
       const user    = buildUserProfile(userStateRes.user, userStateRes.state?.profileData || {});
 
       // ── Auto-seed transfer market ─
-      // Trigger if admin OR if the market is completely empty (e.g. first time setup)
-      if (isAdminUser || transferMarket.length === 0) {
+      // Trigger if admin OR if the market is missing free agents or staff
+      const freeAgentsCount = transferMarket.filter(t => t.isFreeAgent).length;
+      const staffCount = transferMarket.filter(t => t.isStaff).length;
+      const needsSeed = freeAgentsCount === 0 || staffCount === 0;
+
+      if (isAdminUser || needsSeed) {
         try {
           const worldState = await apiGetWorldState();
           const lastSeedMs = worldState?.lastMarketSeedDate?.toMillis?.()
             ?? worldState?.lastMarketSeedDate?.seconds * 1000
             ?? 0;
           const daysSinceSeed = (Date.now() - lastSeedMs) / 86_400_000;
-          if (daysSinceSeed > 7 || transferMarket.length === 0) {
-            await Promise.all([apiSeedFreeAgents(), apiSeedStaffMarket()]);
+          if (daysSinceSeed > 7 || needsSeed) {
+            const seedTasks = [];
+            if (daysSinceSeed > 7 || freeAgentsCount === 0) seedTasks.push(apiSeedFreeAgents());
+            if (daysSinceSeed > 7 || staffCount === 0) seedTasks.push(apiSeedStaffMarket());
+
+            await Promise.all(seedTasks);
             await apiStampMarketSeedDate();
             // Refetch immediately so they appear on screen right away
             transferMarket = await apiGetTransferMarket();
           }
-        } catch { /* non-fatal */ }
+        } catch (e) { console.error('Market auto-seed error:', e); }
       }
 
       // ── Simulate any pending matches ────────────────────────────
