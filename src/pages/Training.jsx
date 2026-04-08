@@ -8,7 +8,39 @@ import {
   CheckCircle,
   AlertTriangle,
   Info,
+  Save,
 } from 'lucide-react';
+
+// ── Floating player hover card ─────────────────────────────────
+function PlayerHoverCard({ player, x, y }) {
+  if (!player) return null;
+  return (
+    <div style={{
+      position: 'fixed', left: x + 16, top: y - 40, zIndex: 9999,
+      background: 'var(--bg-card)', border: '1px solid var(--border-color)',
+      borderRadius: 'var(--radius-lg)', padding: '10px 14px',
+      boxShadow: '0 8px 24px rgba(0,0,0,0.18)', minWidth: 180, pointerEvents: 'none',
+    }}>
+      <div style={{ fontWeight: 700, fontSize: 'var(--font-size-sm)', marginBottom: 4 }}>{player.name}</div>
+      <div style={{ fontSize: 'var(--font-size-xs)', color: 'var(--text-muted)', marginBottom: 6 }}>
+        {player.position} · OVR {player.overallRating ?? player.overall ?? '?'}
+      </div>
+      <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
+        <span style={{ fontSize: 11, padding: '2px 7px', borderRadius: 20, background: (player.fatigue ?? 0) > 70 ? 'rgba(239,68,68,0.1)' : 'var(--bg-muted)', color: (player.fatigue ?? 0) > 70 ? '#ef4444' : 'var(--text-muted)' }}>
+          Fatigue {player.fatigue ?? 0}%
+        </span>
+        <span style={{ fontSize: 11, padding: '2px 7px', borderRadius: 20, background: 'var(--bg-muted)', color: 'var(--text-muted)' }}>
+          Form {player.lastFormRating ?? 50}
+        </span>
+        {player.injuryStatus && player.injuryStatus !== 'healthy' && (
+          <span style={{ fontSize: 11, padding: '2px 7px', borderRadius: 20, background: 'rgba(239,68,68,0.1)', color: '#ef4444' }}>
+            {player.injuryStatus}
+          </span>
+        )}
+      </div>
+    </div>
+  );
+}
 
 // ── Training area definitions ─────────────────────────────────
 
@@ -58,6 +90,15 @@ const TRAINING_AREAS = [
     staffInfluenceLabel: 'Psychologist',
     staffAbilityKey: 'motivation',
   },
+  {
+    id: 'gymStrength',
+    label: 'GYM / Strength Training',
+    icon: '💪',
+    impactsLabel: 'Vertical/Leaping Ability, Body Control, Agility/Lateral Speed',
+    staffInfluenceRole: 'Strength & Conditioning Coach',
+    staffInfluenceLabel: 'S&C Coach',
+    staffAbilityKey: 'strengthTraining',
+  },
 ];
 
 const MAX_POINTS = 100;
@@ -67,8 +108,9 @@ const DEFAULT_TRAINING = {
   offensiveSchemes: 20,
   defensiveDrills: 20,
   skillWorkShooting: 20,
-  conditioning: 20,
-  teamBuilding: 20,
+  conditioning: 15,
+  teamBuilding: 10,
+  gymStrength: 15,
 };
 
 // ── Chemistry factors ─────────────────────────────────────────
@@ -239,6 +281,7 @@ export default function Training() {
   });
 
   const [saved, setSaved] = useState(false);
+  const [activeTab, setActiveTab] = useState('allocation');
 
   const used = totalPoints(training);
   const remaining = MAX_POINTS - used;
@@ -326,8 +369,10 @@ export default function Training() {
 
   // ── Render ─────────────────────────────────────────────────
 
+  const usedPoints = totalPoints(training);
+
   return (
-    <div className="page-content animate-fade-in">
+    <div className="page-content animate-fade-in" style={{ paddingBottom: 80 }}>
       {/* Page header */}
       <div className="page-header">
         <div
@@ -350,8 +395,26 @@ export default function Training() {
         </div>
       </div>
 
+      {/* ── Tab bar ─────────────────────────────────────────── */}
+      <div className="tabs" style={{ marginBottom: 'var(--space-5)' }}>
+        {[
+          { id: 'allocation',  label: '🏋️ Allocation'     },
+          { id: 'focus',       label: '🎯 Focus Players'   },
+          { id: 'fitness',     label: '💪 Player Fitness'  },
+          { id: 'chemistry',   label: '🤝 Chemistry'       },
+        ].map(tab => (
+          <button
+            key={tab.id}
+            className={`tab${activeTab === tab.id ? ' active' : ''}`}
+            onClick={() => setActiveTab(tab.id)}
+          >
+            {tab.label}
+          </button>
+        ))}
+      </div>
+
       {/* ── 1. Training Focus Allocation ──────────────────────── */}
-      <div className="card mb-6">
+      {activeTab === 'allocation' && <div className="card mb-6">
         <SectionHeader
           icon={<Zap size={18} />}
           title="Training Focus Allocation"
@@ -485,8 +548,10 @@ export default function Training() {
         </div>
       </div>
 
+      }
+
       {/* ── 2. Individual Player Focus ─────────────────────────── */}
-      <div className="card mb-6">
+      {activeTab === 'focus' && <div className="card mb-6">
         <SectionHeader
           icon={<Users size={18} />}
           title="Individual Player Focus"
@@ -624,8 +689,10 @@ export default function Training() {
         )}
       </div>
 
+      }
+
       {/* ── 3. Fatigue Management ─────────────────────────────── */}
-      <div className="card mb-6">
+      {activeTab === 'fitness' && <div className="card mb-6">
         <SectionHeader
           icon={<Activity size={18} />}
           title="Fatigue Management"
@@ -724,9 +791,54 @@ export default function Training() {
           </div>
         )}
       </div>
+      }
+
+      {/* ── 3b. Weekly Training Review ───────────────────────── */}
+      {activeTab === 'allocation' && <div className="card mb-6">
+        <SectionHeader
+          icon={<CheckCircle size={18} />}
+          title="Weekly Training Review"
+          subtitle="Expected attribute improvements based on your current training allocation"
+        />
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(200px, 1fr))', gap: 12 }}>
+          {TRAINING_AREAS.map(area => {
+            const points = training[area.id] ?? 0;
+            const intensity = points >= 30 ? 'High' : points >= 15 ? 'Medium' : 'Low';
+            const gain = points >= 30 ? '+2 to +3 per player' : points >= 15 ? '+1 to +2 per player' : points > 0 ? '+0 to +1 per player' : 'No development';
+            const color = points >= 30 ? 'var(--color-success)' : points >= 15 ? 'var(--color-warning)' : points > 0 ? 'var(--color-primary)' : 'var(--text-muted)';
+            const staffInfo = getStaffAbility(staffObj, area.staffInfluenceRole, area.staffAbilityKey);
+            const staffBonus = staffInfo?.value >= 70 ? ' (+staff bonus)' : '';
+            return (
+              <div key={area.id} style={{
+                padding: '12px 14px', borderRadius: 'var(--radius-md)',
+                background: points > 0 ? 'var(--bg-muted)' : 'transparent',
+                border: '1px solid var(--border-color)',
+                opacity: points === 0 ? 0.5 : 1,
+              }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 6 }}>
+                  <span style={{ fontSize: '1rem' }}>{area.icon}</span>
+                  <span style={{ fontSize: 'var(--font-size-xs)', fontWeight: 700, color, background: `${color}20`, padding: '2px 7px', borderRadius: 20 }}>{intensity}</span>
+                </div>
+                <div style={{ fontSize: 'var(--font-size-xs)', fontWeight: 700, marginBottom: 4 }}>{area.label}</div>
+                <div style={{ fontSize: 'var(--font-size-xs)', color: 'var(--text-muted)', marginBottom: 4 }}>{area.impactsLabel}</div>
+                <div style={{ fontSize: 'var(--font-size-xs)', fontWeight: 700, color }}>{gain}{staffBonus}</div>
+                <div style={{ marginTop: 6, height: 4, background: 'var(--bg-card)', borderRadius: 'var(--radius-full)', overflow: 'hidden' }}>
+                  <div style={{ width: `${Math.min(100, (points / 40) * 100)}%`, height: '100%', background: color, borderRadius: 'var(--radius-full)' }} />
+                </div>
+              </div>
+            );
+          })}
+        </div>
+        <div style={{ marginTop: 12, padding: '10px 14px', borderRadius: 'var(--radius-md)', background: 'var(--bg-muted)', fontSize: 'var(--font-size-xs)', color: 'var(--text-muted)' }}>
+          💡 Attribute gains apply weekly to all active (non-injured) players. Focus players receive 2× gains.
+          {focusPlayers.length > 0 && <> <strong style={{ color: 'var(--color-primary)' }}>{focusPlayers.length} focus player{focusPlayers.length > 1 ? 's' : ''}</strong> will receive double development this week.</>}
+        </div>
+      </div>
+
+      }
 
       {/* ── 4. Team Chemistry Gauge ───────────────────────────── */}
-      <div className="card mb-6">
+      {activeTab === 'chemistry' && <div className="card mb-6">
         <SectionHeader
           icon={<Heart size={18} />}
           title="Team Chemistry"
@@ -907,33 +1019,41 @@ export default function Training() {
           </div>
         </div>
       </div>
+      }
 
-      {/* Save row */}
+      {/* Sticky save bar */}
       <div
         style={{
-          display: 'flex',
-          justifyContent: 'flex-end',
-          gap: 'var(--space-3)',
-          marginTop: 'var(--space-4)',
+          position: 'fixed', bottom: 0, left: 0, right: 0, zIndex: 100,
+          background: 'var(--bg-card)', borderTop: '1px solid var(--border-color)',
+          padding: '12px 24px', display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+          boxShadow: '0 -4px 12px rgba(0,0,0,0.08)',
         }}
       >
-        <button
-          className="btn btn-ghost"
-          onClick={() => {
-            setTraining({ ...DEFAULT_TRAINING, ...userTeam?.training });
-            setFocusPlayers(userTeam?.training?.focusPlayers ?? []);
-          }}
-        >
-          Reset Changes
-        </button>
-        <button
-          className="btn btn-primary btn-lg"
-          onClick={handleSave}
-          disabled={isOver}
-        >
-          <CheckCircle size={18} />
-          Save Training
-        </button>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+          <span style={{ fontSize: 'var(--font-size-sm)', color: isOver ? 'var(--color-danger)' : 'var(--text-muted)', fontWeight: isOver ? 700 : 400 }}>
+            {usedPoints}/100 points allocated
+          </span>
+          {isOver && <span style={{ fontSize: 'var(--font-size-xs)', color: 'var(--color-danger)' }}>Over by {usedPoints - 100} — adjust sliders</span>}
+        </div>
+        <div style={{ display: 'flex', gap: 'var(--space-3)' }}>
+          <button
+            className="btn btn-ghost"
+            onClick={() => {
+              setTraining({ ...DEFAULT_TRAINING, ...userTeam?.training });
+              setFocusPlayers(userTeam?.training?.focusPlayers ?? []);
+            }}
+          >
+            Reset
+          </button>
+          <button
+            className={`btn btn-lg ${saved ? 'btn-success' : 'btn-primary'}`}
+            onClick={handleSave}
+            disabled={isOver || saved}
+          >
+            {saved ? <><CheckCircle size={16} /> Saved!</> : <><Save size={16} /> Save Training Plan</>}
+          </button>
+        </div>
       </div>
 
       {/* Inline success notification */}

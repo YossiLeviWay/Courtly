@@ -1,41 +1,53 @@
 import { createContext, useContext, useReducer, useEffect, useCallback, useRef } from 'react';
+import { onAuthStateChanged, signOut } from 'firebase/auth';
+import { auth } from '../firebase.js';
 import {
-  getToken, clearToken,
   apiGetWorld, apiGetMatches, apiGetStandings, apiGetUserState,
-  apiSaveUserState,
+  apiGetTransferMarket, apiSaveUserState, apiRecordMatchResult,
+  apiGetGameBrainConfig,
+  apiGetWorldState, apiStampMarketSeedDate,
+  apiSeedFreeAgents, apiSeedStaffMarket,
 } from '../api.js';
+import { processPendingMatches } from '../engine/gameScheduler.js';
 
-// ── Build game state from structured DB rows ───────────────────
+// ── Build game state from Firestore data ───────────────────────
 
 function buildLeagues(worldLeagues, dbMatches, dbStandings) {
-  // Build a team_id → team_name map from the DB (authoritative, reflects user renames)
   const dbNameMap = {};
-  dbStandings.forEach(s => { if (s.team_id) dbNameMap[s.team_id] = s.team_name; });
+  dbStandings.forEach(s => { if (s.teamId) dbNameMap[s.teamId] = s.teamName; });
 
   return worldLeagues.map(league => {
     const schedule = dbMatches
-      .filter(m => m.league_id === league.id)
+      .filter(m => m.leagueId === league.id)
       .map(m => ({
-        id: m.id,
-        homeTeamId: m.home_team_id,
-        awayTeamId: m.away_team_id,
-        homeTeamName: m.home_team_name,
-        awayTeamName: m.away_team_name,
-        scheduledDate: Number(m.scheduled_date),
-        played: m.played,
-        result: m.played ? { homeScore: m.home_score, awayScore: m.away_score } : null,
-        log: m.log || [],
+        id:            m.id,
+        leagueId:      m.leagueId,
+        homeTeamId:    m.homeTeamId,
+        awayTeamId:    m.awayTeamId,
+        homeTeamName:  m.homeTeamName,
+        awayTeamName:  m.awayTeamName,
+        scheduledDate: Number(m.scheduledDate),
+        played:        m.played,
+        result:        m.played ? { homeScore: m.homeScore, awayScore: m.awayScore } : null,
+        // log is NOT stored in match docs – it lives in match_logs/{id}
       }));
 
     const standings = dbStandings
-      .filter(s => s.league_id === league.id)
-      .map(s => ({ teamId: s.team_id, teamName: s.team_name, wins: Number(s.wins), losses: Number(s.losses), points: Number(s.points) }));
+      .filter(s => s.leagueId === league.id)
+      .map(s => ({
+        teamId:   s.teamId,
+        teamName: s.teamName,
+        wins:     Number(s.wins),
+        losses:   Number(s.losses),
+        points:   Number(s.points),
+      }));
 
     const finalStandings = standings.length > 0
       ? standings
-      : (league.teams || []).map(t => ({ teamId: t.id, teamName: dbNameMap[t.id] || t.name, wins: 0, losses: 0, points: 0 }));
+      : (league.teams || []).map(t => ({
+          teamId: t.id, teamName: dbNameMap[t.id] || t.name, wins: 0, losses: 0, points: 0,
+        }));
 
-    // Apply DB team names to every team so the league table always reads from world_standings
     const teams = (league.teams || []).map(t => ({
       ...t,
       name: dbNameMap[t.id] || t.name,
@@ -45,51 +57,77 @@ function buildLeagues(worldLeagues, dbMatches, dbStandings) {
   });
 }
 
-function buildUserTeam(worldLeagues, userState) {
-  const allWorldTeams = worldLeagues.flatMap(l => l.teams || []);
-  const baseTeam = allWorldTeams.find(t => t.id === userState.team_id);
+function buildUserTeam(leagues, userState) {
+  const allTeams = leagues.flatMap(l => l.teams || []);
+  const baseTeam = allTeams.find(t => t.id === userState.teamId);
   if (!baseTeam) return null;
 
-  const profileData = userState.profile_data || {};
-  const evolvedPlayers = Array.isArray(userState.players_state) && userState.players_state.length > 0
-    ? userState.players_state
+  const profileData = userState.profileData || {};
+  const evolvedPlayers = Array.isArray(userState.playersState) && userState.playersState.length > 0
+    ? userState.playersState
     : (baseTeam.players || []);
+
+  const userLeague = leagues.find(l => l.teams?.some(t => t.id === userState.teamId));
+  const seasonMatches = (userLeague?.schedule || [])
+    .filter(m => m.homeTeamId === userState.teamId || m.awayTeamId === userState.teamId)
+    .map(m => ({
+      ...m,
+      date:         m.scheduledDate,
+      isHome:       m.homeTeamId === userState.teamId,
+      opponentName: m.homeTeamId === userState.teamId ? m.awayTeamName : m.homeTeamName,
+      opponentId:   m.homeTeamId === userState.teamId ? m.awayTeamId   : m.homeTeamId,
+    }));
 
   return {
     ...baseTeam,
-    // Apply user's custom team/stadium names if set
-    name: profileData.teamName?.trim() || baseTeam.name,
-    stadiumName: profileData.stadiumName?.trim() || baseTeam.stadiumName,
-    isUserTeam: true,
-    players: evolvedPlayers,
-    budget: userState.budget ?? 250,
-    facilities: userState.facilities ?? {},
-    tactics: userState.tactics ?? {},
-    fanCount: userState.fan_count ?? 250,
-    fanEnthusiasm: userState.fan_enthusiasm ?? 20,
-    ticketPrice: userState.ticket_price ?? 20,
-    teamExposure: userState.team_exposure ?? 0,
-    chemistryGauge: userState.chemistry_gauge ?? 50,
-    momentumBar: userState.momentum_bar ?? 65,
-    reputation: userState.reputation ?? 10,
-    matchHistory: userState.match_history ?? [],
-    wins: userState.season_record?.wins ?? 0,
-    losses: userState.season_record?.losses ?? 0,
+    name:          profileData.teamName?.trim()    || baseTeam.name,
+    stadiumName:   profileData.stadiumName?.trim() || baseTeam.stadiumName,
+    isUserTeam:    true,
+    players:       evolvedPlayers,
+    seasonMatches,
+    budget:         userState.budget         ?? 250,
+    facilities:     userState.facilities     ?? {},
+    tactics:        userState.tactics        ?? {},
+    training:       profileData.training     ?? {},
+    fanCount:       userState.fanCount       ?? 250,
+    fanEnthusiasm:  userState.fanEnthusiasm  ?? 20,
+    ticketPrice:    userState.ticketPrice    ?? 20,
+    teamExposure:   userState.teamExposure   ?? 0,
+    chemistryGauge: userState.chemistryGauge ?? 50,
+    momentumBar:    userState.momentumBar    ?? 65,
+    motivationBar:  userState.motivationBar  ?? 60,
+    reputation:     userState.reputation     ?? 10,
+    matchHistory:   userState.matchHistory   ?? [],
+    youthDraft:     userState.youthDraft     ?? null,
+    staff:          userState.staff          ?? {},
+    lastFanGrowthDate:     userState.lastFanGrowthDate     ?? null,
+    lastTrainingApplied:   userState.lastTrainingApplied   ?? 0,
+    weeksPlayed:           userState.weeksPlayed           ?? 0,
+    lastMatchBrainHighlights: userState.lastMatchBrainHighlights ?? [],
+    lastWeekFanGrowth:     userState.lastWeekFanGrowth     ?? null,
+    trainingHighlights:    userState.trainingHighlights    ?? [],
+    wins:         userState.seasonRecord?.wins    ?? 0,
+    losses:       userState.seasonRecord?.losses  ?? 0,
+    seasonRecord: {
+      wins:   userState.seasonRecord?.wins   ?? 0,
+      losses: userState.seasonRecord?.losses ?? 0,
+    },
   };
 }
 
 function buildUserProfile(dbUser, profileData) {
   return {
-    id: dbUser?.id,
-    username: dbUser?.username || '',
-    email: dbUser?.email || '',
-    bio: profileData?.bio || '',
-    gender: profileData?.gender || '',
-    avatar: profileData?.avatar || { type: 'initials', emoji: null },
+    id:                   dbUser?.id,
+    username:             dbUser?.username             || '',
+    email:                dbUser?.email                || '',
+    isAdmin:              dbUser?.isAdmin              ?? false,
+    bio:                  profileData?.bio             || '',
+    gender:               profileData?.gender          || '',
+    avatar:               profileData?.avatar          || { type: 'initials', emoji: null },
     settingsChangesToday: profileData?.settingsChangesToday || 0,
-    lastSettingsChange: profileData?.lastSettingsChange || null,
-    joinedAt: dbUser?.created_at || Date.now(),
-    records: profileData?.records || { wins: 0, losses: 0, honors: [] },
+    lastSettingsChange:   profileData?.lastSettingsChange   || null,
+    joinedAt:             dbUser?.createdAt            || Date.now(),
+    records:              profileData?.records         || { wins: 0, losses: 0, honors: [] },
   };
 }
 
@@ -97,29 +135,39 @@ function extractUserState(state) {
   const t = state.userTeam;
   if (!t) return null;
   return {
-    teamId: t.id,
-    budget: t.budget ?? 250,
-    facilities: t.facilities ?? {},
-    tactics: t.tactics ?? {},
-    playersState: t.players ?? [],
-    fanCount: t.fanCount ?? 250,
-    fanEnthusiasm: t.fanEnthusiasm ?? 20,
-    ticketPrice: t.ticketPrice ?? 20,
-    teamExposure: t.teamExposure ?? 0,
+    teamId:         t.id,
+    budget:         t.budget         ?? 250,
+    facilities:     t.facilities     ?? {},
+    tactics:        t.tactics        ?? {},
+    playersState:   t.players        ?? [],
+    fanCount:       t.fanCount       ?? 250,
+    fanEnthusiasm:  t.fanEnthusiasm  ?? 20,
+    ticketPrice:    t.ticketPrice    ?? 20,
+    teamExposure:   t.teamExposure   ?? 0,
     chemistryGauge: t.chemistryGauge ?? 50,
-    momentumBar: t.momentumBar ?? 65,
-    reputation: t.reputation ?? 10,
-    matchHistory: t.matchHistory ?? [],
-    seasonRecord: { wins: t.wins ?? 0, losses: t.losses ?? 0 },
+    momentumBar:    t.momentumBar    ?? 65,
+    motivationBar:  t.motivationBar  ?? 60,
+    reputation:     t.reputation     ?? 10,
+    matchHistory:   t.matchHistory   ?? [],
+    youthDraft:     t.youthDraft     ?? null,
+    staff:          t.staff          ?? {},
+    lastFanGrowthDate:   t.lastFanGrowthDate   ?? null,
+    lastTrainingApplied: t.lastTrainingApplied ?? 0,
+    weeksPlayed:         t.weeksPlayed         ?? 0,
+    lastMatchBrainHighlights: t.lastMatchBrainHighlights ?? [],
+    lastWeekFanGrowth:   t.lastWeekFanGrowth   ?? null,
+    trainingHighlights:  t.trainingHighlights  ?? [],
+    seasonRecord:   { wins: t.wins ?? 0, losses: t.losses ?? 0 },
     profileData: {
-      bio: state.user?.bio || '',
-      gender: state.user?.gender || '',
-      avatar: state.user?.avatar || { type: 'initials', emoji: null },
+      bio:                  state.user?.bio                  || '',
+      gender:               state.user?.gender               || '',
+      avatar:               state.user?.avatar               || { type: 'initials', emoji: null },
       settingsChangesToday: state.user?.settingsChangesToday || 0,
-      lastSettingsChange: state.user?.lastSettingsChange || null,
-      records: state.user?.records || { wins: 0, losses: 0, honors: [] },
-      teamName: state.userTeam?.name || '',
-      stadiumName: state.userTeam?.stadiumName || '',
+      lastSettingsChange:   state.user?.lastSettingsChange   || null,
+      records:              state.user?.records              || { wins: 0, losses: 0, honors: [] },
+      teamName:             state.userTeam?.name             || '',
+      stadiumName:          state.userTeam?.stadiumName      || '',
+      training:             state.userTeam?.training         ?? {},
     },
   };
 }
@@ -129,16 +177,16 @@ function extractUserState(state) {
 const GameContext = createContext(null);
 
 const initialState = {
-  user: null,
-  userTeam: null,
-  leagues: null,
-  allTeams: [],
+  user:          null,
+  userTeam:      null,
+  leagues:       null,
+  allTeams:      [],
   transferMarket: [],
-  currentMatch: null,
-  isMatchLive: false,
+  currentMatch:  null,
+  isMatchLive:   false,
   notifications: [],
-  lastUpdated: null,
-  initialized: false,
+  lastUpdated:   null,
+  initialized:   false,
 };
 
 function gameReducer(state, action) {
@@ -191,6 +239,10 @@ function gameReducer(state, action) {
       return { ...state, notifications: [action.payload, ...state.notifications].slice(0, 50) };
     case 'CLEAR_NOTIFICATION':
       return { ...state, notifications: state.notifications.filter(n => n.id !== action.payload) };
+    case 'CLEAR_ALL_NOTIFICATIONS':
+      return { ...state, notifications: [] };
+    case 'UPDATE_USER':
+      return { ...state, user: { ...state.user, ...action.payload } };
     default:
       return state;
   }
@@ -200,21 +252,23 @@ export function GameProvider({ children }) {
   const [state, dispatch] = useReducer(gameReducer, initialState);
   const justLoaded = useRef(false);
 
-  // ── Load from structured DB tables on mount ─────────────────
-  useEffect(() => {
-    const token = getToken();
-    if (!token) {
-      dispatch({ type: 'INIT_GAME', payload: { ...initialState, initialized: true } });
-      return;
-    }
+  // ── Core data loader (called on login + polling) ──────────────
+  const loadGameData = useCallback(async () => {
+    if (!auth.currentUser) return;
 
-    Promise.all([
-      apiGetWorld(),        // { leagues } — teams + players + staff (shared, static)
-      apiGetMatches(),      // world_matches rows (shared, dynamic)
-      apiGetStandings(),    // world_standings rows (shared, dynamic)
-      apiGetUserState(),    // { state, user } (per-user)
-    ]).then(([world, dbMatches, dbStandings, userStateRes]) => {
-      if (!world || !userStateRes?.state) {
+    try {
+      const [world, dbMatches, dbStandings, userStateRes, transferMarket, gameBrainOverrides] = await Promise.all([
+        apiGetWorld(),
+        apiGetMatches(),
+        apiGetStandings(),
+        apiGetUserState(),
+        apiGetTransferMarket(),
+        apiGetGameBrainConfig(),
+      ]);
+
+      const isAdminUser = userStateRes?.user?.isAdmin ?? false;
+
+      if (!world || (!userStateRes?.state && !isAdminUser)) {
         if (!world) {
           dispatch({
             type: 'ADD_NOTIFICATION',
@@ -226,27 +280,222 @@ export function GameProvider({ children }) {
             },
           });
         }
-        clearToken();
         dispatch({ type: 'INIT_GAME', payload: { ...initialState, initialized: true } });
         return;
       }
 
       const leagues = buildLeagues(world.leagues, dbMatches, dbStandings);
-      const userTeam = buildUserTeam(world.leagues, userStateRes.state);
-      const user = buildUserProfile(
-        { ...userStateRes.user, id: userStateRes.state.user_id },
-        userStateRes.state.profile_data || {}
-      );
+      const user    = buildUserProfile(userStateRes.user, userStateRes.state?.profileData || {});
 
-      if (!userTeam) {
-        clearToken();
+      // ── Auto-seed transfer market (admin only, max once per 7 days) ─
+      if (isAdminUser) {
+        try {
+          const worldState = await apiGetWorldState();
+          const lastSeedMs = worldState?.lastMarketSeedDate?.toMillis?.()
+            ?? worldState?.lastMarketSeedDate?.seconds * 1000
+            ?? 0;
+          const daysSinceSeed = (Date.now() - lastSeedMs) / 86_400_000;
+          if (daysSinceSeed > 7) {
+            await Promise.all([apiSeedFreeAgents(5), apiSeedStaffMarket(3)]);
+            await apiStampMarketSeedDate();
+          }
+        } catch { /* non-fatal */ }
+      }
+
+      // ── Simulate any pending matches ────────────────────────────
+      let simulatedLeagues = leagues;
+      let processedMatchData = [];
+      try {
+        const allTeamsForSim = leagues.flatMap(l => l.teams || []);
+        const fullSchedule   = leagues.flatMap(l => l.schedule || []);
+        const simResult = processPendingMatches(allTeamsForSim, fullSchedule);
+        processedMatchData = simResult.processedMatchData;
+
+        // Apply Game Brain admin overrides to processed results
+        if (gameBrainOverrides && processedMatchData.length > 0) {
+          processedMatchData = processedMatchData.map(md => {
+            const ov = gameBrainOverrides[md.matchId];
+            if (!ov) return md;
+            let { homeScore, awayScore } = md;
+            if (ov.homeScore != null) homeScore = ov.homeScore;
+            if (ov.awayScore != null) awayScore = ov.awayScore;
+            if (ov.forceWinner === 'home' && homeScore <= awayScore) homeScore = awayScore + 5;
+            if (ov.forceWinner === 'away' && awayScore <= homeScore) awayScore = homeScore + 5;
+            return { ...md, homeScore, awayScore };
+          });
+          // Also update schedule with overridden scores
+          processedMatchData.forEach(md => {
+            const idx = simResult.updatedSchedule.findIndex(m => m.id === md.matchId);
+            if (idx >= 0) {
+              simResult.updatedSchedule[idx] = {
+                ...simResult.updatedSchedule[idx],
+                result: { homeScore: md.homeScore, awayScore: md.awayScore },
+              };
+            }
+          });
+        }
+
+        // Persist results to Firebase: mark matches played + update standings
+        for (const matchData of processedMatchData) {
+          apiRecordMatchResult({
+            matchId:       matchData.matchId,
+            leagueId:      matchData.leagueId,
+            homeTeamId:    matchData.homeTeamId,
+            awayTeamId:    matchData.awayTeamId,
+            homeTeamName:  matchData.homeTeamName,
+            awayTeamName:  matchData.awayTeamName,
+            homeScore:     matchData.homeScore,
+            awayScore:     matchData.awayScore,
+            log:           matchData.events,
+            playerStats:   matchData.playerStats,
+            quarterScores: matchData.quarterScores,
+          }).catch(() => {});
+        }
+
+        simulatedLeagues = leagues.map(l => ({
+          ...l,
+          teams:    (l.teams    || []).map(t => simResult.updatedTeams.find(u => u.id === t.id) || t),
+          schedule: simResult.updatedSchedule.filter(m => m.leagueId === l.id),
+        }));
+      } catch (simErr) {
+        console.warn('Match simulation error (non-fatal):', simErr);
+      }
+
+      // ── Sunday fan growth ────────────────────────────────────────
+      // Once per week (Sunday), apply fan growth based on enthusiasm + results.
+      const now = Date.now();
+      const thisWeekSunday = (() => {
+        const d = new Date(now);
+        const day = d.getDay(); // 0=Sun
+        d.setHours(0, 0, 0, 0);
+        d.setDate(d.getDate() - day); // roll back to Sunday
+        return d.getTime();
+      })();
+      const lastFanGrowth = userStateRes.state?.lastFanGrowthDate ?? 0;
+      if (userStateRes.state && lastFanGrowth < thisWeekSunday) {
+        const enthusiasm = userStateRes.state.fanEnthusiasm ?? 20;
+        const history = userStateRes.state.matchHistory ?? [];
+        const recentWins = history.slice(0, 5).filter(m =>
+          m.result === 'W' || (m.teamScore ?? m.userScore ?? 0) > (m.oppScore ?? m.opponentScore ?? 0)
+        ).length;
+        const recentLosses = Math.min(5, history.slice(0, 5).length) - recentWins;
+        const baseGrowth = Math.round((enthusiasm / 100) * 50 + (enthusiasm > 50 ? 20 : 0));
+        const resultBonus = (recentWins - 2) * 8; // -16..+24 based on last 5
+        // Seniority bonus: each week played adds 1% growth (max 50% bonus)
+        const weeksPlayed = userStateRes.state.weeksPlayed ?? 0;
+        const seniorityMult = Math.min(1 + weeksPlayed * 0.01, 1.5);
+        const growth = Math.max(0, Math.round((baseGrowth + resultBonus) * seniorityMult));
+        userStateRes.state.fanCount = (userStateRes.state.fanCount ?? 250) + growth;
+        userStateRes.state.lastFanGrowthDate = now;
+        userStateRes.state.weeksPlayed = weeksPlayed + 1;
+        // Store fan growth info for display in Fans.jsx
+        userStateRes.state.lastWeekFanGrowth = { growth, recentWins, recentLosses };
+      }
+
+      // ── Weekly training progression ──────────────────────────────
+      // Once per week (Sunday), apply attribute gains based on training plan.
+      const TRAINING_ATTR_MAP = {
+        offensiveSchemes:  ['courtVision', 'passingAccuracy', 'basketballIQ'],
+        defensiveDrills:   ['perimeterDefense', 'interiorDefense', 'helpDefense'],
+        skillWorkShooting: ['threePtShooting', 'midRangeScoring', 'freeThrowShooting'],
+        conditioning:      ['staminaEndurance', 'conditioningFitness', 'agilityLateralSpeed'],
+        teamBuilding:      ['teamFirstAttitude', 'leadershipCommunication', 'handlePressureMental'],
+        gymStrength:       ['verticalLeapingAbility', 'bodyControl', 'agilityLateralSpeed'],
+      };
+      const lastTrainingApplied = userStateRes.state?.lastTrainingApplied ?? 0;
+      if (userStateRes.state && lastTrainingApplied < thisWeekSunday) {
+        const trainingPlan  = userStateRes.state.profileData?.training ?? {};
+        const focusPlayers  = trainingPlan.focusPlayers ?? [];
+        const players       = userStateRes.state.playersState ?? [];
+        const trainingHighlights = [];
+        userStateRes.state.playersState = players.map(p => {
+          // Injured players don't develop this week
+          if (p.injuryStatus && p.injuryStatus !== 'healthy') return p;
+          const isFocus   = focusPlayers.includes(p.id);
+          const newAttrs  = { ...(p.attributes || {}) };
+          let topGainKey  = null;
+          let topGainVal  = 0;
+
+          for (const [area, keys] of Object.entries(TRAINING_ATTR_MAP)) {
+            const pts      = trainingPlan[area] ?? 0;
+            if (pts <= 0) continue;
+            // base gain: up to ~0.6 per attribute at max 40 pts; focus doubles it
+            const baseGain = (pts / 100) * 1.5;
+            const gain     = isFocus ? baseGain * 2 : baseGain;
+            keys.forEach(k => {
+              if (newAttrs[k] != null) {
+                newAttrs[k] = Math.min(99, newAttrs[k] + gain);
+                if (gain > topGainVal) { topGainVal = gain; topGainKey = k; }
+              }
+            });
+          }
+
+          // Training Brain: track streak and apply breakthrough
+          const prevKey     = p.trainingStreakKey ?? null;
+          const prevStreak  = p.trainingStreak    ?? 0;
+          const newStreakKey = topGainKey;
+          const newStreak   = newStreakKey === prevKey ? prevStreak + 1 : (topGainKey ? 1 : 0);
+
+          // Breakthrough: 3+ weeks on same attribute → +0.5 bonus
+          if (newStreak >= 3 && topGainKey && newAttrs[topGainKey] != null) {
+            newAttrs[topGainKey] = Math.min(99, newAttrs[topGainKey] + 0.5);
+            trainingHighlights.push(`${p.name} hit a breakthrough week in ${topGainKey.replace(/([A-Z])/g, ' $1').toLowerCase()}!`);
+          }
+
+          // Focus player: 20% chance of +1 on best attribute
+          if (isFocus && topGainKey && Math.random() < 0.2 && newAttrs[topGainKey] != null) {
+            newAttrs[topGainKey] = Math.min(99, newAttrs[topGainKey] + 1);
+            trainingHighlights.push(`${p.name} had a standout focus session this week!`);
+          }
+
+          return {
+            ...p,
+            attributes:       newAttrs,
+            trainingStreak:   newStreak,
+            trainingStreakKey: newStreakKey,
+          };
+        });
+        userStateRes.state.lastTrainingApplied = now;
+        if (trainingHighlights.length > 0) {
+          userStateRes.state.trainingHighlights = trainingHighlights;
+        }
+      }
+
+      const userTeam = buildUserTeam(simulatedLeagues, userStateRes.state);
+
+      if (!userTeam && !user.isAdmin) {
         dispatch({ type: 'INIT_GAME', payload: { ...initialState, initialized: true } });
         return;
       }
 
-      const updatedLeagues = leagues.map(l => ({
+      if (userTeam && processedMatchData.length > 0) {
+        const updatedUserTeam = simulatedLeagues
+          .flatMap(l => l.teams || [])
+          .find(t => t.id === userTeam.id);
+        if (updatedUserTeam) {
+          if (updatedUserTeam.matchHistory?.length) {
+            userTeam.matchHistory = updatedUserTeam.matchHistory;
+          }
+          if (updatedUserTeam.seasonRecord) {
+            userTeam.seasonRecord = updatedUserTeam.seasonRecord;
+            userTeam.wins   = userTeam.seasonRecord.wins   ?? 0;
+            userTeam.losses = userTeam.seasonRecord.losses ?? 0;
+          }
+          // Propagate updated player seasonStats from simulation back to userTeam
+          if (updatedUserTeam.players?.length) {
+            const simPlayerMap = Object.fromEntries(updatedUserTeam.players.map(p => [p.id, p]));
+            userTeam.players = userTeam.players.map(p =>
+              simPlayerMap[p.id]
+                ? { ...p, seasonStats: simPlayerMap[p.id].seasonStats ?? p.seasonStats }
+                : p
+            );
+          }
+        }
+      }
+
+      const updatedLeagues = simulatedLeagues.map(l => ({
         ...l,
-        teams: (l.teams || []).map(t => t.id === userTeam.id ? userTeam : t),
+        teams: (l.teams || []).map(t => userTeam && t.id === userTeam.id ? userTeam : t),
       }));
 
       justLoaded.current = true;
@@ -257,19 +506,38 @@ export function GameProvider({ children }) {
           userTeam,
           leagues: updatedLeagues,
           allTeams: updatedLeagues.flatMap(l => l.teams || []),
+          transferMarket: transferMarket || [],
           lastUpdated: Date.now(),
         },
       });
-    }).catch(() => {
-      clearToken();
+    } catch {
       dispatch({ type: 'INIT_GAME', payload: { ...initialState, initialized: true } });
-    });
+    }
   }, []);
+
+  // ── React to Firebase Auth state changes ─────────────────────
+  useEffect(() => {
+    const unsubscribe = onAuthStateChanged(auth, (firebaseUser) => {
+      if (!firebaseUser) {
+        dispatch({ type: 'INIT_GAME', payload: { ...initialState, initialized: true } });
+        return;
+      }
+      loadGameData();
+    });
+    return () => unsubscribe();
+  }, [loadGameData]);
+
+  // ── Poll every 3 minutes for real-time match results ──────────
+  useEffect(() => {
+    if (!state.initialized || !state.user) return;
+    const interval = setInterval(loadGameData, 3 * 60 * 1000);
+    return () => clearInterval(interval);
+  }, [state.initialized, state.user?.id, loadGameData]);
 
   // ── Auto-save per-user state on change ──────────────────────
   useEffect(() => {
     if (!state.initialized || !state.user || !state.userTeam) return;
-    if (!getToken()) return;
+    if (!auth.currentUser) return;
     if (justLoaded.current) { justLoaded.current = false; return; }
 
     const payload = extractUserState(state);
@@ -282,8 +550,8 @@ export function GameProvider({ children }) {
     setTimeout(() => dispatch({ type: 'CLEAR_NOTIFICATION', payload: note.id }), 5000);
   }, []);
 
-  const logout = useCallback(() => {
-    clearToken();
+  const logout = useCallback(async () => {
+    await signOut(auth);
     dispatch({ type: 'INIT_GAME', payload: { ...initialState, initialized: true } });
   }, []);
 

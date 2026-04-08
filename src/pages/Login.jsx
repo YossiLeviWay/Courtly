@@ -3,8 +3,46 @@ import { useNavigate } from 'react-router-dom';
 import { useGame } from '../context/GameContext.jsx';
 import { useTheme } from '../context/ThemeContext.jsx';
 import { Sun, Moon, Eye, EyeOff } from 'lucide-react';
-import { apiLogin, apiRegister, apiGetWorld, setToken } from '../api.js';
+import { apiLogin, apiRegister, apiGetWorld } from '../api.js';
 import ToastContainer from '../components/ui/ToastContainer.jsx';
+import { createUserWithEmailAndPassword, signInWithEmailAndPassword } from 'firebase/auth';
+import { doc, setDoc } from 'firebase/firestore';
+import { auth, db } from '../firebase.js';
+
+async function createAdminAccount(onLog) {
+  const ADMIN_EMAIL    = 'admin@courtly.com';
+  const ADMIN_PASSWORD = '123qwe123';
+  let uid;
+  try {
+    onLog('Creating Firebase Auth user…');
+    const cred = await createUserWithEmailAndPassword(auth, ADMIN_EMAIL, ADMIN_PASSWORD);
+    uid = cred.user.uid;
+    onLog(`✓ Auth user created`);
+  } catch (err) {
+    if (err.code === 'auth/email-already-in-use') {
+      onLog('User already exists — signing in to get UID…');
+      const cred = await signInWithEmailAndPassword(auth, ADMIN_EMAIL, ADMIN_PASSWORD);
+      uid = cred.user.uid;
+      onLog(`✓ Found existing user`);
+    } else {
+      throw err;
+    }
+  }
+  await setDoc(doc(db, 'users', uid), {
+    id: uid, email: ADMIN_EMAIL, username: 'Admin',
+    isAdmin: true, createdAt: Date.now(),
+  }, { merge: true });
+  onLog('✓ Firestore users document set (isAdmin: true)');
+  await setDoc(doc(db, 'user_team_state', uid), {
+    userId: uid, teamId: null, budget: 0, facilities: {}, tactics: {},
+    playersState: [], fanCount: 0, fanEnthusiasm: 0, ticketPrice: 0,
+    teamExposure: 0, chemistryGauge: 0, momentumBar: 0, reputation: 0,
+    matchHistory: [], seasonRecord: { wins: 0, losses: 0 }, profileData: {},
+    updatedAt: Date.now(),
+  }, { merge: true });
+  onLog('✓ user_team_state document set');
+  return uid;
+}
 
 export default function Login() {
   const { state, addNotification } = useGame();
@@ -15,6 +53,9 @@ export default function Login() {
   const [loading, setLoading] = useState(false);
   const [form, setForm] = useState({ username: '', email: '', password: '', teamName: '' });
   const [errors, setErrors] = useState({});
+  const [showSetup, setShowSetup] = useState(false);
+  const [setupLog, setSetupLog] = useState([]);
+  const [setupStatus, setSetupStatus] = useState('idle');
 
   useEffect(() => {
     if (state.user) navigate('/', { replace: true });
@@ -41,10 +82,8 @@ export default function Login() {
 
     try {
       if (mode === 'login') {
-        const { token } = await apiLogin(form.email, form.password);
-        setToken(token);
-        // Reload so GameContext re-runs its mount effect and loads game state from DB
-        window.location.href = '/';
+        await apiLogin(form.email, form.password);
+        window.location.href = import.meta.env.BASE_URL;
         return;
       }
 
@@ -63,19 +102,18 @@ export default function Login() {
       const league0Teams = leagues[0]?.teams || allTeams.slice(0, 10);
       const baseTeam = league0Teams[Math.floor(Math.random() * league0Teams.length)];
 
-      // 4. Register with teamId so the server creates user_team_state immediately
-      const { token } = await apiRegister(
+      // 4. Register — Firebase Auth + Firestore records created in apiRegister
+      await apiRegister(
         form.email,
         form.password,
         form.username,
         baseTeam.id,
         { players: baseTeam.players || [] },
-        form.teamName  // user's chosen team name — stored in profile_data and propagated to world tables
+        form.teamName
       );
-      setToken(token);
 
-      // 5. Reload page — GameContext will load all state fresh from DB
-      window.location.href = '/';
+      // 5. Reload page — onAuthStateChanged in GameContext will load all state
+      window.location.href = import.meta.env.BASE_URL;
     } catch (err) {
       addNotification(err.message || 'Something went wrong.', 'error');
       setLoading(false);
@@ -366,6 +404,55 @@ export default function Login() {
               {mode === 'login' ? 'Register' : 'Sign in'}
             </button>
           </p>
+
+          {/* Admin Setup Panel */}
+          <div style={{ marginTop: 40, borderTop: '1px solid var(--border-color)', paddingTop: 16 }}>
+            <button
+              onClick={() => { setShowSetup(p => !p); setSetupLog([]); setSetupStatus('idle'); }}
+              style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--text-muted)', fontSize: 11, opacity: 0.5 }}
+            >
+              {showSetup ? 'Hide' : 'Admin Setup'}
+            </button>
+
+            {showSetup && (
+              <div style={{ marginTop: 12 }}>
+                <p style={{ fontSize: 12, color: 'var(--text-muted)', marginBottom: 12 }}>
+                  Creates <strong>admin@courtly.com</strong> / <strong>123qwe123</strong> in Firebase.
+                </p>
+                {setupStatus !== 'done' && (
+                  <button
+                    onClick={async () => {
+                      setSetupStatus('running');
+                      setSetupLog([]);
+                      try {
+                        await createAdminAccount(msg => setSetupLog(p => [...p, msg]));
+                        setSetupStatus('done');
+                      } catch (err) {
+                        setSetupLog(p => [...p, `✗ ${err.message}`]);
+                        setSetupStatus('error');
+                      }
+                    }}
+                    disabled={setupStatus === 'running'}
+                    className="btn btn-primary btn-sm w-full"
+                  >
+                    {setupStatus === 'running' ? 'Creating…' : setupStatus === 'error' ? 'Retry' : 'Create Admin Account'}
+                  </button>
+                )}
+                {setupLog.length > 0 && (
+                  <div style={{ marginTop: 10, padding: '10px 14px', background: 'var(--bg-app)', borderRadius: 8, fontSize: 12, lineHeight: 1.9 }}>
+                    {setupLog.map((l, i) => (
+                      <div key={i} style={{ color: l.startsWith('✓') ? '#4ade80' : l.startsWith('✗') ? '#f87171' : 'var(--text-muted)' }}>{l}</div>
+                    ))}
+                  </div>
+                )}
+                {setupStatus === 'done' && (
+                  <div style={{ marginTop: 10, padding: '10px 14px', background: 'rgba(74,222,128,0.08)', border: '1px solid rgba(74,222,128,0.25)', borderRadius: 8, fontSize: 12, color: '#4ade80' }}>
+                    Done! Sign in with admin@courtly.com / 123qwe123
+                  </div>
+                )}
+              </div>
+            )}
+          </div>
         </div>
       </div>
     </div>

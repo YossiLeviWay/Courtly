@@ -1,5 +1,7 @@
+import { useState } from 'react';
 import { useGame } from '../context/GameContext.jsx';
 import GaugeBar from '../components/ui/GaugeBar.jsx';
+import MatchDetailModal from '../components/MatchDetailModal.jsx';
 import {
   Trophy,
   TrendingUp,
@@ -12,12 +14,13 @@ import {
   ArrowRight,
   Zap,
   AlertCircle,
+  Newspaper,
 } from 'lucide-react';
 
 // ── Helpers ───────────────────────────────────────────────────
 
 const formatDate = (date) =>
-  new Date(date).toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+  new Date(date).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
 
 function getPlayerStats(player) {
   const s = player.seasonStats || {};
@@ -132,6 +135,9 @@ export default function Dashboard() {
     );
   }
 
+  const [selectedMatch, setSelectedMatch] = useState(null);
+  const [selectedPlayer, setSelectedPlayer] = useState(null);
+
   const { seasonRecord, motivationBar, momentumBar, chemistryGauge, budget, fanCount, matchHistory, seasonMatches, players } = userTeam;
 
   // ── Next match ────────────────────────────────────────────
@@ -143,21 +149,28 @@ export default function Dashboard() {
   // ── Recent results (last 3) ───────────────────────────────
   const recentMatches = matchHistory ? [...matchHistory].reverse().slice(0, 3) : [];
 
-  // ── Top players ───────────────────────────────────────────
+  // ── Top players (deduplicated — each player can only win one category) ─────
   const activePlayers = players || [];
   const statPlayers = activePlayers.filter(p => p?.seasonStats);
-  const topScorer = [...statPlayers].sort(
-    (a, b) => (b.seasonStats.points ?? 0) / (b.seasonStats.gamesPlayed || 1) - (a.seasonStats.points ?? 0) / (a.seasonStats.gamesPlayed || 1)
-  )[0];
-  const topRebounder = [...statPlayers].sort(
-    (a, b) => (b.seasonStats.rebounds ?? 0) / (b.seasonStats.gamesPlayed || 1) - (a.seasonStats.rebounds ?? 0) / (a.seasonStats.gamesPlayed || 1)
-  )[0];
-  const topAssister = [...statPlayers].sort(
-    (a, b) => (b.seasonStats.assists ?? 0) / (b.seasonStats.gamesPlayed || 1) - (a.seasonStats.assists ?? 0) / (a.seasonStats.gamesPlayed || 1)
-  )[0];
+  const _usedPerformerIds = new Set();
+  function _topUnique(arr, key) {
+    const eligible = arr.filter(p => !_usedPerformerIds.has(p.id));
+    const sorted = [...eligible].sort(
+      (a, b) => (b.seasonStats[key] ?? 0) / (b.seasonStats.gamesPlayed || 1) - (a.seasonStats[key] ?? 0) / (a.seasonStats.gamesPlayed || 1)
+    );
+    const winner = sorted[0] || null;
+    if (winner) _usedPerformerIds.add(winner.id);
+    return winner;
+  }
+  const topScorer    = _topUnique(statPlayers, 'points');
+  const topRebounder = _topUnique(statPlayers, 'rebounds');
+  const topAssister  = _topUnique(statPlayers, 'assists');
+
+  // ── Expiring contracts ────────────────────────────────────
+  const expiringContracts = activePlayers.filter(p => (p.contractYears ?? 99) <= 1);
 
   // ── Injuries / squad news ─────────────────────────────────
-  const injured = activePlayers.filter((p) => p.injuryStatus !== 'healthy');
+  const injured = activePlayers.filter((p) => p.injuryStatus && p.injuryStatus !== 'healthy');
   const highForm = activePlayers.filter((p) => p.lastFormRating >= 75);
   const lowFatigue = activePlayers.filter((p) => p.fatigue < 20);
 
@@ -193,6 +206,25 @@ export default function Dashboard() {
         </div>
       </div>
 
+      {/* Expiring contracts alert */}
+      {expiringContracts.length > 0 && (
+        <div style={{
+          background: 'rgba(239,68,68,0.08)', border: '1px solid rgba(239,68,68,0.3)',
+          borderRadius: 'var(--radius-lg)', padding: '12px 16px', marginBottom: 'var(--space-5)',
+          display: 'flex', alignItems: 'center', gap: 12
+        }}>
+          <AlertCircle size={18} color="#ef4444" />
+          <div>
+            <span style={{ fontWeight: 700, color: '#ef4444', fontSize: 'var(--font-size-sm)' }}>
+              {expiringContracts.length} contract{expiringContracts.length > 1 ? 's' : ''} expiring this season!
+            </span>
+            <span style={{ color: 'var(--text-muted)', fontSize: 'var(--font-size-sm)', marginLeft: 8 }}>
+              {expiringContracts.map(p => p.name).join(', ')}
+            </span>
+          </div>
+        </div>
+      )}
+
       {/* Stats grid */}
       <div className="stats-grid mb-6">
         <StatCard
@@ -210,7 +242,7 @@ export default function Dashboard() {
         <StatCard
           icon={<DollarSign size={18} />}
           label="Balance"
-          value={`$${budget}`}
+          value={`$${budget?.toLocaleString?.() ?? budget}`}
           sub="Available funds"
         />
         <StatCard
@@ -220,6 +252,49 @@ export default function Dashboard() {
           sub="Season followers"
         />
       </div>
+
+      {/* Debt alert */}
+      {budget < 0 && (() => {
+        const debtAmount = Math.abs(budget);
+        const monthlyInterest = Math.round(debtAmount * 0.04);
+        return (
+          <div style={{
+            background: 'rgba(239,68,68,0.10)',
+            border: '1.5px solid rgba(239,68,68,0.45)',
+            borderRadius: 'var(--radius-lg)',
+            padding: '18px 20px',
+            marginBottom: 'var(--space-5)',
+          }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 10 }}>
+              <AlertCircle size={20} color="#ef4444" />
+              <span style={{ fontWeight: 800, color: '#ef4444', fontSize: 'var(--font-size-base)' }}>
+                ⚠️ Team in Debt
+              </span>
+            </div>
+            <div style={{ display: 'flex', flexWrap: 'wrap', gap: 'var(--space-5)', marginBottom: 10 }}>
+              <div>
+                <div style={{ fontSize: 'var(--font-size-xs)', color: 'var(--text-muted)', marginBottom: 2, textTransform: 'uppercase', letterSpacing: 0.5, fontWeight: 700 }}>
+                  Current Debt
+                </div>
+                <div style={{ fontWeight: 900, fontSize: 'var(--font-size-xl)', color: '#ef4444' }}>
+                  ${debtAmount.toLocaleString()}
+                </div>
+              </div>
+              <div>
+                <div style={{ fontSize: 'var(--font-size-xs)', color: 'var(--text-muted)', marginBottom: 2, textTransform: 'uppercase', letterSpacing: 0.5, fontWeight: 700 }}>
+                  Monthly Interest (4%)
+                </div>
+                <div style={{ fontWeight: 900, fontSize: 'var(--font-size-xl)', color: '#ef4444' }}>
+                  ${monthlyInterest.toLocaleString()}
+                </div>
+              </div>
+            </div>
+            <div style={{ fontSize: 'var(--font-size-sm)', color: '#b91c1c', fontWeight: 600 }}>
+              Debt grows 4% monthly until resolved. Reduce expenses or increase revenue to clear the deficit.
+            </div>
+          </div>
+        );
+      })()}
 
       {/* Team gauges + Next match */}
       <div className="grid-2 mb-6">
@@ -299,10 +374,22 @@ export default function Dashboard() {
           ) : (
             <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-3)' }}>
               {recentMatches.map((m, i) => {
-                const won = m.userScore > m.opponentScore;
+                const won = m.result === 'W' || (m.teamScore ?? m.userScore ?? 0) > (m.oppScore ?? m.opponentScore ?? 0);
+                const displayScore = `${m.teamScore ?? m.userScore ?? '?'}–${m.oppScore ?? m.opponentScore ?? '?'}`;
+                const hasMatchId = !!m.matchId;
                 return (
                   <div
                     key={i}
+                    onClick={hasMatchId ? () => setSelectedMatch({
+                      id: m.matchId,
+                      homeTeamId: m.isHome ? userTeam.id : m.opponentId,
+                      awayTeamId: m.isHome ? m.opponentId : userTeam.id,
+                      homeTeamName: m.homeTeam || (m.isHome ? userTeam.name : m.opponent),
+                      awayTeamName: m.awayTeam || (m.isHome ? m.opponent : userTeam.name),
+                      scheduledDate: m.date || m.matchDate,
+                      homeScore: m.homeScore,
+                      awayScore: m.awayScore,
+                    }) : undefined}
                     style={{
                       display: 'flex',
                       alignItems: 'center',
@@ -310,20 +397,25 @@ export default function Dashboard() {
                       padding: 'var(--space-2) var(--space-3)',
                       borderRadius: 'var(--radius-md)',
                       background: 'var(--bg-muted)',
+                      cursor: hasMatchId ? 'pointer' : 'default',
+                      transition: 'background 0.15s',
                     }}
+                    onMouseEnter={e => { if (hasMatchId) e.currentTarget.style.background = 'var(--bg-elevated)'; }}
+                    onMouseLeave={e => { e.currentTarget.style.background = 'var(--bg-muted)'; }}
                   >
                     <WLBadge won={won} />
                     <span style={{ flex: 1, fontSize: 'var(--font-size-sm)', fontWeight: 600, color: 'var(--text-secondary)' }}>
-                      {m.opponentName || 'Unknown'}
+                      {m.opponent || m.opponentName || m.awayTeam || m.homeTeam || 'Unknown'}
                     </span>
                     <span style={{ fontWeight: 800, color: won ? 'var(--color-success)' : 'var(--color-danger)', fontSize: 'var(--font-size-sm)' }}>
-                      {m.userScore}–{m.opponentScore}
+                      {displayScore}
                     </span>
                     {m.date && (
                       <span style={{ fontSize: 'var(--font-size-xs)', color: 'var(--text-muted)' }}>
                         {formatDate(m.date)}
                       </span>
                     )}
+                    {hasMatchId && <span style={{ fontSize: 'var(--font-size-xs)', color: 'var(--color-primary)' }}>›</span>}
                   </div>
                 );
               })}
@@ -347,6 +439,7 @@ export default function Dashboard() {
             ].map(({ label, player, stat }) => (
               <div
                 key={label}
+                onClick={player ? () => setSelectedPlayer(player) : undefined}
                 style={{
                   display: 'flex',
                   alignItems: 'center',
@@ -354,7 +447,11 @@ export default function Dashboard() {
                   padding: 'var(--space-2) var(--space-3)',
                   borderRadius: 'var(--radius-md)',
                   background: 'var(--bg-muted)',
+                  cursor: player ? 'pointer' : 'default',
+                  transition: 'background 0.15s',
                 }}
+                onMouseEnter={e => { if (player) e.currentTarget.style.background = 'var(--bg-elevated)'; }}
+                onMouseLeave={e => { e.currentTarget.style.background = 'var(--bg-muted)'; }}
               >
                 <div
                   style={{
@@ -377,7 +474,14 @@ export default function Dashboard() {
                   <p style={{ fontWeight: 700, fontSize: 'var(--font-size-sm)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
                     {player?.name || 'N/A'}
                   </p>
-                  <p style={{ fontSize: 'var(--font-size-xs)', color: 'var(--text-muted)' }}>{label}</p>
+                  <p style={{ fontSize: 'var(--font-size-xs)', color: 'var(--text-muted)' }}>
+                    {label}
+                    {player?.recentForm != null && (
+                      <span style={{ marginLeft: 6, color: player.recentForm > 0 ? 'var(--color-success)' : player.recentForm < 0 ? 'var(--color-danger)' : 'var(--text-muted)', fontWeight: 700 }}>
+                        {player.recentForm > 0 ? `↑ +${player.recentForm}` : player.recentForm < 0 ? `↓ ${player.recentForm}` : '→ 0'} form
+                      </span>
+                    )}
+                  </p>
                 </div>
                 <span style={{ fontWeight: 800, color: 'var(--color-primary)', fontSize: 'var(--font-size-sm)', whiteSpace: 'nowrap' }}>
                   {stat}
@@ -399,30 +503,45 @@ export default function Dashboard() {
             </span>
           </div>
           <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-3)' }}>
-            <NewsItem
-              icon="📰"
-              title="Season standings tighten at the top"
-              body="Several teams are within two wins of first place as the midpoint of the season approaches."
-              time="2h ago"
-            />
-            <NewsItem
-              icon="🏆"
-              title="Liga C promotions race heats up"
-              body="Five clubs are still in contention for the two promotion spots with six matchdays remaining."
-              time="5h ago"
-            />
-            <NewsItem
-              icon="⚡"
-              title="Record-breaking scoring night in Liga C"
-              body="A stunning triple-overtime thriller saw 235 combined points across the two teams last weekend."
-              time="1d ago"
-            />
-            <NewsItem
-              icon="👁"
-              title="Scouts spotted at recent fixtures"
-              body="A Liga B club has been sending scouts to monitor performances in the Group 3 fixtures."
-              time="2d ago"
-            />
+            {(() => {
+              // Generate data-driven league news from real standings
+              const leagues = state.leagues || [];
+              const news = [];
+
+              for (const lg of leagues.slice(0, 3)) {
+                const standings = (lg.standings || []).slice().sort((a, b) => b.wins - a.wins || a.losses - b.losses);
+                const leader = standings[0];
+                if (leader && (leader.wins + leader.losses) > 0) {
+                  const gp = leader.wins + leader.losses;
+                  const pct = ((leader.wins / gp) * 100).toFixed(0);
+                  news.push({ icon: '🏆', title: `${leader.teamName} lead ${lg.name || lg.id}`, body: `${leader.wins}W-${leader.losses}L (${pct}%) through ${gp} game${gp !== 1 ? 's' : ''}. Season progress well underway.` });
+                }
+
+                const teams = standings.filter(t => t.wins + t.losses >= 1);
+                if (teams.length >= 2) {
+                  const second = standings[1];
+                  const gb = ((leader.wins - second.wins + second.losses - leader.losses) / 2).toFixed(1);
+                  if (gb <= 3 && gb > 0) {
+                    news.push({ icon: '📊', title: `Tight race in ${lg.name || lg.id}`, body: `${second.teamName} trails ${leader.teamName} by just ${gb} game${gb !== '1.0' ? 's' : ''}.` });
+                  }
+                }
+
+                // Check for winning streaks by looking at schedule
+                const playedMatches = (lg.schedule || []).filter(m => m.played);
+                if (playedMatches.length > 0) {
+                  news.push({ icon: '⚡', title: `${playedMatches.length} match${playedMatches.length !== 1 ? 'es' : ''} played in ${lg.name || lg.id}`, body: `${standings.length} teams in action this season so far.` });
+                }
+              }
+
+              if (news.length === 0) {
+                news.push({ icon: '📅', title: 'Season about to begin', body: 'No results yet. The first matchday will reveal the season\'s opening standings.' });
+                news.push({ icon: '🏀', title: 'Prepare your squad', body: 'Review your tactics, training, and lineup before the season opener.' });
+              }
+
+              return news.slice(0, 4).map((item, i) => (
+                <NewsItem key={i} icon={item.icon} title={item.title} body={item.body} />
+              ));
+            })()}
           </div>
         </div>
 
@@ -527,6 +646,124 @@ export default function Dashboard() {
           </div>
         </div>
       </div>
+
+      {/* Club News feed */}
+      {(() => {
+        const clubNews = [];
+        const lastMatch = recentMatches[0];
+        if (lastMatch) {
+          const won = lastMatch.result === 'W' || (lastMatch.teamScore ?? lastMatch.userScore ?? 0) > (lastMatch.oppScore ?? lastMatch.opponentScore ?? 0);
+          const oppName = lastMatch.opponent || lastMatch.opponentName || 'the opponent';
+          const topscorerInMatch = topScorer;
+          const pts = topscorerInMatch ? getPlayerStats(topscorerInMatch).pts : null;
+          clubNews.push({
+            icon: won ? '🏆' : '😤',
+            title: `${won ? 'Victory' : 'Defeat'} vs ${oppName}`,
+            body: topscorerInMatch && pts
+              ? `${topscorerInMatch.name} led the team with ${pts} PPG in the recent fixture.`
+              : `The team ${won ? 'picked up a win' : 'suffered a defeat'} against ${oppName}.`,
+          });
+        }
+        const trainingHighlights = userTeam.trainingHighlights ?? [];
+        trainingHighlights.slice(0, 2).forEach(h => clubNews.push({ icon: '🏋️', title: 'Training Milestone', body: h }));
+        const lastGrowth = userTeam.lastWeekFanGrowth;
+        if (lastGrowth?.growth > 0) {
+          clubNews.push({ icon: '📈', title: `+${lastGrowth.growth} new fans this week!`, body: `Your recent ${lastGrowth.recentWins}W-${lastGrowth.recentLosses}L record brought new supporters to the club.` });
+        }
+        const fanCount2 = userTeam.fanCount ?? 0;
+        const milestones = [500, 1000, 2500, 5000, 10000, 25000];
+        const reachedMilestone = milestones.find(m => fanCount2 >= m && fanCount2 < m * 1.05);
+        if (reachedMilestone) {
+          clubNews.push({ icon: '🎉', title: `${reachedMilestone.toLocaleString()} fans milestone!`, body: `Your fanbase has grown to over ${reachedMilestone.toLocaleString()} supporters. The city is buzzing!` });
+        }
+        if (clubNews.length === 0) return null;
+        return (
+          <div className="card mb-6">
+            <div className="card-header">
+              <span className="card-title" style={{ display: 'flex', alignItems: 'center', gap: 'var(--space-2)' }}>
+                <Newspaper size={16} style={{ color: 'var(--color-primary)' }} />
+                Club News
+              </span>
+            </div>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-3)' }}>
+              {clubNews.slice(0, 4).map((item, i) => (
+                <NewsItem key={i} icon={item.icon} title={item.title} body={item.body} />
+              ))}
+            </div>
+          </div>
+        );
+      })()}
+
+      {/* Match detail modal (triggered by clicking recent results) */}
+      {selectedMatch && (
+        <MatchDetailModal
+          match={selectedMatch}
+          allTeams={state.allTeams}
+          userTeamId={userTeam.id}
+          onClose={() => setSelectedMatch(null)}
+        />
+      )}
+
+      {/* Player detail drawer (triggered by clicking top performers) */}
+      {selectedPlayer && (
+        <div className="modal-overlay" onClick={() => setSelectedPlayer(null)}>
+          <div className="modal" onClick={e => e.stopPropagation()} style={{ maxWidth: 480 }}>
+            <div className="modal-header">
+              <div>
+                <h3 className="card-title">{selectedPlayer.name}</h3>
+                <div style={{ fontSize: 'var(--font-size-xs)', color: 'var(--text-muted)' }}>
+                  {selectedPlayer.position} · Age {selectedPlayer.age ?? '?'} · {selectedPlayer.nationality ?? ''}
+                  {selectedPlayer.recentForm != null && (
+                    <span style={{ marginLeft: 8, fontWeight: 700, color: selectedPlayer.recentForm > 0 ? 'var(--color-success)' : selectedPlayer.recentForm < 0 ? 'var(--color-danger)' : 'var(--text-muted)' }}>
+                      Form: {selectedPlayer.recentForm > 0 ? `+${selectedPlayer.recentForm}` : selectedPlayer.recentForm}
+                    </span>
+                  )}
+                </div>
+              </div>
+              <button className="btn btn-ghost btn-sm" onClick={() => setSelectedPlayer(null)}>✕</button>
+            </div>
+            <div className="modal-body" style={{ maxHeight: '65vh', overflowY: 'auto' }}>
+              {/* Season stats */}
+              {selectedPlayer.seasonStats && (
+                <div style={{ marginBottom: 16 }}>
+                  <div style={{ fontWeight: 700, fontSize: 'var(--font-size-sm)', marginBottom: 8, color: 'var(--color-primary)' }}>Season Stats</div>
+                  <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 8 }}>
+                    {['points', 'rebounds', 'assists', 'steals', 'blocks', 'turnovers'].map(k => {
+                      const gp = selectedPlayer.seasonStats.gamesPlayed || 1;
+                      const val = ((selectedPlayer.seasonStats[k] ?? 0) / gp).toFixed(1);
+                      return (
+                        <div key={k} style={{ textAlign: 'center', background: 'var(--bg-muted)', borderRadius: 'var(--radius-sm)', padding: '6px 4px' }}>
+                          <div style={{ fontWeight: 800, fontSize: 'var(--font-size-sm)', color: 'var(--text-primary)' }}>{val}</div>
+                          <div style={{ fontSize: '0.6rem', color: 'var(--text-muted)', textTransform: 'uppercase' }}>{k.slice(0, 3)}</div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                </div>
+              )}
+              {/* Attributes */}
+              {selectedPlayer.attributes && (
+                <div>
+                  <div style={{ fontWeight: 700, fontSize: 'var(--font-size-sm)', marginBottom: 8, color: 'var(--color-primary)' }}>Attributes</div>
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+                    {Object.entries(selectedPlayer.attributes).slice(0, 12).map(([key, val]) => (
+                      <div key={key} style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                        <span style={{ width: 160, fontSize: 'var(--font-size-xs)', color: 'var(--text-muted)', textTransform: 'capitalize', flexShrink: 0 }}>
+                          {key.replace(/([A-Z])/g, ' $1').toLowerCase()}
+                        </span>
+                        <div style={{ flex: 1, height: 6, background: 'var(--bg-muted)', borderRadius: 3, overflow: 'hidden' }}>
+                          <div style={{ width: `${val}%`, height: '100%', background: val >= 75 ? 'var(--color-success)' : val >= 55 ? 'var(--color-primary)' : 'var(--color-danger)', transition: 'width 0.3s' }} />
+                        </div>
+                        <span style={{ width: 28, fontWeight: 700, fontSize: 'var(--font-size-xs)', textAlign: 'right' }}>{Math.round(val)}</span>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

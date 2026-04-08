@@ -1,8 +1,9 @@
-import { useState, useMemo } from 'react';
+import { useState, useMemo, useEffect } from 'react';
 import { useGame } from '../context/GameContext.jsx';
-import { Calendar as CalendarIcon, Clock, MapPin, Plus, ChevronLeft, ChevronRight, Zap } from 'lucide-react';
-import { generateSeasonSchedule, getNextMatch, formatMatchDate, getTimeUntilMatch } from '../engine/gameScheduler.js';
+import { Calendar as CalendarIcon, Clock, MapPin, Plus, ChevronLeft, ChevronRight, Zap, X } from 'lucide-react';
+import { getNextMatch, formatMatchDate, getTimeUntilMatch } from '../engine/gameScheduler.js';
 import { useNavigate } from 'react-router-dom';
+import MatchDetailModal from '../components/MatchDetailModal.jsx';
 
 const MONTHS = ['January','February','March','April','May','June','July','August','September','October','November','December'];
 const DAYS = ['Su','Mo','Tu','We','Th','Fr','Sa'];
@@ -10,61 +11,264 @@ const DAYS = ['Su','Mo','Tu','We','Th','Fr','Sa'];
 function getDaysInMonth(year, month) {
   return new Date(year, month + 1, 0).getDate();
 }
-
 function getFirstDayOfMonth(year, month) {
   return new Date(year, month, 1).getDay();
 }
+
+// ── Opponent Fixture Modal ─────────────────────────────────────
+
+function OpponentModal({ team, opponentId, userTeam, allMatches, scouts, onClose, onMatchClick }) {
+  const opponentMatches = useMemo(() =>
+    allMatches
+      .filter(m => m.homeTeamId === opponentId || m.awayTeamId === opponentId)
+      .sort((a, b) => a.scheduledDate - b.scheduledDate),
+    [allMatches, opponentId]
+  );
+
+  const nextUserMatch = useMemo(() =>
+    allMatches
+      .filter(m => !m.played && (m.homeTeamId === userTeam?.id || m.awayTeamId === userTeam?.id))
+      .sort((a, b) => a.scheduledDate - b.scheduledDate)[0] || null,
+    [allMatches, userTeam]
+  );
+
+  const isNextOpponent =
+    nextUserMatch &&
+    (nextUserMatch.homeTeamId === opponentId || nextUserMatch.awayTeamId === opponentId);
+
+  // Scout intel: show if user has any active scout and this is the next opponent
+  const activeScout = scouts?.find(s => s.missionStatus === 'scouting');
+  const showScoutIntel = isNextOpponent && activeScout;
+
+  // Build opponent intel from match history
+  const opponentWins   = opponentMatches.filter(m => m.played && ((m.homeTeamId === opponentId && m.result?.homeScore > m.result?.awayScore) || (m.awayTeamId === opponentId && m.result?.awayScore > m.result?.homeScore))).length;
+  const opponentLosses = opponentMatches.filter(m => m.played).length - opponentWins;
+
+  const upcoming = opponentMatches.filter(m => !m.played);
+  const past     = opponentMatches.filter(m =>  m.played);
+
+  return (
+    <div className="modal-overlay" onClick={onClose}>
+      <div className="modal" onClick={e => e.stopPropagation()} style={{ maxWidth: 560 }}>
+        <div className="modal-header">
+          <h3 className="card-title">{team?.name || 'Opponent'} — Fixtures</h3>
+          <button className="btn btn-ghost btn-sm" onClick={onClose}><X size={16} /></button>
+        </div>
+
+        <div className="modal-body" style={{ maxHeight: '70vh', overflowY: 'auto' }}>
+          {/* Scout Intel Banner */}
+          {showScoutIntel && (
+            <div style={{
+              marginBottom: 16, padding: '12px 16px', borderRadius: 'var(--radius)',
+              background: 'rgba(232,98,26,0.06)', border: '1px solid rgba(232,98,26,0.2)',
+            }}>
+              <div style={{ fontWeight: 700, fontSize: 'var(--font-size-sm)', marginBottom: 6, display: 'flex', alignItems: 'center', gap: 6 }}>
+                🔭 Scout Intel — {activeScout.name} reporting from {activeScout.missionTarget}
+              </div>
+              <div style={{ fontSize: 'var(--font-size-xs)', color: 'var(--text-muted)', lineHeight: 1.6 }}>
+                Your scout is active and has flagged this as your next opponent. Based on available data:
+              </div>
+              <div style={{ marginTop: 8, display: 'flex', gap: 12, flexWrap: 'wrap' }}>
+                <div style={{ padding: '6px 10px', background: 'var(--bg-muted)', borderRadius: 'var(--radius-sm)', fontSize: 'var(--font-size-xs)', fontWeight: 600 }}>
+                  📊 Season: {opponentWins}W–{opponentLosses}L
+                </div>
+                <div style={{ padding: '6px 10px', background: 'var(--bg-muted)', borderRadius: 'var(--radius-sm)', fontSize: 'var(--font-size-xs)', fontWeight: 600 }}>
+                  🏀 {upcoming.length} games remaining
+                </div>
+                {past.length > 0 && (
+                  <div style={{ padding: '6px 10px', background: past[past.length-1]?.result ? 'rgba(34,197,94,0.1)' : 'var(--bg-muted)', borderRadius: 'var(--radius-sm)', fontSize: 'var(--font-size-xs)', fontWeight: 600 }}>
+                    Last result: {(() => {
+                      const m = past[past.length-1];
+                      if (!m?.result) return '—';
+                      const won = m.homeTeamId === opponentId ? m.result.homeScore > m.result.awayScore : m.result.awayScore > m.result.homeScore;
+                      return (won ? '✓ Win' : '✗ Loss') + ` ${m.result.homeScore}–${m.result.awayScore}`;
+                    })()}
+                  </div>
+                )}
+              </div>
+            </div>
+          )}
+
+          {/* Upcoming matches */}
+          {upcoming.length > 0 && (
+            <div style={{ marginBottom: 16 }}>
+              <div style={{ fontSize: 'var(--font-size-xs)', fontWeight: 700, textTransform: 'uppercase', letterSpacing: 1, color: 'var(--text-muted)', marginBottom: 8 }}>
+                Upcoming ({upcoming.length})
+              </div>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+                {upcoming.slice(0, 6).map(m => {
+                  const isHome = m.homeTeamId === opponentId;
+                  const opp = isHome ? m.awayTeamName : m.homeTeamName;
+                  return (
+                    <div key={m.id} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '8px 12px', background: 'var(--bg-muted)', borderRadius: 'var(--radius-sm)', fontSize: 'var(--font-size-sm)' }}>
+                      <div>
+                        <span className={`badge ${isHome ? 'badge-orange' : 'badge-gray'}`} style={{ fontSize: '0.55rem', marginRight: 6 }}>
+                          {isHome ? 'H' : 'A'}
+                        </span>
+                        vs {opp}
+                      </div>
+                      <span style={{ color: 'var(--text-muted)', fontSize: 'var(--font-size-xs)' }}>
+                        {formatMatchDate(m.scheduledDate)}
+                      </span>
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+          )}
+
+          {/* Past results */}
+          {past.length > 0 && (
+            <div>
+              <div style={{ fontSize: 'var(--font-size-xs)', fontWeight: 700, textTransform: 'uppercase', letterSpacing: 1, color: 'var(--text-muted)', marginBottom: 8 }}>
+                Results ({past.length})
+              </div>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+                {[...past].reverse().slice(0, 6).map(m => {
+                  const isHome = m.homeTeamId === opponentId;
+                  const opp = isHome ? m.awayTeamName : m.homeTeamName;
+                  const won = isHome
+                    ? m.result?.homeScore > m.result?.awayScore
+                    : m.result?.awayScore > m.result?.homeScore;
+                  return (
+                    <div
+                      key={m.id}
+                      style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '8px 12px', background: 'var(--bg-muted)', borderRadius: 'var(--radius-sm)', fontSize: 'var(--font-size-sm)', cursor: onMatchClick ? 'pointer' : 'default' }}
+                      onClick={() => onMatchClick?.(m)}
+                      title={onMatchClick ? 'Click to view match details' : undefined}
+                    >
+                      <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                        <span className={`badge ${won ? 'badge-green' : 'badge-red'}`} style={{ fontSize: '0.55rem' }}>{won ? 'W' : 'L'}</span>
+                        vs {opp}
+                      </div>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                        <span style={{ fontWeight: 700 }}>{m.result?.homeScore}–{m.result?.awayScore}</span>
+                        {onMatchClick && <span style={{ fontSize: '0.7rem', color: 'var(--text-muted)' }}>📊</span>}
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+          )}
+
+          {opponentMatches.length === 0 && (
+            <div className="empty-state">
+              <div className="empty-state-icon">🏀</div>
+              <div className="empty-state-title">No fixtures found</div>
+            </div>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ── Main Calendar Page ────────────────────────────────────────
 
 export default function Calendar() {
   const { state, dispatch } = useGame();
   const navigate = useNavigate();
   const team = state.userTeam;
-  const [activeTab, setActiveTab] = useState('all');
+  const [activeTab, setActiveTab]     = useState('all');
   const [currentDate, setCurrentDate] = useState(new Date());
   const [showAddEvent, setShowAddEvent] = useState(false);
-  const [newEvent, setNewEvent] = useState({ title: '', date: '', description: '' });
+  const [newEvent, setNewEvent]       = useState({ title: '', date: '', description: '' });
+  const [selectedOpponent, setSelectedOpponent] = useState(null); // { id, name }
+  const [selectedMatch, setSelectedMatch]       = useState(null); // played match for detail view
 
+  // Firestore-backed schedule from state (stable across refreshes)
   const schedule = useMemo(() => {
-    if (!team || !state.allTeams?.length) return [];
-    if (team.schedule?.length) return team.schedule;
-    // Generate a schedule
-    const leagueTeams = state.allTeams.filter(t =>
-      t.leagueId === team.leagueId || t.leagueIndex === team.leagueIndex
-    ).slice(0, 10);
-    return generateSeasonSchedule(leagueTeams.length ? leagueTeams : state.allTeams.slice(0, 10), 0);
-  }, [team, state.allTeams]);
+    if (!team || !state.leagues?.length) return [];
+    const userLeague = state.leagues.find(l => l.teams?.some(t => t.id === team.id));
+    return userLeague?.schedule || [];
+  }, [team, state.leagues]);
+
+  // All league matches (for opponent modal)
+  const allLeagueMatches = useMemo(() =>
+    (state.leagues || []).flatMap(l => l.schedule || []),
+    [state.leagues]
+  );
 
   const teamMatches = useMemo(() =>
     schedule.filter(m => m.homeTeamId === team?.id || m.awayTeamId === team?.id),
     [schedule, team]
   );
 
-  const nextMatch = useMemo(() => teamMatches.find(m => !m.played && m.scheduledDate > Date.now()), [teamMatches]);
-  const pastMatches = useMemo(() => teamMatches.filter(m => m.played).sort((a,b) => b.scheduledDate - a.scheduledDate), [teamMatches]);
+  const nextMatch   = useMemo(() => teamMatches.find(m => !m.played && m.scheduledDate > Date.now()), [teamMatches]);
+  const pastMatches = useMemo(() => teamMatches.filter(m =>  m.played).sort((a,b) => b.scheduledDate - a.scheduledDate), [teamMatches]);
   const upcomingMatches = useMemo(() => teamMatches.filter(m => !m.played).sort((a,b) => a.scheduledDate - b.scheduledDate), [teamMatches]);
 
-  const events = team?.calendarEvents || [];
+  // Season record from the standings collection (authoritative source)
+  const userStanding = useMemo(() => {
+    for (const league of (state.leagues || [])) {
+      const s = (league.standings || []).find(s => s.teamId === team?.id);
+      if (s) return s;
+    }
+    return null;
+  }, [state.leagues, team?.id]);
+  const seasonWins   = userStanding?.wins   ?? team?.wins   ?? 0;
+  const seasonLosses = userStanding?.losses ?? team?.losses ?? 0;
+  const seasonPts    = userStanding?.points ?? (seasonWins * 2 + seasonLosses);
+  const seasonPlayed = seasonWins + seasonLosses;
 
-  // Calendar grid
+  // Youth Academy cooldown (7-day)
+  const WEEK_MS = 7 * 24 * 60 * 60 * 1000;
+  const lastDraftedAt  = team?.youthDraft?.lastDraftedAt ?? 0;
+  const nextDraftMs    = lastDraftedAt + WEEK_MS;
+  const canDraftNow    = Date.now() >= nextDraftMs;
+  const nextDraftDate  = new Date(nextDraftMs);
+
+  const events = team?.calendarEvents || [];
+  const scouts = team?.scouts || [];
+
   const year = currentDate.getFullYear();
   const month = currentDate.getMonth();
   const daysInMonth = getDaysInMonth(year, month);
   const firstDay = getFirstDayOfMonth(year, month);
 
-  // Match dates in current month (as day numbers)
-  const matchDays = new Set(
+  // Map of calendar day → 'win' | 'loss' | 'upcoming' for dot coloring
+  const matchDayMap = useMemo(() => {
+    const map = new Map();
     teamMatches
       .filter(m => {
         const d = new Date(m.scheduledDate);
         return d.getFullYear() === year && d.getMonth() === month;
       })
-      .map(m => new Date(m.scheduledDate).getDate())
-  );
+      .forEach(m => {
+        const day = new Date(m.scheduledDate).getDate();
+        if (m.played) {
+          const isHome = m.homeTeamId === team?.id;
+          const us   = isHome ? m.result?.homeScore : m.result?.awayScore;
+          const them = isHome ? m.result?.awayScore  : m.result?.homeScore;
+          map.set(day, (us ?? 0) > (them ?? 0) ? 'win' : 'loss');
+        } else if (!map.has(day)) {
+          map.set(day, 'upcoming');
+        }
+      });
+    return map;
+  }, [teamMatches, year, month, team?.id]);
 
-  const getTeamName = (id) => {
-    const t = state.allTeams?.find(t => t.id === id);
-    return t?.name || 'Unknown';
-  };
+  const getTeamById = id => state.allTeams?.find(t => t.id === id);
+  const getTeamName = id => getTeamById(id)?.name || 'Unknown';
+
+  function msToCountdown(ms) {
+    if (ms <= 0) return 'Available now';
+    const d = Math.floor(ms / 86400000);
+    const h = Math.floor((ms % 86400000) / 3600000);
+    const m = Math.floor((ms % 3600000) / 60000);
+    if (d > 0) return `in ${d}d ${h}h`;
+    if (h > 0) return `in ${h}h ${m}m`;
+    return `in ${m}m`;
+  }
+
+  // Mark youth-academy reset day on the calendar grid
+  const youthResetCalDay =
+    !canDraftNow &&
+    nextDraftDate.getFullYear() === year &&
+    nextDraftDate.getMonth() === month
+      ? nextDraftDate.getDate()
+      : null;
 
   const filteredMatches = activeTab === 'past' ? pastMatches
     : activeTab === 'upcoming' ? upcomingMatches
@@ -79,6 +283,17 @@ export default function Calendar() {
     setNewEvent({ title: '', date: '', description: '' });
     setShowAddEvent(false);
   };
+
+  function handleMatchClick(match) {
+    if (match.played) {
+      setSelectedMatch(match);
+    } else {
+      const isHome = match.homeTeamId === team?.id;
+      const oppId   = isHome ? match.awayTeamId : match.homeTeamId;
+      const oppName = isHome ? match.awayTeamName : match.homeTeamName;
+      setSelectedOpponent({ id: oppId, name: oppName });
+    }
+  }
 
   return (
     <div className="animate-fade-in">
@@ -155,17 +370,26 @@ export default function Calendar() {
             </div>
           ) : (
             <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-              {filteredMatches.slice(0, 18).map((match, i) => {
+              {filteredMatches.slice(0, 18).map((match) => {
                 const isHome = match.homeTeamId === team?.id;
-                const opponent = getTeamName(isHome ? match.awayTeamId : match.homeTeamId);
+                const oppId  = isHome ? match.awayTeamId : match.homeTeamId;
+                const opponent = getTeamName(oppId);
                 const isPast = match.played;
                 const result = match.result;
                 const userScore = result ? (isHome ? result.homeScore : result.awayScore) : null;
-                const oppScore = result ? (isHome ? result.awayScore : result.homeScore) : null;
+                const oppScore  = result ? (isHome ? result.awayScore  : result.homeScore) : null;
                 const won = userScore > oppScore;
+                const isNextOpponent = nextMatch && (nextMatch.homeTeamId === oppId || nextMatch.awayTeamId === oppId) && !isPast;
+                const hasScout = scouts.some(s => s.missionStatus === 'scouting');
 
                 return (
-                  <div key={match.id} className="card" style={{ padding: '12px 16px' }}>
+                  <div
+                    key={match.id}
+                    className="card"
+                    style={{ padding: '12px 16px', cursor: 'pointer', transition: 'box-shadow 0.15s' }}
+                    onClick={() => handleMatchClick(match)}
+                    title={match.played ? 'Click to view match details' : "Click to see this team's fixtures"}
+                  >
                     <div className="flex items-center justify-between">
                       <div>
                         <div className="flex items-center gap-2 mb-1">
@@ -174,7 +398,12 @@ export default function Calendar() {
                           </span>
                           <span className="text-xs text-muted">{formatMatchDate(match.scheduledDate)}</span>
                         </div>
-                        <div className="font-semibold text-sm">vs {opponent}</div>
+                        <div className="flex items-center gap-2">
+                          <div className="font-semibold text-sm">vs {opponent}</div>
+                          {isNextOpponent && hasScout && (
+                            <span className="badge badge-orange" style={{ fontSize: '0.55rem' }}>🔭 Scout</span>
+                          )}
+                        </div>
                       </div>
                       <div className="text-right">
                         {isPast && result ? (
@@ -202,11 +431,16 @@ export default function Calendar() {
                   <div className="empty-state-title">No matches found</div>
                 </div>
               )}
+              {filteredMatches.length > 0 && (
+                <div style={{ fontSize: 'var(--font-size-xs)', color: 'var(--text-muted)', textAlign: 'center', marginTop: 4 }}>
+                  Past matches: click to view details · Upcoming: click to see opponent schedule
+                </div>
+              )}
             </div>
           )}
         </div>
 
-        {/* Mini Calendar + Deadlines */}
+        {/* Mini Calendar + Season Summary + Deadlines */}
         <div>
           <div className="card mb-4">
             <div className="card-header">
@@ -226,43 +460,141 @@ export default function Calendar() {
               {Array.from({ length: daysInMonth }).map((_, i) => {
                 const day = i + 1;
                 const isToday = new Date().getDate() === day && new Date().getMonth() === month && new Date().getFullYear() === year;
-                const hasMatch = matchDays.has(day);
+                const dayResult = matchDayMap.get(day); // 'win' | 'loss' | 'upcoming' | undefined
+                const hasMatch = dayResult !== undefined;
+                const isYouthReset = youthResetCalDay === day;
+                const dotColor = dayResult === 'win' ? '#22c55e' : dayResult === 'loss' ? '#ef4444' : 'var(--color-primary)';
+                const bgColor  = dayResult === 'win' ? 'rgba(34,197,94,0.12)' : dayResult === 'loss' ? 'rgba(239,68,68,0.12)' : 'var(--color-primary-100)';
+                const txtColor = dayResult === 'win' ? '#16a34a' : dayResult === 'loss' ? '#dc2626' : 'var(--color-primary)';
                 return (
-                  <div key={day} style={{
-                    padding: '6px 2px',
-                    borderRadius: 6,
+                  <div key={day} title={isYouthReset ? '🌱 Youth Academy draft available' : undefined} style={{
+                    padding: '6px 2px', borderRadius: 6,
                     fontSize: 'var(--font-size-xs)',
                     fontWeight: isToday || hasMatch ? 700 : 400,
-                    background: isToday ? 'var(--color-primary)' : hasMatch ? 'var(--color-primary-100)' : 'transparent',
-                    color: isToday ? 'white' : hasMatch ? 'var(--color-primary)' : 'var(--text-primary)',
+                    background: isToday ? 'var(--color-primary)' : hasMatch ? bgColor : 'transparent',
+                    color: isToday ? 'white' : hasMatch ? txtColor : 'var(--text-primary)',
                     position: 'relative',
+                    outline: isYouthReset && !isToday ? '2px solid #16a34a' : undefined,
                   }}>
                     {day}
-                    {hasMatch && !isToday && <div style={{ width: 4, height: 4, background: 'var(--color-primary)', borderRadius: '50%', margin: '0 auto' }} />}
+                    {(hasMatch || isYouthReset) && !isToday && (
+                      <div style={{ display: 'flex', justifyContent: 'center', gap: 2, marginTop: 1 }}>
+                        {hasMatch    && <div style={{ width: 4, height: 4, background: dotColor, borderRadius: '50%' }} />}
+                        {isYouthReset && <div style={{ width: 4, height: 4, background: '#16a34a', borderRadius: '50%' }} />}
+                      </div>
+                    )}
                   </div>
                 );
               })}
             </div>
           </div>
 
+          {/* Season Summary */}
+          <div className="card mb-4">
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 }}>
+              <div className="card-title" style={{ margin: 0 }}>Season Record</div>
+              <div style={{ fontSize: 'var(--font-size-xs)', color: 'var(--text-muted)' }}>
+                <span style={{ fontWeight: 700, color: 'var(--color-primary)' }}>{seasonPts} pts</span>
+                {' '}· League Table
+              </div>
+            </div>
+            <div style={{ display: 'flex', gap: 12, marginBottom: 12 }}>
+              <div style={{ flex: 1, textAlign: 'center', padding: '10px 8px', borderRadius: 'var(--radius-md)', background: 'rgba(46,125,50,0.08)' }}>
+                <div style={{ fontSize: 'var(--font-size-2xl)', fontWeight: 900, color: 'var(--color-success)' }}>{seasonWins}</div>
+                <div style={{ fontSize: 'var(--font-size-xs)', color: 'var(--text-muted)', fontWeight: 700 }}>WINS</div>
+              </div>
+              <div style={{ flex: 1, textAlign: 'center', padding: '10px 8px', borderRadius: 'var(--radius-md)', background: 'rgba(198,40,40,0.08)' }}>
+                <div style={{ fontSize: 'var(--font-size-2xl)', fontWeight: 900, color: 'var(--color-danger)' }}>{seasonLosses}</div>
+                <div style={{ fontSize: 'var(--font-size-xs)', color: 'var(--text-muted)', fontWeight: 700 }}>LOSSES</div>
+              </div>
+              <div style={{ flex: 1, textAlign: 'center', padding: '10px 8px', borderRadius: 'var(--radius-md)', background: 'var(--bg-muted)' }}>
+                <div style={{ fontSize: 'var(--font-size-2xl)', fontWeight: 900, color: 'var(--text-primary)' }}>{seasonPlayed}</div>
+                <div style={{ fontSize: 'var(--font-size-xs)', color: 'var(--text-muted)', fontWeight: 700 }}>PLAYED</div>
+              </div>
+            </div>
+            {pastMatches.length > 0 && (
+              <div>
+                <div style={{ fontSize: 'var(--font-size-xs)', color: 'var(--text-muted)', fontWeight: 700, marginBottom: 6, textTransform: 'uppercase', letterSpacing: 1 }}>Form (last 5)</div>
+                <div style={{ display: 'flex', gap: 4 }}>
+                  {pastMatches.slice(0, 5).map((m, i) => {
+                    const isHome = m.homeTeamId === team?.id;
+                    const us = isHome ? m.result?.homeScore : m.result?.awayScore;
+                    const them = isHome ? m.result?.awayScore : m.result?.homeScore;
+                    const won = us > them;
+                    return (
+                      <div key={i} style={{
+                        width: 28, height: 28, borderRadius: 'var(--radius-sm)',
+                        background: won ? 'var(--color-success)' : 'var(--color-danger)',
+                        color: 'white', fontWeight: 800, fontSize: 'var(--font-size-xs)',
+                        display: 'flex', alignItems: 'center', justifyContent: 'center',
+                      }}>{won ? 'W' : 'L'}</div>
+                    );
+                  })}
+                </div>
+              </div>
+            )}
+          </div>
+
           {/* Key Deadlines */}
           <div className="card">
             <div className="card-title mb-3">Key Deadlines</div>
-            {[
-              { label: 'Youth Academy Draft', desc: '1st of every month', icon: '🌱', color: 'badge-green' },
-              { label: 'Training Reset', desc: 'Every 7 days', icon: '🏋️', color: 'badge-blue' },
-              { label: 'Transfer Window', desc: 'Pre-season & mid-season', icon: '🔄', color: 'badge-orange' },
-              { label: 'Season End', desc: '18 matches played', icon: '🏆', color: 'badge-yellow' },
-            ].map(item => (
-              <div key={item.label} className="flex items-center gap-3" style={{ marginBottom: 12 }}>
-                <span style={{ fontSize: '1.2rem' }}>{item.icon}</span>
-                <div>
-                  <div className="text-sm font-semibold">{item.label}</div>
-                  <div className="text-xs text-muted">{item.desc}</div>
+
+            {/* Youth Academy Draft */}
+            <div className="flex items-center gap-3" style={{ marginBottom: 12 }}>
+              <span style={{ fontSize: '1.2rem' }}>🌱</span>
+              <div style={{ flex: 1 }}>
+                <div className="text-sm font-semibold">Youth Academy Draft</div>
+                <div className="text-xs text-muted">
+                  {canDraftNow
+                    ? 'A new prospect is ready to scout'
+                    : `Next draft: ${nextDraftDate.toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' })} · ${msToCountdown(nextDraftMs - Date.now())}`}
                 </div>
-                <span className={`badge ${item.color} ml-auto`}>Active</span>
               </div>
-            ))}
+              <span className={`badge ml-auto ${canDraftNow ? 'badge-green' : 'badge-gray'}`}>
+                {canDraftNow ? '✅ Ready' : '⏳ Cooldown'}
+              </span>
+            </div>
+
+            {/* Next match */}
+            <div className="flex items-center gap-3" style={{ marginBottom: 12 }}>
+              <span style={{ fontSize: '1.2rem' }}>🏀</span>
+              <div style={{ flex: 1 }}>
+                <div className="text-sm font-semibold">Next Match</div>
+                <div className="text-xs text-muted">
+                  {nextMatch
+                    ? `vs ${getTeamName(nextMatch.homeTeamId === team?.id ? nextMatch.awayTeamId : nextMatch.homeTeamId)} · ${formatMatchDate(nextMatch.scheduledDate)}`
+                    : 'No upcoming matches'}
+                </div>
+              </div>
+              {nextMatch && (
+                <span className="badge badge-orange ml-auto">{getTimeUntilMatch(nextMatch)}</span>
+              )}
+            </div>
+
+            {/* Season progress */}
+            <div className="flex items-center gap-3" style={{ marginBottom: 12 }}>
+              <span style={{ fontSize: '1.2rem' }}>🏆</span>
+              <div style={{ flex: 1 }}>
+                <div className="text-sm font-semibold">Season Progress</div>
+                <div className="text-xs text-muted">
+                  {seasonPlayed} of 18 matches played · {18 - seasonPlayed} remaining
+                </div>
+                <div style={{ marginTop: 4, height: 4, background: 'var(--bg-muted)', borderRadius: 2, overflow: 'hidden' }}>
+                  <div style={{ height: '100%', width: `${(seasonPlayed / 18) * 100}%`, background: 'var(--color-primary)', borderRadius: 2, transition: 'width 0.5s' }} />
+                </div>
+              </div>
+              <span className="badge badge-yellow ml-auto">{Math.round((seasonPlayed / 18) * 100)}%</span>
+            </div>
+
+            {/* Transfer Window */}
+            <div className="flex items-center gap-3">
+              <span style={{ fontSize: '1.2rem' }}>🔄</span>
+              <div style={{ flex: 1 }}>
+                <div className="text-sm font-semibold">Transfer Window</div>
+                <div className="text-xs text-muted">Pre-season &amp; mid-season</div>
+              </div>
+              <span className="badge badge-orange ml-auto">Active</span>
+            </div>
           </div>
         </div>
       </div>
@@ -295,6 +627,29 @@ export default function Calendar() {
             </div>
           </div>
         </div>
+      )}
+
+      {/* Opponent Fixture Modal */}
+      {selectedOpponent && (
+        <OpponentModal
+          team={getTeamById(selectedOpponent.id)}
+          opponentId={selectedOpponent.id}
+          userTeam={team}
+          allMatches={allLeagueMatches}
+          scouts={scouts}
+          onClose={() => setSelectedOpponent(null)}
+          onMatchClick={m => { setSelectedOpponent(null); setSelectedMatch(m); }}
+        />
+      )}
+
+      {/* Match Detail Modal */}
+      {selectedMatch && (
+        <MatchDetailModal
+          match={selectedMatch}
+          allTeams={state.allTeams}
+          userTeamId={team?.id}
+          onClose={() => setSelectedMatch(null)}
+        />
       )}
     </div>
   );

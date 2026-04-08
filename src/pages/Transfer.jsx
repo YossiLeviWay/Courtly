@@ -1,9 +1,10 @@
 import { useState, useMemo } from 'react';
 import { useGame } from '../context/GameContext.jsx';
-import { ArrowLeftRight, Search, Filter, Clock, X, Eye, ChevronDown, ChevronUp } from 'lucide-react';
+import { ArrowLeftRight, Search, Filter, Clock, X, Eye, ChevronDown, ChevronUp, UserPlus } from 'lucide-react';
 import PlayerAvatar from '../components/ui/PlayerAvatar.jsx';
 import { calcPlayerMonthlyWage, calcStaffMonthlyWage } from './FinancialReport.jsx';
 import { ATTRIBUTE_NAMES, STAFF_ROLES, STAFF_CHARACTERIZATIONS } from '../data/constants.js';
+import { apiBuyFreeAgent, apiHireStaff } from '../api.js';
 
 const POSITIONS = ['PG', 'SG', 'SF', 'PF', 'C'];
 
@@ -315,10 +316,219 @@ function FilterModal({ onClose, playerFilters, setPlayerFilters, staffFilters, s
   );
 }
 
+// ── Transfer Compare Modal ─────────────────────────────────────
+
+const NATIONALITY_FLAGS = {
+  American: '🇺🇸', Canadian: '🇨🇦', Brazilian: '🇧🇷', Argentinian: '🇦🇷',
+  Spanish: '🇪🇸', French: '🇫🇷', German: '🇩🇪', Italian: '🇮🇹',
+  Greek: '🇬🇷', Turkish: '🇹🇷', Serbian: '🇷🇸', Croatian: '🇭🇷',
+  Slovenian: '🇸🇮', Lithuanian: '🇱🇹', Latvian: '🇱🇻', Australian: '🇦🇺',
+  Nigerian: '🇳🇬', Senegalese: '🇸🇳', Cameroonian: '🇨🇲', Congolese: '🇨🇩',
+  Angolan: '🇦🇴', 'South African': '🇿🇦', Chinese: '🇨🇳', Japanese: '🇯🇵',
+  'South Korean': '🇰🇷', Filipino: '🇵🇭', Lebanese: '🇱🇧', Israeli: '🇮🇱',
+  Iranian: '🇮🇷', Sudanese: '🇸🇩', British: '🇬🇧', Dutch: '🇳🇱',
+  Polish: '🇵🇱', Czech: '🇨🇿', Montenegrin: '🇲🇪', Venezuelan: '🇻🇪',
+  Dominican: '🇩🇴', 'Puerto Rican': '🇵🇷', 'New Zealander': '🇳🇿', Icelandic: '🇮🇸',
+};
+
+const TRANSFER_COMPARE_STATS_CORE = [
+  { key: 'courtVision',           label: 'Court Vision' },
+  { key: 'threePtShooting',       label: '3PT Shooting' },
+  { key: 'finishingAtTheRim',     label: 'Finishing' },
+  { key: 'perimeterDefense',      label: 'Perimeter Def' },
+  { key: 'interiorDefense',       label: 'Interior Def' },
+  { key: 'rebounding',            label: 'Rebounding' },
+  { key: 'ballHandlingDribbling', label: 'Ball Handling' },
+  { key: 'passingAccuracy',       label: 'Passing' },
+  { key: 'staminaEndurance',      label: 'Stamina' },
+  { key: 'agilityLateralSpeed',   label: 'Agility' },
+];
+
+const TRANSFER_COMPARE_STATS_EXTRA = [
+  { key: 'midRangeScoring',         label: 'Mid-Range' },
+  { key: 'offBallMovement',         label: 'Off-Ball Move' },
+  { key: 'helpDefense',             label: 'Help Defense' },
+  { key: 'clutchPerformance',       label: 'Clutch' },
+  { key: 'leadershipCommunication', label: 'Leadership' },
+  { key: 'postMoves',               label: 'Post Moves' },
+  { key: 'basketballIQ',            label: 'Basketball IQ' },
+  { key: 'verticalLeapingAbility',  label: 'Vertical' },
+  { key: 'settingScreens',          label: 'Screens' },
+  { key: 'freeThrowShooting',       label: 'Free Throws' },
+  { key: 'consistencyPerformance',  label: 'Consistency' },
+  { key: 'handlePressureMental',    label: 'Mental' },
+];
+
+function PlayerHeader({ player, ovr, accentColor, label, isTarget }) {
+  const form = player?.recentForm ?? 0;
+  const formArrow = form > 0 ? '↑' : form < 0 ? '↓' : '→';
+  const formColor = form > 0 ? '#22c55e' : form < 0 ? '#ef4444' : 'var(--text-muted)';
+  const flag = NATIONALITY_FLAGS[player?.nationality] || '🌍';
+  return (
+    <div style={{
+      textAlign: 'center', padding: 'var(--space-3)',
+      background: player ? `rgba(${isTarget ? '249,115,22' : '59,130,246'},0.08)` : 'var(--bg-muted)',
+      borderRadius: 'var(--radius-md)',
+      border: `2px solid ${player ? accentColor : 'var(--border-color)'}`,
+    }}>
+      <div style={{ fontSize: '0.6rem', color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: 0.5, marginBottom: 2, fontWeight: 700 }}>{label}</div>
+      {player ? (
+        <>
+          <div style={{ fontWeight: 800, fontSize: 'var(--font-size-sm)', color: 'var(--text-primary)', marginBottom: 2 }}>{player.name}</div>
+          <div style={{ fontSize: 'var(--font-size-xs)', color: 'var(--text-muted)', marginBottom: 2 }}>
+            {player.position} · Age {player.age ?? '—'} · {flag}
+          </div>
+          {player.contractYears != null && (
+            <div style={{ fontSize: '0.6rem', color: 'var(--text-muted)', marginBottom: 4 }}>
+              📝 {player.contractYears}yr contract
+            </div>
+          )}
+          <div style={{ fontWeight: 900, fontSize: 'var(--font-size-xl)', color: accentColor, lineHeight: 1 }}>{ovr}</div>
+          <div style={{ fontSize: '0.6rem', color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: 0.5 }}>OVR</div>
+          <div style={{ marginTop: 4, fontWeight: 700, fontSize: 'var(--font-size-xs)', color: formColor }}>
+            {formArrow} Form {form > 0 ? '+' : ''}{form}
+          </div>
+        </>
+      ) : (
+        <div style={{ color: 'var(--text-muted)', fontSize: 'var(--font-size-xs)', fontWeight: 600, padding: 'var(--space-2) 0' }}>Select a player</div>
+      )}
+    </div>
+  );
+}
+
+function TransferCompareModal({ target, mySquad, onClose }) {
+  const samePos = mySquad.filter(p => p.position === target.position);
+  const defaultComp = samePos.length > 0
+    ? samePos.reduce((best, p) => (p.overallRating || 0) > (best.overallRating || 0) ? p : best, samePos[0])
+    : mySquad[0] || null;
+
+  const [compId, setCompId]   = useState(defaultComp?.id || '');
+  const [showAll, setShowAll] = useState(false);
+  const compPlayer = mySquad.find(p => p.id === compId) || null;
+
+  const TRANSFER_COMPARE_STATS = showAll
+    ? [...TRANSFER_COMPARE_STATS_CORE, ...TRANSFER_COMPARE_STATS_EXTRA]
+    : TRANSFER_COMPARE_STATS_CORE;
+
+  const targetOvr = calcOvr(target);
+  const compOvr = compPlayer ? (compPlayer.overallRating || calcOvr(compPlayer)) : 0;
+  const ovrDiff = targetOvr - compOvr;
+
+  function StatRow({ stat }) {
+    const v1 = target?.attributes?.[stat.key] ?? 0;
+    const v2 = compPlayer?.attributes?.[stat.key] ?? 0;
+    const targetBetter = v1 >= v2;
+    const compBetter = v2 > v1;
+
+    return (
+      <div style={{ display: 'grid', gridTemplateColumns: '1fr auto 1fr', gap: 'var(--space-2)', alignItems: 'center', marginBottom: 8 }}>
+        {/* Left: target (orange) */}
+        <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexDirection: 'row-reverse' }}>
+          <span style={{ fontSize: 'var(--font-size-xs)', fontWeight: 700, color: targetBetter ? 'var(--color-primary)' : 'var(--text-muted)', minWidth: 24, textAlign: 'right' }}>{v1}</span>
+          <div style={{ flex: 1, height: 8, background: 'var(--bg-muted)', borderRadius: 'var(--radius-full)', overflow: 'hidden', direction: 'rtl' }}>
+            <div style={{ width: `${(v1 / 100) * 100}%`, height: '100%', background: targetBetter ? 'var(--color-primary)' : 'rgba(249,115,22,0.4)', borderRadius: 'var(--radius-full)', transition: 'width 0.4s ease' }} />
+          </div>
+        </div>
+
+        <span style={{ fontSize: '0.65rem', fontWeight: 700, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: 0.4, whiteSpace: 'nowrap', textAlign: 'center', minWidth: 90 }}>
+          {stat.label}
+        </span>
+
+        {/* Right: your player (blue) */}
+        <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+          <div style={{ flex: 1, height: 8, background: 'var(--bg-muted)', borderRadius: 'var(--radius-full)', overflow: 'hidden' }}>
+            <div style={{ width: `${(v2 / 100) * 100}%`, height: '100%', background: compPlayer ? (compBetter ? '#3b82f6' : 'rgba(59,130,246,0.4)') : 'var(--bg-muted)', borderRadius: 'var(--radius-full)', transition: 'width 0.4s ease' }} />
+          </div>
+          <span style={{ fontSize: 'var(--font-size-xs)', fontWeight: 700, color: compBetter ? '#3b82f6' : 'var(--text-muted)', minWidth: 24 }}>{compPlayer ? v2 : '—'}</span>
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <div className="modal-overlay" onClick={onClose}>
+      <div className="modal" onClick={e => e.stopPropagation()} style={{ maxWidth: 560, maxHeight: '90vh', display: 'flex', flexDirection: 'column' }}>
+        <div className="modal-header">
+          <h3 className="card-title">Compare to My Squad</h3>
+          <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+            <button
+              className={`btn btn-sm ${showAll ? 'btn-primary' : 'btn-ghost'}`}
+              style={{ fontSize: '0.7rem' }}
+              onClick={() => setShowAll(v => !v)}
+            >
+              {showAll ? 'Core stats' : 'All attrs'}
+            </button>
+            <button className="btn btn-ghost btn-sm" onClick={onClose}>✕</button>
+          </div>
+        </div>
+
+        <div className="modal-body" style={{ overflowY: 'auto', flex: 1 }}>
+          {/* Player headers */}
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr auto 1fr', gap: 'var(--space-2)', marginBottom: 'var(--space-4)', alignItems: 'start' }}>
+            <PlayerHeader player={target}     ovr={targetOvr} accentColor="var(--color-primary)" label="Transfer Target" isTarget />
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', fontWeight: 900, fontSize: 'var(--font-size-lg)', color: 'var(--text-muted)' }}>VS</div>
+            <PlayerHeader player={compPlayer} ovr={compOvr}   accentColor="#3b82f6"              label="Your Player" isTarget={false} />
+          </div>
+
+          {/* Dropdown */}
+          <div style={{ marginBottom: 'var(--space-4)' }}>
+            <label style={{ fontSize: 'var(--font-size-xs)', fontWeight: 700, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: 0.5, display: 'block', marginBottom: 'var(--space-1)' }}>
+              Compare against
+            </label>
+            <select
+              className="form-select"
+              value={compId}
+              onChange={e => setCompId(e.target.value)}
+              style={{ width: '100%' }}
+            >
+              <option value="">Choose a player...</option>
+              {mySquad.map(p => (
+                <option key={p.id} value={p.id}>{p.name} ({p.position}) — OVR {p.overallRating}</option>
+              ))}
+            </select>
+          </div>
+
+          {/* Improvement summary */}
+          {compPlayer && (
+            <div style={{ marginBottom: 'var(--space-4)', padding: 'var(--space-3)', borderRadius: 'var(--radius-md)', background: ovrDiff > 0 ? 'rgba(34,197,94,0.08)' : ovrDiff < 0 ? 'rgba(239,68,68,0.08)' : 'var(--bg-muted)', border: `1px solid ${ovrDiff > 0 ? 'rgba(34,197,94,0.3)' : ovrDiff < 0 ? 'rgba(239,68,68,0.3)' : 'var(--border-color)'}`, textAlign: 'center' }}>
+              <span style={{ fontWeight: 700, fontSize: 'var(--font-size-sm)', color: ovrDiff > 0 ? 'var(--color-success)' : ovrDiff < 0 ? 'var(--color-danger)' : 'var(--text-muted)' }}>
+                {ovrDiff > 0
+                  ? `${target.name} is ${ovrDiff} OVR point${ovrDiff !== 1 ? 's' : ''} better than your current ${compPlayer.position}`
+                  : ovrDiff < 0
+                  ? `${target.name} is ${Math.abs(ovrDiff)} OVR point${Math.abs(ovrDiff) !== 1 ? 's' : ''} worse than your current ${compPlayer.position}`
+                  : `${target.name} matches your current ${compPlayer.position} rating`}
+              </span>
+            </div>
+          )}
+
+          {/* Legend */}
+          <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 'var(--space-3)' }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+              <div style={{ width: 12, height: 12, borderRadius: 2, background: 'var(--color-primary)' }} />
+              <span style={{ fontSize: 'var(--font-size-xs)', fontWeight: 700, color: 'var(--text-secondary)' }}>{target.name} (Target)</span>
+            </div>
+            {compPlayer && (
+              <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                <span style={{ fontSize: 'var(--font-size-xs)', fontWeight: 700, color: 'var(--text-secondary)' }}>{compPlayer.name} (Yours)</span>
+                <div style={{ width: 12, height: 12, borderRadius: 2, background: '#3b82f6' }} />
+              </div>
+            )}
+          </div>
+
+          {/* Stat bars */}
+          {TRANSFER_COMPARE_STATS.map(stat => (
+            <StatRow key={stat.key} stat={stat} />
+          ))}
+        </div>
+      </div>
+    </div>
+  );
+}
+
 // ── Player Card ────────────────────────────────────────────────
 
-function PlayerCard({ player, team, onBuy, onView, timeLeft, userTeamId, onRemove }) {
-  const isOwn = team?.id === userTeamId;
+function PlayerCard({ player, team, onBuy, onView, timeLeft, userTeamId, onRemove, onCompare, isOwn: isOwnProp }) {
+  const isOwn = isOwnProp !== undefined ? isOwnProp : team?.id === userTeamId;
   const ovr = calcOvr(player);
   const wage = calcPlayerMonthlyWage(player);
   return (
@@ -363,6 +573,267 @@ function PlayerCard({ player, team, onBuy, onView, timeLeft, userTeamId, onRemov
           <button className="btn btn-primary btn-sm flex-1" onClick={() => onBuy(player, team)}>Buy</button>
         )}
       </div>
+      {!isOwn && onCompare && (
+        <button
+          className="btn btn-ghost btn-sm"
+          style={{ marginTop: 6, fontSize: 11, color: 'var(--color-primary)', opacity: 0.85, width: '100%' }}
+          onClick={() => onCompare(player)}
+        >
+          Compare to My Squad
+        </button>
+      )}
+    </div>
+  );
+}
+
+// ── Free Agent Card ────────────────────────────────────────────
+
+function FreeAgentCard({ listing, onOffer, onView }) {
+  const player = listing.playerData || {};
+  const ovr = listing.overallRating || player.overallRating || 60;
+  const monthlySalary = Math.round((listing.salaryDemand * 1000) / 12);
+
+  return (
+    <div className="card" style={{ padding: '14px 16px', border: '1.5px solid rgba(34,197,94,0.35)', background: 'linear-gradient(135deg, rgba(34,197,94,0.04) 0%, transparent 100%)' }}>
+      {/* FA badge */}
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 8 }}>
+        <span className="badge badge-green" style={{ fontSize: '0.6rem', fontWeight: 800, letterSpacing: 0.5 }}>FREE AGENT</span>
+        <span style={{ fontSize: 'var(--font-size-xs)', color: 'var(--text-muted)' }}>
+          Released {listing.releasedAt ? new Date(listing.releasedAt).toLocaleDateString() : ''}
+        </span>
+      </div>
+
+      <div className="flex items-center gap-3 mb-3">
+        <PlayerAvatar player={player} size="md" />
+        <div className="flex-1">
+          <div className="font-semibold">{listing.playerName}</div>
+          <div className="flex items-center gap-2">
+            <span className="player-position-badge">{listing.position}</span>
+            <span className="text-xs text-muted">{listing.nationality}</span>
+          </div>
+        </div>
+        <div className="text-right">
+          <div style={{ fontWeight: 800, color: 'var(--color-success)', fontSize: 'var(--font-size-sm)' }}>
+            ${listing.salaryDemand}k/yr
+          </div>
+          <div style={{ fontSize: 'var(--font-size-xs)', color: 'var(--text-muted)' }}>
+            ${Math.round(monthlySalary / 1000 * 10) / 10}k/mo
+          </div>
+        </div>
+      </div>
+
+      <div className="flex gap-2 text-xs" style={{ marginBottom: 10 }}>
+        <span className="badge badge-orange">OVR {ovr}</span>
+        <span className="badge badge-gray">{listing.age}y</span>
+        <span className="badge" style={{ background: 'rgba(34,197,94,0.15)', color: 'var(--color-success)' }}>
+          Wants {listing.contractDemand} yr{listing.contractDemand > 1 ? 's' : ''}
+        </span>
+      </div>
+
+      <div className="flex gap-2">
+        <button className="btn btn-ghost btn-sm flex-1" onClick={() => onView(player)}>
+          <Eye size={12} /> View
+        </button>
+        <button
+          className="btn btn-sm flex-1"
+          style={{ background: 'var(--color-success)', color: 'white' }}
+          onClick={() => onOffer(listing)}
+        >
+          <UserPlus size={12} /> Offer Contract
+        </button>
+      </div>
+    </div>
+  );
+}
+
+// ── Free Agent Negotiation Modal ───────────────────────────────
+
+function FreeAgentNegotiateModal({ listing, team, onClose, onSigned }) {
+  const player      = listing.playerData || {};
+  const demandSalary  = listing.salaryDemand;    // $k/yr
+  const demandSeasons = listing.contractDemand;  // seasons
+
+  const [offeredSalary,  setOfferedSalary]  = useState(demandSalary);
+  const [offeredSeasons, setOfferedSeasons] = useState(demandSeasons);
+  const [result, setResult] = useState(null); // null | 'accepted' | 'declined' | 'counter'
+  const [counterOffer, setCounterOffer] = useState(null);
+  const [isLoading, setIsLoading] = useState(false);
+
+  const budget = team?.budget ?? 0;
+  const annualCost = offeredSalary;  // $k/yr
+  const monthlyCost = Math.round(annualCost * 1000 / 12);
+
+  // Personality-based acceptance threshold: 75–85% of demand
+  const ovr = listing.overallRating || 60;
+  const age = listing.age || 25;
+  const threshold = (ovr >= 80 ? 0.85 : ovr >= 65 ? 0.80 : 0.75);
+  const formBonus = ((player.lastFormRating ?? 65) - 65) / 200; // tiny bonus for hot players
+
+  const acceptanceThreshold = Math.round(demandSalary * (threshold + formBonus));
+
+  async function handleSubmit() {
+    setIsLoading(true);
+    if (offeredSalary >= acceptanceThreshold) {
+      const signed = await apiBuyFreeAgent(listing.id, player, offeredSeasons, offeredSalary);
+      if (signed) {
+        setResult('accepted');
+        onSigned(signed);
+      }
+    } else if (offeredSalary >= demandSalary * 0.65) {
+      // Player counters
+      const counter = Math.round(demandSalary * 0.92);
+      setCounterOffer(counter);
+      setResult('counter');
+    } else {
+      setResult('declined');
+    }
+    setIsLoading(false);
+  }
+
+  if (result === 'accepted') return (
+    <div className="modal-overlay">
+      <div className="modal" style={{ maxWidth: 400 }}>
+        <div className="modal-body" style={{ textAlign: 'center', padding: 32 }}>
+          <div style={{ fontSize: '3rem', marginBottom: 12 }}>🎉</div>
+          <div style={{ fontWeight: 800, fontSize: 'var(--font-size-xl)', color: 'var(--color-success)', marginBottom: 8 }}>Contract Signed!</div>
+          <div style={{ color: 'var(--text-muted)', fontSize: 'var(--font-size-sm)', marginBottom: 20 }}>
+            {listing.playerName} joins your squad for ${offeredSalary}k/year over {offeredSeasons} season{offeredSeasons > 1 ? 's' : ''}.
+          </div>
+          <button className="btn btn-primary" onClick={onClose}>Done</button>
+        </div>
+      </div>
+    </div>
+  );
+
+  if (result === 'declined') return (
+    <div className="modal-overlay" onClick={onClose}>
+      <div className="modal" style={{ maxWidth: 400 }} onClick={e => e.stopPropagation()}>
+        <div className="modal-body" style={{ textAlign: 'center', padding: 32 }}>
+          <div style={{ fontSize: '3rem', marginBottom: 12 }}>❌</div>
+          <div style={{ fontWeight: 800, fontSize: 'var(--font-size-xl)', color: 'var(--color-danger)', marginBottom: 8 }}>Offer Rejected</div>
+          <div style={{ color: 'var(--text-muted)', fontSize: 'var(--font-size-sm)', marginBottom: 20 }}>
+            {listing.playerName} expects at least ${acceptanceThreshold}k/year. Your offer was too low.
+          </div>
+          <div className="flex gap-2 justify-center">
+            <button className="btn btn-ghost" onClick={() => setResult(null)}>Try Again</button>
+            <button className="btn btn-primary" onClick={onClose}>Cancel</button>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+
+  if (result === 'counter') return (
+    <div className="modal-overlay">
+      <div className="modal" style={{ maxWidth: 400 }}>
+        <div className="modal-body" style={{ textAlign: 'center', padding: 32 }}>
+          <div style={{ fontSize: '3rem', marginBottom: 12 }}>🤝</div>
+          <div style={{ fontWeight: 800, fontSize: 'var(--font-size-xl)', color: 'var(--color-warning)', marginBottom: 8 }}>Counter Offer!</div>
+          <div style={{ color: 'var(--text-muted)', fontSize: 'var(--font-size-sm)', marginBottom: 16 }}>
+            {listing.playerName} is interested but wants <strong style={{ color: 'var(--text-primary)' }}>${counterOffer}k/year</strong> instead.
+          </div>
+          <div className="flex gap-2 justify-center">
+            <button className="btn btn-ghost" onClick={() => { setOfferedSalary(counterOffer); setResult(null); }}>Accept Counter</button>
+            <button className="btn btn-primary" onClick={onClose}>Walk Away</button>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+
+  return (
+    <div className="modal-overlay" onClick={onClose}>
+      <div className="modal" onClick={e => e.stopPropagation()} style={{ maxWidth: 440 }}>
+        <div className="modal-header">
+          <h3 className="card-title">Contract Negotiation</h3>
+          <button className="btn btn-ghost btn-sm" onClick={onClose}><X size={16} /></button>
+        </div>
+        <div className="modal-body">
+          {/* Player info */}
+          <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 20, padding: 12, background: 'var(--bg-muted)', borderRadius: 'var(--radius-md)' }}>
+            <PlayerAvatar player={player} size="md" />
+            <div>
+              <div style={{ fontWeight: 700 }}>{listing.playerName}</div>
+              <div style={{ fontSize: 'var(--font-size-xs)', color: 'var(--text-muted)' }}>{listing.position} · OVR {listing.overallRating} · Age {listing.age}</div>
+            </div>
+          </div>
+
+          {/* Demand summary */}
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8, marginBottom: 20 }}>
+            <div style={{ padding: 10, background: 'rgba(239,68,68,0.08)', border: '1px solid rgba(239,68,68,0.25)', borderRadius: 8, textAlign: 'center' }}>
+              <div style={{ fontSize: '0.65rem', color: 'var(--text-muted)', fontWeight: 700, textTransform: 'uppercase', marginBottom: 2 }}>Demands</div>
+              <div style={{ fontWeight: 900, color: 'var(--color-danger)' }}>${demandSalary}k/yr</div>
+              <div style={{ fontSize: 'var(--font-size-xs)', color: 'var(--text-muted)' }}>{demandSeasons} season{demandSeasons > 1 ? 's' : ''}</div>
+            </div>
+            <div style={{ padding: 10, background: 'rgba(34,197,94,0.08)', border: '1px solid rgba(34,197,94,0.25)', borderRadius: 8, textAlign: 'center' }}>
+              <div style={{ fontSize: '0.65rem', color: 'var(--text-muted)', fontWeight: 700, textTransform: 'uppercase', marginBottom: 2 }}>Your Budget</div>
+              <div style={{ fontWeight: 900, color: 'var(--color-success)' }}>${budget}k</div>
+              <div style={{ fontSize: 'var(--font-size-xs)', color: 'var(--text-muted)' }}>available</div>
+            </div>
+          </div>
+
+          {/* Acceptance meter */}
+          <div style={{ marginBottom: 16 }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 4 }}>
+              <span style={{ fontSize: 'var(--font-size-xs)', fontWeight: 700, color: 'var(--text-muted)' }}>Player interest</span>
+              <span style={{ fontSize: 'var(--font-size-xs)', fontWeight: 700, color: offeredSalary >= acceptanceThreshold ? 'var(--color-success)' : offeredSalary >= demandSalary * 0.7 ? 'var(--color-warning)' : 'var(--color-danger)' }}>
+                {offeredSalary >= acceptanceThreshold ? 'Will sign' : offeredSalary >= demandSalary * 0.7 ? 'Negotiating' : 'Not interested'}
+              </span>
+            </div>
+            <div style={{ height: 8, background: 'var(--bg-muted)', borderRadius: 'var(--radius-full)', overflow: 'hidden' }}>
+              <div style={{
+                height: '100%',
+                width: `${Math.min(100, (offeredSalary / demandSalary) * 85)}%`,
+                background: offeredSalary >= acceptanceThreshold ? 'var(--color-success)' : offeredSalary >= demandSalary * 0.7 ? '#f59e0b' : 'var(--color-danger)',
+                borderRadius: 'var(--radius-full)',
+                transition: 'width 0.3s ease, background 0.3s ease',
+              }} />
+            </div>
+          </div>
+
+          {/* Salary slider */}
+          <div className="form-group">
+            <label className="form-label" style={{ display: 'flex', justifyContent: 'space-between' }}>
+              <span>Salary Offer (k/year)</span>
+              <strong style={{ color: 'var(--color-primary)' }}>${offeredSalary}k</strong>
+            </label>
+            <input
+              type="range"
+              min={1} max={Math.max(demandSalary * 1.5, 30)} step={1}
+              value={offeredSalary}
+              onChange={e => setOfferedSalary(Number(e.target.value))}
+              style={{ width: '100%', accentColor: 'var(--color-primary)' }}
+            />
+            <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 'var(--font-size-xs)', color: 'var(--text-muted)', marginTop: 2 }}>
+              <span>$1k</span>
+              <span style={{ color: 'var(--color-warning)' }}>Min acceptable: ~${acceptanceThreshold}k</span>
+              <span>${Math.round(demandSalary * 1.5)}k</span>
+            </div>
+          </div>
+
+          {/* Contract length */}
+          <div className="form-group">
+            <label className="form-label">Contract Length</label>
+            <select className="form-select" value={offeredSeasons} onChange={e => setOfferedSeasons(Number(e.target.value))}>
+              {[1, 2, 3, 4, 5].map(n => (
+                <option key={n} value={n}>{n} season{n > 1 ? 's' : ''}{n === demandSeasons ? ' (Preferred)' : ''}</option>
+              ))}
+            </select>
+          </div>
+
+          {/* Monthly cost */}
+          <div style={{ padding: 10, background: 'var(--bg-muted)', borderRadius: 8, marginBottom: 4, display: 'flex', justifyContent: 'space-between', fontSize: 'var(--font-size-sm)' }}>
+            <span style={{ color: 'var(--text-muted)' }}>Monthly cost</span>
+            <strong>${Math.round(offeredSalary * 1000 / 12).toLocaleString()}/mo</strong>
+          </div>
+        </div>
+        <div className="modal-footer">
+          <button className="btn btn-ghost" onClick={onClose}>Cancel</button>
+          <button className="btn btn-primary" onClick={handleSubmit} disabled={isLoading}>
+            {isLoading ? 'Negotiating...' : 'Submit Offer'}
+          </button>
+        </div>
+      </div>
     </div>
   );
 }
@@ -380,9 +851,23 @@ export default function Transfer() {
   const [viewPlayer, setViewPlayer] = useState(null);
   const [playerFilters, setPlayerFilters] = useState({ ...DEFAULT_PLAYER_FILTERS });
   const [staffFilters, setStaffFilters] = useState({ ...DEFAULT_STAFF_FILTERS });
+  const [compareTarget, setCompareTarget] = useState(null);
+  const [freeAgentTarget, setFreeAgentTarget] = useState(null);
 
   const team = state.userTeam;
   const allTeams = state.allTeams || [];
+
+  // Free agents from the Firestore transfer_market (loaded into state.transferMarket)
+  const freeAgents = useMemo(
+    () => (state.transferMarket || []).filter(t => t.isFreeAgent && !t.isStaff),
+    [state.transferMarket],
+  );
+
+  // Staff available for hire
+  const staffListings = useMemo(
+    () => (state.transferMarket || []).filter(t => t.isStaff),
+    [state.transferMarket],
+  );
 
   const marketPlayers = useMemo(() => {
     const result = [];
@@ -479,6 +964,19 @@ export default function Transfer() {
 
   const availableToList = (team?.players || []).filter(p => !p.isOnTransferMarket);
 
+  function handleFreeAgentSigned(signedPlayer) {
+    // Add player to user team
+    const updatedTeam = { ...team, players: [...(team?.players || []), signedPlayer] };
+    dispatch({ type: 'UPDATE_TEAM', payload: updatedTeam });
+    // Remove from local transferMarket state
+    dispatch({
+      type: 'SET_TRANSFER_MARKET',
+      payload: (state.transferMarket || []).filter(t => t.id !== freeAgentTarget?.id),
+    });
+    addNotification(`${signedPlayer.name} joined your squad!`, 'success');
+    setFreeAgentTarget(null);
+  }
+
   return (
     <div className="animate-fade-in">
       <div className="page-header">
@@ -489,6 +987,15 @@ export default function Transfer() {
       <div className="tabs mb-4">
         <button className={`tab${activeTab === 'market' ? ' active' : ''}`} onClick={() => setActiveTab('market')}>
           Market ({marketPlayers.length})
+        </button>
+        <button className={`tab${activeTab === 'freeagents' ? ' active' : ''}`} onClick={() => setActiveTab('freeagents')} style={{ position: 'relative' }}>
+          Free Agents ({freeAgents.length})
+          {freeAgents.length > 0 && (
+            <span style={{ position: 'absolute', top: 2, right: 2, width: 8, height: 8, borderRadius: '50%', background: 'var(--color-success)' }} />
+          )}
+        </button>
+        <button className={`tab${activeTab === 'staff' ? ' active' : ''}`} onClick={() => setActiveTab('staff')}>
+          Staff ({staffListings.length})
         </button>
         <button className={`tab${activeTab === 'mylistings' ? ' active' : ''}`} onClick={() => setActiveTab('mylistings')}>
           My Listings ({myListings.length})
@@ -537,8 +1044,117 @@ export default function Transfer() {
           ) : (
             <div className="grid-auto">
               {filtered.map(({ player, team: t }) => (
-                <PlayerCard key={player.id} player={player} team={t} onBuy={handleBuy} onView={setViewPlayer} timeLeft={getTimeLeft(player.listedAt)} userTeamId={team?.id} onRemove={handleRemoveListing} />
+                <PlayerCard key={player.id} player={player} team={t} onBuy={handleBuy} onView={setViewPlayer} timeLeft={getTimeLeft(player.listedAt)} userTeamId={team?.id} onRemove={handleRemoveListing} onCompare={setCompareTarget} />
               ))}
+            </div>
+          )}
+        </div>
+      )}
+
+      {activeTab === 'freeagents' && (
+        <div>
+          <div className="card mb-4" style={{ padding: '10px 16px', background: 'rgba(34,197,94,0.06)', border: '1px solid rgba(34,197,94,0.2)' }}>
+            <div style={{ fontSize: 'var(--font-size-sm)', color: 'var(--text-secondary)' }}>
+              <strong style={{ color: 'var(--color-success)' }}>Free agents</strong> — players whose contracts were terminated. No transfer fee required; only agree on salary &amp; contract length.
+            </div>
+          </div>
+          {freeAgents.length === 0 ? (
+            <div className="empty-state">
+              <div className="empty-state-icon">🏃</div>
+              <div className="empty-state-title">No free agents available</div>
+              <div className="empty-state-desc">When a manager releases a player from their squad, the player appears here as a free agent.</div>
+            </div>
+          ) : (
+            <div className="grid-auto">
+              {freeAgents.map(listing => (
+                <FreeAgentCard
+                  key={listing.id}
+                  listing={listing}
+                  onOffer={setFreeAgentTarget}
+                  onView={setViewPlayer}
+                />
+              ))}
+            </div>
+          )}
+        </div>
+      )}
+
+      {activeTab === 'staff' && (
+        <div>
+          <div className="card mb-4" style={{ padding: '10px 16px', background: 'rgba(99,102,241,0.06)', border: '1px solid rgba(99,102,241,0.2)' }}>
+            <div style={{ fontSize: 'var(--font-size-sm)', color: 'var(--text-secondary)' }}>
+              <strong style={{ color: '#6366f1' }}>Staff for hire</strong> — coaches, scouts and managers. Pay a one-time hire fee; their monthly wage is added to your weekly expenses.
+            </div>
+          </div>
+          {staffListings.length === 0 ? (
+            <div className="empty-state">
+              <div className="empty-state-icon">👔</div>
+              <div className="empty-state-title">No staff available</div>
+              <div className="empty-state-desc">The admin will seed new staff members periodically.</div>
+            </div>
+          ) : (
+            <div className="grid-auto">
+              {staffListings.map(listing => {
+                const avgAb = listing.avgAbility || 50;
+                const canAfford = (team?.budget || 0) >= (listing.hireCost || 0);
+                const alreadyHired = Object.values(team?.staff || {}).some(s => s.id === listing.id);
+                return (
+                  <div key={listing.id} className="card" style={{ padding: '14px 16px', border: '1.5px solid rgba(99,102,241,0.25)' }}>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 8 }}>
+                      <span className="badge" style={{ background: 'rgba(99,102,241,0.15)', color: '#6366f1', fontWeight: 700, fontSize: '0.65rem' }}>{listing.staffRole}</span>
+                      <span style={{ fontSize: 'var(--font-size-xs)', color: 'var(--text-muted)' }}>OVR {avgAb}</span>
+                    </div>
+                    <div style={{ fontWeight: 700, marginBottom: 4 }}>{listing.name}</div>
+                    <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', marginBottom: 10 }}>
+                      {Object.entries(listing.abilities || {}).slice(0, 3).map(([k, v]) => (
+                        <span key={k} className="badge" style={{ background: 'var(--bg-muted)', fontSize: '0.65rem' }}>{k.replace(/([A-Z])/g, ' $1').trim()}: {v}</span>
+                      ))}
+                    </div>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 'var(--font-size-xs)', color: 'var(--text-muted)', marginBottom: 10 }}>
+                      <span>Hire fee: <strong style={{ color: 'var(--text-primary)' }}>${listing.hireCost}k</strong></span>
+                      <span>Wage: <strong style={{ color: 'var(--color-danger)' }}>${listing.monthlyWage}/mo</strong></span>
+                    </div>
+                    <button
+                      className="btn btn-primary btn-sm"
+                      style={{ width: '100%' }}
+                      disabled={!canAfford || alreadyHired}
+                      onClick={async () => {
+                        if (!canAfford || alreadyHired) return;
+
+                        // Claim from the shared Firestore market so no one else can take them
+                        const success = await apiHireStaff(listing.id);
+                        if (!success) {
+                          addNotification('Failed to hire. They may have already been signed by another GM!', 'error');
+                          return;
+                        }
+
+                        const staffKey = listing.staffRole.toLowerCase().replace(/\s+/g, '_') + '_' + listing.id.slice(-4);
+                        const newStaff = {
+                          ...listing,
+                          id: listing.id,
+                          hiredAt: Date.now(),
+                        };
+                        dispatch({
+                          type: 'UPDATE_TEAM',
+                          payload: {
+                            ...team,
+                            budget: (team.budget || 0) - (listing.hireCost || 0),
+                            staff: { ...(team.staff || {}), [staffKey]: newStaff },
+                          },
+                        });
+                        dispatch({
+                          type: 'SET_TRANSFER_MARKET',
+                          payload: (state.transferMarket || []).filter(t => t.id !== listing.id),
+                        });
+                        addNotification(`${listing.name} hired as ${listing.staffRole}!`, 'success');
+                      }}
+                    >
+                      <UserPlus size={13} />
+                      {alreadyHired ? 'Already Hired' : canAfford ? `Hire — $${listing.hireCost}k` : 'Insufficient Budget'}
+                    </button>
+                  </div>
+                );
+              })}
             </div>
           )}
         </div>
@@ -589,6 +1205,25 @@ export default function Transfer() {
             </table>
           )}
         </div>
+      )}
+
+      {/* Free Agent Negotiation Modal */}
+      {freeAgentTarget && (
+        <FreeAgentNegotiateModal
+          listing={freeAgentTarget}
+          team={team}
+          onClose={() => setFreeAgentTarget(null)}
+          onSigned={handleFreeAgentSigned}
+        />
+      )}
+
+      {/* Transfer Compare Modal */}
+      {compareTarget && (
+        <TransferCompareModal
+          target={compareTarget}
+          mySquad={team?.players || []}
+          onClose={() => setCompareTarget(null)}
+        />
       )}
 
       {/* Filter Modal */}

@@ -57,10 +57,58 @@ const FACILITY_DEFS = [
     primary: 'Supporter capacity (start: 600) & home advantage',
     secondary: 'Larger crowds amplify home court edge',
   },
+  {
+    key: 'medicalCenter',
+    name: 'Medical Center',
+    icon: '🏥',
+    primary: 'Injury risk reduction & faster recovery',
+    secondary: 'Each level cuts injury risk by 8% and speeds up healing',
+    maxLevel: 5,
+    baseCost: 80,
+    baseTime: 8,
+  },
+  {
+    key: 'scoutingOffice',
+    name: 'Scouting Office',
+    icon: '🔭',
+    primary: 'Transfer insight & youth scouting perks',
+    secondary: 'Reveals hidden attributes, unlocks regions, free scout reports',
+    maxLevel: 5,
+    baseCost: 60,
+    baseTime: 7,
+  },
 ];
 
 const BASE_COST = 100;
 const BASE_TIME = 10; // hours
+
+// ── Facility data helpers ───────────────────────────────────────
+
+// Get current level (accounting for completed upgrades)
+function getFacilityLevel(facilityData) {
+  if (typeof facilityData === 'number') return facilityData;
+  if (!facilityData) return 0;
+  return facilityData.level ?? 0;
+}
+
+// Get upgrade progress (null if not upgrading)
+function getUpgradeProgress(facilityData) {
+  if (typeof facilityData !== 'object' || !facilityData?.upgradeStarted) return null;
+  const elapsed = Date.now() - facilityData.upgradeStarted;
+  const totalMs = facilityData.upgradeHours * 3600 * 1000;
+  const done = elapsed >= totalMs;
+  return { elapsed, totalMs, done, hoursLeft: Math.max(0, (totalMs - elapsed) / 3600000) };
+}
+
+// Format hours remaining as "Xh Ym"
+function formatTimeRemaining(hoursLeft) {
+  const totalMinutes = Math.ceil(hoursLeft * 60);
+  const h = Math.floor(totalMinutes / 60);
+  const m = totalMinutes % 60;
+  if (h > 0 && m > 0) return `${h}h ${m}m remaining`;
+  if (h > 0) return `${h}h remaining`;
+  return `${m}m remaining`;
+}
 
 // ── Per-facility upgrade benefit descriptions ───────────────────
 
@@ -102,6 +150,18 @@ function getUpgradeBenefits(key, nextLevel) {
       { icon: '🏠', text: `Home advantage +${lv * 3}%` },
       { icon: '🎤', text: `Crowd intimidation ×${(1 + lv * 0.05).toFixed(2)}` },
       { icon: '💰', text: `Gate revenue +${lv * 10}%` },
+    ],
+    medicalCenter: [
+      { icon: '🩺', text: `Injury risk −${lv * 8}%` },
+      { icon: '💊', text: `Recovery speed +${lv} day/week` },
+      lv >= 3 ? { icon: '🧬', text: 'Rehab programs unlock at L3' } : { icon: '🔒', text: 'Advanced rehab at L3' },
+      lv >= 5 ? { icon: '🌟', text: 'Full injury prevention suite at L5' } : { icon: '🔒', text: 'Prevention suite at L5' },
+    ],
+    scoutingOffice: [
+      { icon: '🔍', text: 'Exact attribute values in transfer market' },
+      lv >= 3 ? { icon: '🌍', text: 'Extra scout region unlocked at L3' } : { icon: '🔒', text: 'Extra region at L3' },
+      lv >= 5 ? { icon: '🎓', text: 'Free Youth Academy scout report at L5' } : { icon: '🔒', text: 'Free scout at L5' },
+      { icon: '📊', text: `Scouting accuracy +${lv * 12}%` },
     ],
   };
   return map[key] ?? [];
@@ -156,7 +216,6 @@ function UpgradeTooltip({ facilityKey, nextLevel, visible, anchorRef }) {
         position: 'absolute',
         bottom: -7,
         left: '50%',
-        transform: 'translateX(-50%)',
         width: 12,
         height: 12,
         background: 'var(--bg-card)',
@@ -169,8 +228,10 @@ function UpgradeTooltip({ facilityKey, nextLevel, visible, anchorRef }) {
   );
 }
 
-function getUpgradeCost(level) {
-  return Math.round(BASE_COST * Math.pow(1.5, level));
+function getUpgradeCost(level, facilityKey) {
+  const def = FACILITY_DEFS.find(d => d.key === facilityKey);
+  const base = def?.baseCost ?? BASE_COST;
+  return Math.round(base * Math.pow(1.5, level));
 }
 
 function getUpgradeTime(level) {
@@ -204,9 +265,13 @@ function LevelDots({ level, max = 10 }) {
   );
 }
 
-function FacilityCard({ def, level, budget, upgrading, onUpgrade }) {
-  const isMaxed = level >= 10;
-  const cost = getUpgradeCost(level);
+function FacilityCard({ def, facilityData, budget, onUpgrade }) {
+  const level = getFacilityLevel(facilityData);
+  const upgradeProgress = getUpgradeProgress(facilityData);
+  const isUpgrading = upgradeProgress && !upgradeProgress.done;
+  const facilityMaxLevel = def?.maxLevel ?? 10;
+  const isMaxed = level >= facilityMaxLevel;
+  const cost = getUpgradeCost(level, def.key);
   const hours = getUpgradeTime(level);
   const canAfford = budget >= cost;
   const [showTooltip, setShowTooltip] = useState(false);
@@ -219,7 +284,7 @@ function FacilityCard({ def, level, budget, upgrading, onUpgrade }) {
         display: 'flex',
         flexDirection: 'column',
         gap: 'var(--space-3)',
-        border: upgrading
+        border: isUpgrading
           ? '2px solid var(--color-warning)'
           : isMaxed
           ? '2px solid var(--color-success)'
@@ -229,7 +294,7 @@ function FacilityCard({ def, level, budget, upgrading, onUpgrade }) {
       }}
     >
       {/* Top accent bar */}
-      {(upgrading || isMaxed) && (
+      {(isUpgrading || isMaxed) && (
         <div
           style={{
             position: 'absolute',
@@ -254,6 +319,8 @@ function FacilityCard({ def, level, budget, upgrading, onUpgrade }) {
           <div style={{ fontSize: 'var(--font-size-xs)', color: 'var(--text-muted)', marginTop: 2 }}>
             {isMaxed ? (
               <span style={{ color: 'var(--color-success)', fontWeight: 700 }}>MAX LEVEL</span>
+            ) : isUpgrading ? (
+              <span style={{ color: 'var(--color-warning)', fontWeight: 700 }}>Upgrading to Level {level + 1}…</span>
             ) : (
               `Level ${level} → ${level + 1}`
             )}
@@ -310,21 +377,14 @@ function FacilityCard({ def, level, budget, upgrading, onUpgrade }) {
             borderTop: '1px solid var(--border-color)',
           }}
         >
-          {upgrading ? (
-            <div
-              style={{
-                display: 'flex',
-                alignItems: 'center',
-                gap: 'var(--space-2)',
-                padding: 'var(--space-2) var(--space-3)',
-                background: 'var(--color-warning-light)',
-                borderRadius: 'var(--radius-md)',
-              }}
-            >
-              <div className="animate-spin" style={{ width: 14, height: 14, border: '2px solid var(--color-warning)', borderTopColor: 'transparent', borderRadius: '50%' }} />
-              <span style={{ fontSize: 'var(--font-size-xs)', fontWeight: 700, color: 'var(--color-warning)' }}>
-                Upgrade in progress…
-              </span>
+          {isUpgrading ? (
+            <div>
+              <div style={{ background: 'var(--bg-muted)', borderRadius: 'var(--radius-full)', height: 6, overflow: 'hidden', marginBottom: 6 }}>
+                <div style={{ height: '100%', background: 'var(--color-primary)', width: `${Math.min(100, upgradeProgress.elapsed / upgradeProgress.totalMs * 100)}%`, transition: 'width 1s' }} />
+              </div>
+              <p style={{ fontSize: 'var(--font-size-xs)', color: 'var(--text-muted)' }}>
+                ⏳ {formatTimeRemaining(upgradeProgress.hoursLeft)}
+              </p>
             </div>
           ) : (
             <>
@@ -401,8 +461,6 @@ export default function Facilities() {
   const { state, dispatch, addNotification } = useGame();
   const { userTeam } = state;
 
-  const [upgradingKeys, setUpgradingKeys] = useState({});
-
   if (!userTeam) {
     return (
       <div className="page-content animate-fade-in">
@@ -425,59 +483,88 @@ export default function Facilities() {
     basketballHall: 0,
   };
 
+  // ── Check for completed upgrades on mount ──────────────────
+  useEffect(() => {
+    const currentFacilities = userTeam?.facilities || {};
+    let changed = false;
+    const updated = { ...currentFacilities };
+    Object.keys(currentFacilities).forEach(key => {
+      const prog = getUpgradeProgress(currentFacilities[key]);
+      if (prog?.done) {
+        updated[key] = (currentFacilities[key].level ?? 0) + 1;
+        changed = true;
+      }
+    });
+    if (changed) {
+      dispatch({ type: 'UPDATE_TEAM', payload: { ...userTeam, facilities: updated } });
+      addNotification('A facility upgrade has been completed!', 'success');
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // ── Poll every 30s for completed upgrades ─────────────────
+  useEffect(() => {
+    const interval = setInterval(() => {
+      const currentFacilities = userTeam?.facilities || {};
+      let changed = false;
+      const updated = { ...currentFacilities };
+      Object.keys(currentFacilities).forEach(key => {
+        const prog = getUpgradeProgress(currentFacilities[key]);
+        if (prog?.done) {
+          updated[key] = (currentFacilities[key].level ?? 0) + 1;
+          changed = true;
+        }
+      });
+      if (changed) {
+        dispatch({ type: 'UPDATE_TEAM', payload: { ...userTeam, facilities: updated } });
+        addNotification('A facility upgrade has been completed!', 'success');
+      }
+    }, 30000);
+    return () => clearInterval(interval);
+  }, [userTeam, dispatch, addNotification]);
+
   function handleUpgrade(key, cost) {
     if (budget < cost) {
       addNotification('Insufficient budget for this upgrade.', 'error');
       return;
     }
 
-    const currentLevel = facilities[key] ?? 0;
-    if (currentLevel >= 10) {
+    const currentLevel = getFacilityLevel(facilities[key]);
+    const def = FACILITY_DEFS.find(d => d.key === key);
+    const facilityMaxLevel = def?.maxLevel ?? 10;
+    if (currentLevel >= facilityMaxLevel) {
       addNotification('This facility is already at max level.', 'info');
       return;
     }
 
-    const hours = getUpgradeTime(currentLevel);
-
-    const updatedFacilities = {
+    const facilityBaseTime = def?.baseTime ?? BASE_TIME;
+    const upgradeHours = Math.round(facilityBaseTime * Math.pow(1.15, currentLevel));
+    const newFacilities = {
       ...facilities,
-      [key]: currentLevel + 1,
+      [key]: { level: currentLevel, upgradeStarted: Date.now(), upgradeHours },
     };
 
     const updatedTeam = {
       ...userTeam,
       budget: budget - cost,
-      facilities: updatedFacilities,
+      facilities: newFacilities,
       // Media Center upgrades increase teamExposure, which accelerates weekly fan growth
       ...(key === 'media' ? { teamExposure: currentLevel + 1 } : {}),
     };
 
     dispatch({ type: 'UPDATE_TEAM', payload: updatedTeam });
 
-    // Simulate upgrade in progress for the duration
-    setUpgradingKeys(prev => ({ ...prev, [key]: true }));
-    const ms = Math.min(hours * 1000, 8000); // cap at 8s for UX
-    setTimeout(() => {
-      setUpgradingKeys(prev => {
-        const next = { ...prev };
-        delete next[key];
-        return next;
-      });
-      const def = FACILITY_DEFS.find(d => d.key === key);
-      addNotification(`${def?.name ?? key} upgraded to Level ${currentLevel + 1}!`, 'success');
-    }, ms);
-
-    addNotification(`Upgrading ${FACILITY_DEFS.find(d => d.key === key)?.name}… ${formatCost(cost)} deducted.`, 'info');
+    addNotification(`Upgrading ${def?.name ?? key}… ${formatCost(cost)} deducted. Will complete in ${upgradeHours}h.`, 'info');
   }
 
-  // Income estimates
+  // Income estimates — use getFacilityLevel for safety
   const fanCount = userTeam.fanCount ?? 250;
   const ticketPrice = userTeam.ticketPrice ?? 20;
-  const merchandiseLevel = facilities.merchandise ?? 0;
+  const merchandiseLevel = getFacilityLevel(facilities.merchandise);
   const gateRevenue = Math.round(fanCount * ticketPrice * 0.3);
   const merchRevenue = Math.round(50 * (1 + merchandiseLevel * 0.3));
 
-  const totalFacilityLevel = FACILITY_DEFS.reduce((sum, d) => sum + (facilities[d.key] ?? 0), 0);
+  const totalFacilityLevel = FACILITY_DEFS.reduce((sum, d) => sum + getFacilityLevel(facilities[d.key]), 0);
 
   return (
     <div className="page-content animate-fade-in">
@@ -510,9 +597,8 @@ export default function Facilities() {
           <FacilityCard
             key={def.key}
             def={def}
-            level={facilities[def.key] ?? 0}
+            facilityData={facilities[def.key] ?? 0}
             budget={budget}
-            upgrading={!!upgradingKeys[def.key]}
             onUpgrade={handleUpgrade}
           />
         ))}

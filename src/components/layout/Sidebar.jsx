@@ -3,8 +3,16 @@ import { useGame } from '../../context/GameContext.jsx';
 import {
   LayoutDashboard, Users, Target, UserCheck, Dumbbell,
   Building2, Heart, Calendar, Trophy, ArrowLeftRight,
-  BarChart2, Settings, User, LogOut, Zap, TrendingUp
+  BarChart2, Settings, User, LogOut, Zap, TrendingUp, X, Shield
 } from 'lucide-react';
+
+function YouthAcademyIcon({ size = 18 }) {
+  return <span style={{ fontSize: size, lineHeight: 1, display: 'inline-flex', alignItems: 'center' }}>🌱</span>;
+}
+
+function ScoutsIcon({ size = 18 }) {
+  return <span style={{ fontSize: size, lineHeight: 1, display: 'inline-flex', alignItems: 'center' }}>🔭</span>;
+}
 
 const NAV_GROUPS = [
   {
@@ -20,6 +28,8 @@ const NAV_GROUPS = [
     label: 'Management',
     items: [
       { to: '/staff', icon: UserCheck, label: 'Staff' },
+      { to: '/youth-academy', icon: YouthAcademyIcon, label: 'Youth Academy' },
+      { to: '/scouts', icon: ScoutsIcon, label: 'Scouts' },
       { to: '/training', icon: Dumbbell, label: 'Training' },
       { to: '/facilities', icon: Building2, label: 'Facilities' },
       { to: '/fans', icon: Heart, label: 'Fans' },
@@ -29,7 +39,7 @@ const NAV_GROUPS = [
   {
     label: 'Competition',
     items: [
-      { to: '/calendar', icon: Calendar, label: 'Calendar' },
+      { to: '/fixtures', icon: Calendar, label: 'Fixtures' },
       { to: '/league', icon: Trophy, label: 'League' },
       { to: '/transfer', icon: ArrowLeftRight, label: 'Transfer' },
     ]
@@ -43,7 +53,7 @@ const NAV_GROUPS = [
   }
 ];
 
-export default function Sidebar() {
+export default function Sidebar({ isOpen, onClose }) {
   const { state, dispatch } = useGame();
   const navigate = useNavigate();
   const team = state.userTeam;
@@ -54,8 +64,16 @@ export default function Sidebar() {
   };
 
   return (
-    <aside className="sidebar">
+    <aside className={`sidebar${isOpen ? ' open' : ''}`}>
       <div className="sidebar-logo">
+        {/* Close button – visible only on mobile */}
+        <button
+          className="sidebar-close-btn"
+          onClick={onClose}
+          aria-label="Close menu"
+        >
+          <X size={20} />
+        </button>
         <svg className="sidebar-logo-icon" viewBox="0 0 64 64">
           <circle cx="32" cy="32" r="30" fill="#E8621A"/>
           <path d="M32 2 Q50 18 32 32 Q14 46 32 62" stroke="#C04E10" strokeWidth="2.5" fill="none"/>
@@ -98,6 +116,12 @@ export default function Sidebar() {
           <NavLink to="/match/live" className="sidebar-nav-item" style={{marginBottom: '8px', background: 'rgba(198,40,40,0.1)', borderLeftColor: '#C62828'}}>
             <Zap size={18} color="#C62828" />
             <span style={{color:'#C62828', fontWeight:700}}>Live Match!</span>
+          </NavLink>
+        )}
+        {state.user?.isAdmin && (
+          <NavLink to="/admin" className={({ isActive }) => `sidebar-nav-item${isActive ? ' active' : ''}`} style={{ marginBottom: '4px', background: 'rgba(232,98,26,0.08)' }}>
+            <Shield size={18} color="var(--color-primary)" />
+            <span style={{ fontWeight: 700, color: 'var(--color-primary)' }}>Admin Panel</span>
           </NavLink>
         )}
         <button className="sidebar-nav-item w-full" onClick={handleLogout} style={{width:'100%'}}>

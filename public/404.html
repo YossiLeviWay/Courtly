@@ -1,0 +1,21 @@
+<!DOCTYPE html>
+<html>
+  <head>
+    <meta charset="utf-8" />
+    <title>Courtly</title>
+    <script>
+      // GitHub Pages SPA redirect trick:
+      // Encode the path into the query string and redirect to the base URL.
+      // index.html will read it back and restore the path via history.replaceState
+      // before React Router boots.
+      var seg = window.location.pathname.replace('/Courtly', '').replace(/\/$/, '');
+      var search = window.location.search ? window.location.search.slice(1) : '';
+      var hash = window.location.hash || '';
+      var qs = seg + (search ? '?' + search : '');
+      window.location.replace(
+        '/Courtly/?p=' + encodeURIComponent(qs) + hash
+      );
+    </script>
+  </head>
+  <body></body>
+</html>

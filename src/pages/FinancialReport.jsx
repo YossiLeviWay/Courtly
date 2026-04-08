@@ -19,7 +19,7 @@ export function calcStaffMonthlyWage(staff) {
   const abilities = staff.abilities || {};
   const vals = Object.values(abilities);
   const avg = vals.length > 0 ? Math.round(vals.reduce((a, b) => a + b, 0) / vals.length) : 50;
-  return 500 + avg * 100;
+  return 200 + avg * 30;
 }
 
 // ── Format helpers ─────────────────────────────────────────────
@@ -263,6 +263,66 @@ export default function FinancialReport() {
           </div>
         </div>
       </div>
+
+      {/* ── Debt Overview (only shown when budget is negative) ── */}
+      {cashReserves < 0 && (() => {
+        const debtAmount = Math.abs(cashReserves);
+        const monthlyInterest = Math.round(debtAmount * 0.04);
+        const projected3Months = Math.round(debtAmount * Math.pow(1.04, 3));
+        return (
+          <div style={{
+            background: 'rgba(239,68,68,0.08)',
+            border: '1.5px solid rgba(239,68,68,0.40)',
+            borderRadius: 'var(--radius-lg)',
+            padding: 'var(--space-5)',
+            marginBottom: 'var(--space-6)',
+          }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 'var(--space-4)' }}>
+              <TrendingDown size={20} color="#ef4444" />
+              <span style={{ fontWeight: 800, fontSize: 'var(--font-size-lg)', color: '#ef4444' }}>
+                ⚠️ Debt Overview
+              </span>
+            </div>
+            <div style={{ display: 'flex', flexWrap: 'wrap', gap: 'var(--space-6)', marginBottom: 'var(--space-4)' }}>
+              <div>
+                <div style={{ fontSize: 'var(--font-size-xs)', color: 'var(--text-muted)', marginBottom: 2, textTransform: 'uppercase', letterSpacing: 0.5, fontWeight: 700 }}>
+                  Current Debt
+                </div>
+                <div style={{ fontWeight: 900, fontSize: 'var(--font-size-2xl)', color: '#ef4444' }}>
+                  ${debtAmount.toLocaleString()}
+                </div>
+              </div>
+              <div>
+                <div style={{ fontSize: 'var(--font-size-xs)', color: 'var(--text-muted)', marginBottom: 2, textTransform: 'uppercase', letterSpacing: 0.5, fontWeight: 700 }}>
+                  Monthly Interest (4%)
+                </div>
+                <div style={{ fontWeight: 900, fontSize: 'var(--font-size-2xl)', color: '#ef4444' }}>
+                  ${monthlyInterest.toLocaleString()}
+                </div>
+              </div>
+              <div>
+                <div style={{ fontSize: 'var(--font-size-xs)', color: 'var(--text-muted)', marginBottom: 2, textTransform: 'uppercase', letterSpacing: 0.5, fontWeight: 700 }}>
+                  Projected Debt in 3 Months
+                </div>
+                <div style={{ fontWeight: 900, fontSize: 'var(--font-size-2xl)', color: '#b91c1c' }}>
+                  ${projected3Months.toLocaleString()}
+                </div>
+              </div>
+            </div>
+            <div style={{
+              background: 'rgba(239,68,68,0.10)',
+              borderRadius: 'var(--radius-md)',
+              padding: 'var(--space-3) var(--space-4)',
+              fontSize: 'var(--font-size-sm)',
+              color: '#b91c1c',
+              fontWeight: 600,
+              lineHeight: 1.5,
+            }}>
+              Your team is operating with a negative budget. A 4% monthly interest charge is applied to the outstanding debt balance. If left unresolved, the debt will compound — reaching ${projected3Months.toLocaleString()} in just 3 months. To recover, reduce player and staff wages, increase matchday revenue, or upgrade facilities to attract more fans.
+            </div>
+          </div>
+        );
+      })()}
 
       <div className="grid-2 mb-6" style={{ alignItems: 'start' }}>
         {/* ── Income Statement ── */}

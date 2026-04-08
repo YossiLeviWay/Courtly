@@ -205,6 +205,7 @@ export default function Fans() {
   const [ticketPrice, setTicketPrice] = useState(userTeam?.ticketPrice ?? 20);
   const [seasonTicketSeats, setSeasonTicketSeats] = useState(userTeam?.seasonTicketSeats ?? 0);
   const [seasonTicketPrice, setSeasonTicketPrice] = useState(userTeam?.seasonTicketPrice ?? 15);
+  const [awayFanPct, setAwayFanPct] = useState(userTeam?.awayFanPct ?? 10);
 
   if (!userTeam) {
     return (
@@ -225,27 +226,33 @@ export default function Fans() {
   const seasonTicketRevenue = seasonTicketSeats * seasonTicketPrice * HOME_GAMES_PER_SEASON;
   const regularSeats = arenaCapacity - seasonTicketSeats;
 
-  // Computed values
-  const estimatedRevenuePerGame = Math.round(Math.min(regularSeats, fanCount) * ticketPrice * 0.3);
-  const enthusiasmPct = Math.min(100, Math.max(0, fanEnthusiasm));
-  const weeklyNewFans = Math.round((enthusiasmPct / 100) * 50 + (enthusiasmPct > 50 ? 20 : 0));
-
-  // Fan growth trend (based on recent match results)
-  const recentMatches = [...matchHistory].reverse().slice(0, 5);
-  const recentWins = recentMatches.filter(m => m.userScore > m.opponentScore).length;
+  // Fan growth trend (based on recent match results — use result field or teamScore)
+  const recentMatches = [...matchHistory].slice(0, 5);
+  const recentWins = recentMatches.filter(m =>
+    m.result === 'W' || (m.teamScore ?? m.userScore ?? 0) > (m.oppScore ?? m.opponentScore ?? 0)
+  ).length;
   const trendUp = recentWins >= 3;
   const trendNeutral = recentWins === 2 || recentWins === 1;
 
-  // Generate news items based on team state
+  // Ticket price / attendance pressure
+  const winPct = recentMatches.length > 0 ? recentWins / recentMatches.length : 0.5;
+  const priceTooBigh = ticketPrice > 40 && winPct < 0.4 && recentMatches.length >= 3;
+  // Effective attendance: poor performance + high prices = empty seats
+  const enthusiasmPct = Math.min(100, Math.max(0, fanEnthusiasm));
+  const weeklyNewFans = Math.round((enthusiasmPct / 100) * 50 + (enthusiasmPct > 50 ? 20 : 0));
+  const attendanceMultiplier = priceTooBigh ? Math.max(0.3, winPct + 0.1) : 1.0;
+  const estimatedAttendance = Math.round(Math.min(regularSeats, fanCount) * attendanceMultiplier);
+  const estimatedRevenuePerGame = Math.round(estimatedAttendance * ticketPrice);
+
+  // Generate news items based on real team state
   const players = userTeam.players ?? [];
-  const statPlayers = players.filter(p => p?.seasonStats);
+  const statPlayers = players.filter(p => p?.seasonStats && (p.seasonStats.gamesPlayed || 0) > 0);
   const topScorer = [...statPlayers].sort(
     (a, b) =>
       (b.seasonStats.points ?? 0) / (b.seasonStats.gamesPlayed || 1) -
       (a.seasonStats.points ?? 0) / (a.seasonStats.gamesPlayed || 1)
   )[0];
-  const mostFatigued = [...players].sort((a, b) => (b.fatigue || 0) - (a.fatigue || 0))[0];
-  const injured = players.filter(p => p.injuryStatus !== 'healthy');
+  const injured = players.filter(p => p.injuryStatus && p.injuryStatus !== 'healthy');
 
   const newsItems = [];
 
@@ -271,11 +278,17 @@ export default function Fans() {
     });
   }
 
-  if (ticketPrice > 100) {
+  if (priceTooBigh) {
+    newsItems.push({
+      icon: '🏟️',
+      headline: 'Empty seats as fans stay home',
+      body: `Ticket prices ($${ticketPrice}) feel too high given recent results (${recentWins}W-${recentMatches.length - recentWins}L). Attendance is down ${Math.round((1 - attendanceMultiplier) * 100)}%.`,
+    });
+  } else if (ticketPrice > 60 && winPct >= 0.6) {
     newsItems.push({
       icon: '💸',
-      headline: 'High ticket prices drawing criticism',
-      body: 'Fan forums are buzzing about the cost of attending home games — some supporters are choosing to stay home.',
+      headline: 'Premium pricing justified by performance',
+      body: `The team\'s strong form (${recentWins}/${recentMatches.length}) keeps fans happy to pay $${ticketPrice} a game.`,
     });
   } else if (ticketPrice <= 20) {
     newsItems.push({
@@ -293,6 +306,26 @@ export default function Fans() {
     });
   }
 
+  // Fan growth report from last Sunday tick
+  const lastGrowth = userTeam?.lastWeekFanGrowth;
+  if (lastGrowth?.growth > 0) {
+    newsItems.unshift({
+      icon: '📈',
+      headline: `+${lastGrowth.growth} new fans joined this week!`,
+      body: `Your ${lastGrowth.recentWins}W-${lastGrowth.recentLosses}L recent record attracted ${lastGrowth.growth} new supporters to the club.`,
+    });
+  }
+
+  // Seniority milestone
+  const weeksPlayed = userTeam?.weeksPlayed ?? 0;
+  if (weeksPlayed > 0 && weeksPlayed % 10 === 0) {
+    newsItems.push({
+      icon: '🏆',
+      headline: `${weeksPlayed} weeks of fanbase growth!`,
+      body: `Your long-standing supporters have been with you for ${weeksPlayed} weeks — loyalty has boosted your fan growth rate by ${Math.min(weeksPlayed, 50)}%.`,
+    });
+  }
+
   if (newsItems.length < 3) {
     newsItems.push({
       icon: '📣',
@@ -301,11 +334,16 @@ export default function Fans() {
     });
   }
 
+  const basketballHallLevelForAway = userTeam?.facilities?.basketballHall?.level ?? 0;
+  const arenaCap = 600 + basketballHallLevelForAway * 200;
+  const awaySeats = Math.round(arenaCap * (awayFanPct / 100));
+  const awayRevenue = Math.round(awaySeats * ticketPrice * 0.8);
+
   function handleSavePrices() {
     if (!userTeam) return;
     dispatch({
       type: 'UPDATE_TEAM',
-      payload: { ...userTeam, ticketPrice, seasonTicketSeats, seasonTicketPrice },
+      payload: { ...userTeam, ticketPrice, seasonTicketSeats, seasonTicketPrice, awayFanPct },
     });
     addNotification('Prices updated successfully!', 'success');
   }
@@ -556,18 +594,24 @@ export default function Fans() {
               style={{
                 marginTop: 'var(--space-3)',
                 padding: 'var(--space-2) var(--space-3)',
-                background:
-                  ticketPrice > 100
-                    ? 'var(--color-warning-light)'
-                    : 'var(--color-success-light)',
+                background: priceTooBigh
+                  ? 'var(--color-danger-light)'
+                  : ticketPrice > 60
+                  ? 'var(--color-warning-light)'
+                  : 'var(--color-success-light)',
                 borderRadius: 'var(--radius-md)',
                 fontSize: 'var(--font-size-xs)',
-                color:
-                  ticketPrice > 100 ? 'var(--color-warning)' : 'var(--color-success)',
+                color: priceTooBigh
+                  ? 'var(--color-danger)'
+                  : ticketPrice > 60
+                  ? 'var(--color-warning)'
+                  : 'var(--color-success)',
                 fontWeight: 600,
               }}
             >
-              {ticketPrice > 100
+              {priceTooBigh
+                ? `⚠️ Too expensive for current results — est. attendance only ${Math.round(attendanceMultiplier * 100)}% of capacity`
+                : ticketPrice > 100
                 ? 'High prices may reduce fan enthusiasm'
                 : ticketPrice <= 20
                 ? 'Budget pricing attracts new fans'
@@ -609,10 +653,14 @@ export default function Fans() {
               style={{
                 fontSize: 'var(--font-size-3xl)',
                 fontWeight: 900,
-                color: 'var(--color-primary)',
+                color: priceTooBigh ? 'var(--color-danger)' : 'var(--color-primary)',
               }}
             >
               {formatMoney(estimatedRevenuePerGame)}
+            </div>
+            <div style={{ fontSize: 'var(--font-size-xs)', color: 'var(--text-muted)', marginTop: 4 }}>
+              Est. {estimatedAttendance.toLocaleString()} fans attending
+              {priceTooBigh && <span style={{ color: 'var(--color-danger)', fontWeight: 700 }}> (reduced by high prices)</span>}
             </div>
           </div>
           <div
@@ -726,6 +774,43 @@ export default function Fans() {
           </div>
           <div style={{ fontSize: 'var(--font-size-xs)', color: 'var(--text-secondary)', lineHeight: 1.6, maxWidth: 240 }}>
             {seasonTicketSeats.toLocaleString()} seats × ${seasonTicketPrice}/game × {HOME_GAMES_PER_SEASON} home games. Collected at season start — guaranteed income regardless of attendance.
+          </div>
+        </div>
+      </div>
+
+      {/* ── Away Fan Allocation ── */}
+      <div className="card mb-6">
+        <div className="card-header">
+          <span className="card-title" style={{ display: 'flex', alignItems: 'center', gap: 'var(--space-2)' }}>
+            ✈️ Away Fan Allocation
+          </span>
+        </div>
+        <div>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 'var(--space-3)' }}>
+            <label style={{ fontWeight: 700, fontSize: 'var(--font-size-sm)' }}>Away Section Size</label>
+            <span style={{ fontWeight: 900, fontSize: 'var(--font-size-xl)', color: 'var(--color-primary)' }}>{awayFanPct}%</span>
+          </div>
+          <input
+            type="range" min={0} max={30} step={5} value={awayFanPct}
+            onChange={e => setAwayFanPct(Number(e.target.value))}
+            style={{ width: '100%', accentColor: 'var(--color-primary)' }}
+          />
+          <div style={{ display: 'flex', justifyContent: 'space-between', marginTop: 'var(--space-1)', marginBottom: 'var(--space-3)' }}>
+            <span style={{ fontSize: 'var(--font-size-xs)', color: 'var(--text-muted)' }}>0% (home-only)</span>
+            <span style={{ fontSize: 'var(--font-size-xs)', color: 'var(--text-muted)' }}>30% max</span>
+          </div>
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
+            <div style={{ background: 'var(--bg-muted)', borderRadius: 'var(--radius-md)', padding: '10px 14px' }}>
+              <div style={{ fontSize: 'var(--font-size-xs)', color: 'var(--text-muted)', marginBottom: 2 }}>Away Seats</div>
+              <div style={{ fontWeight: 800, fontSize: 'var(--font-size-sm)' }}>{awaySeats.toLocaleString()} seats</div>
+            </div>
+            <div style={{ background: 'var(--bg-muted)', borderRadius: 'var(--radius-md)', padding: '10px 14px' }}>
+              <div style={{ fontSize: 'var(--font-size-xs)', color: 'var(--text-muted)', marginBottom: 2 }}>Away Revenue / Home Game</div>
+              <div style={{ fontWeight: 800, fontSize: 'var(--font-size-sm)', color: 'var(--color-success)' }}>${awayRevenue.toLocaleString()}</div>
+            </div>
+          </div>
+          <div style={{ marginTop: 12, fontSize: 'var(--font-size-xs)', color: 'var(--text-muted)' }}>
+            Away tickets sold at 80% of regular price. Top-3 opponents attract +10% extra away attendance.
           </div>
         </div>
       </div>

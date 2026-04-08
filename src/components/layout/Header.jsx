@@ -2,7 +2,8 @@ import { useState, useRef, useEffect } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
 import { useGame } from '../../context/GameContext.jsx';
 import { useTheme } from '../../context/ThemeContext.jsx';
-import { Sun, Moon, Bell, Search, X } from 'lucide-react';
+import { Sun, Moon, Bell, Search, X, Menu, MessageSquare } from 'lucide-react';
+import { apiSendFeedback } from '../../api.js';
 
 const PAGE_TITLES = {
   '/': 'Dashboard',
@@ -166,12 +167,120 @@ function ResultRow({ icon, primary, secondary, onClick }) {
   );
 }
 
+// ── Feedback Modal ────────────────────────────────────────────
+
+const THIRTY_MIN = 30 * 60 * 1000;
+
+function FeedbackModal({ user, onClose, dispatch, addNotification }) {
+  const [message, setMessage] = useState('');
+  const [sending, setSending] = useState(false);
+
+  const lastSent = user?.lastFeedbackAt ?? 0;
+  const msLeft = THIRTY_MIN - (Date.now() - lastSent);
+  const onCooldown = msLeft > 0;
+  const minsLeft = Math.ceil(msLeft / 60000);
+
+  async function handleSend() {
+    if (!message.trim()) return;
+    if (onCooldown) return;
+    setSending(true);
+    try {
+      await apiSendFeedback(user.id, user.username, message.trim());
+      dispatch({ type: 'UPDATE_USER', payload: { lastFeedbackAt: Date.now() } });
+      addNotification('Thanks for your feedback! Your message was sent to the admin.', 'success');
+      onClose();
+    } catch (err) {
+      addNotification('Failed to send feedback. Please try again.', 'error');
+    } finally {
+      setSending(false);
+    }
+  }
+
+  return (
+    <div className="modal-overlay" onClick={onClose} style={{ zIndex: 1000 }}>
+      <div className="modal" onClick={e => e.stopPropagation()} style={{ maxWidth: 480, width: '90%' }}>
+        <div className="modal-header">
+          <h2 style={{ margin: 0, fontSize: '1.1rem', display: 'flex', alignItems: 'center', gap: 8 }}>
+            <MessageSquare size={18} /> Send Feedback to Admin
+          </h2>
+          <button className="btn btn-ghost btn-sm" onClick={onClose} style={{ padding: 6 }}>
+            <X size={16} />
+          </button>
+        </div>
+        <div className="modal-body">
+          {onCooldown ? (
+            <div style={{
+              background: 'var(--bg-muted)', borderRadius: 'var(--radius-md)',
+              padding: 'var(--space-4)', textAlign: 'center', color: 'var(--text-muted)',
+            }}>
+              <div style={{ fontSize: '2rem', marginBottom: 8 }}>⏳</div>
+              <div style={{ fontWeight: 700, marginBottom: 4, color: 'var(--text-primary)' }}>
+                Feedback cooldown active
+              </div>
+              <div style={{ fontSize: 'var(--font-size-sm)' }}>
+                You can send another message in <strong>{minsLeft} minute{minsLeft !== 1 ? 's' : ''}</strong>.
+              </div>
+            </div>
+          ) : (
+            <>
+              <p style={{ margin: '0 0 var(--space-3)', fontSize: 'var(--font-size-sm)', color: 'var(--text-muted)' }}>
+                We'd love to hear from you! Report bugs, suggest features, or share anything that could improve the game.
+              </p>
+              <div style={{ position: 'relative' }}>
+                <textarea
+                  value={message}
+                  onChange={e => setMessage(e.target.value.slice(0, 500))}
+                  placeholder="Your message…"
+                  rows={5}
+                  style={{
+                    width: '100%', resize: 'vertical',
+                    padding: 'var(--space-3)',
+                    borderRadius: 'var(--radius-md)',
+                    border: '1.5px solid var(--border-color)',
+                    background: 'var(--bg-muted)',
+                    color: 'var(--text-primary)',
+                    fontSize: 'var(--font-size-sm)',
+                    fontFamily: 'inherit',
+                    boxSizing: 'border-box',
+                    outline: 'none',
+                  }}
+                  autoFocus
+                />
+                <div style={{
+                  position: 'absolute', bottom: 8, right: 10,
+                  fontSize: '0.68rem', color: message.length > 450 ? 'var(--color-warning)' : 'var(--text-muted)',
+                }}>
+                  {message.length}/500
+                </div>
+              </div>
+            </>
+          )}
+        </div>
+        {!onCooldown && (
+          <div className="modal-footer" style={{ display: 'flex', justifyContent: 'flex-end', gap: 'var(--space-2)' }}>
+            <button className="btn btn-ghost btn-sm" onClick={onClose} disabled={sending}>
+              Cancel
+            </button>
+            <button
+              className="btn btn-primary btn-sm"
+              onClick={handleSend}
+              disabled={!message.trim() || sending}
+            >
+              {sending ? 'Sending…' : 'Send Feedback →'}
+            </button>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
 // ── Main Header ───────────────────────────────────────────────
 
-export default function Header() {
+export default function Header({ onMenuToggle }) {
   const location = useLocation();
   const navigate = useNavigate();
-  const { state } = useGame();
+  const { state, dispatch, addNotification } = useGame();
   const { theme, toggleTheme } = useTheme();
 
   const path = '/' + location.pathname.split('/')[1];
@@ -181,12 +290,16 @@ export default function Header() {
 
   const [query, setQuery] = useState('');
   const [open, setOpen] = useState(false);
+  const [feedbackOpen, setFeedbackOpen] = useState(false);
+  const [notifOpen, setNotifOpen] = useState(false);
   const wrapRef = useRef(null);
+  const notifRef = useRef(null);
 
-  // Close dropdown when clicking outside
+  // Close search dropdown when clicking outside
   useEffect(() => {
     function onOutside(e) {
       if (wrapRef.current && !wrapRef.current.contains(e.target)) setOpen(false);
+      if (notifRef.current && !notifRef.current.contains(e.target)) setNotifOpen(false);
     }
     document.addEventListener('mousedown', onOutside);
     return () => document.removeEventListener('mousedown', onOutside);
@@ -203,6 +316,15 @@ export default function Header() {
   return (
     <header className="header">
       <div className="header-left">
+        {/* Hamburger – visible only on mobile */}
+        <button
+          className="btn btn-ghost btn-sm hamburger-btn"
+          onClick={onMenuToggle}
+          aria-label="Toggle menu"
+          style={{ padding: '8px', marginRight: 4 }}
+        >
+          <Menu size={22} />
+        </button>
         <h1 className="header-title">{title}</h1>
       </div>
       <div className="header-right">
@@ -256,14 +378,79 @@ export default function Header() {
             LIVE
           </div>
         )}
-        <div style={{ position: 'relative' }}>
-          <button className="btn btn-ghost btn-sm" style={{ position: 'relative', padding: '8px' }}>
+        <div ref={notifRef} style={{ position: 'relative' }}>
+          <button
+            className="btn btn-ghost btn-sm"
+            style={{ position: 'relative', padding: '8px' }}
+            onClick={() => setNotifOpen(o => !o)}
+            title="Notifications"
+          >
             <Bell size={18} />
             {unread > 0 && (
               <span style={{ position: 'absolute', top: 2, right: 2, width: 8, height: 8, background: 'var(--color-danger)', borderRadius: '50%' }} />
             )}
           </button>
+          {notifOpen && (
+            <div style={{
+              position: 'absolute', top: 'calc(100% + 8px)', right: 0,
+              width: 320, maxHeight: 400, overflowY: 'auto',
+              background: 'var(--bg-card)', border: '1.5px solid var(--border-color)',
+              borderRadius: 'var(--radius-lg)', boxShadow: '0 8px 32px rgba(0,0,0,0.18)',
+              zIndex: 600,
+            }}>
+              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '10px 14px', borderBottom: '1px solid var(--border-color)' }}>
+                <span style={{ fontWeight: 700, fontSize: 'var(--font-size-sm)' }}>Notifications {unread > 0 ? `(${unread})` : ''}</span>
+                {unread > 0 && (
+                  <button
+                    className="btn btn-ghost btn-sm"
+                    onClick={() => { dispatch({ type: 'CLEAR_ALL_NOTIFICATIONS' }); setNotifOpen(false); }}
+                    style={{ fontSize: '0.68rem', padding: '2px 8px', height: 'auto' }}
+                  >
+                    Clear all
+                  </button>
+                )}
+              </div>
+              {state.notifications?.length === 0 ? (
+                <div style={{ padding: '24px 14px', textAlign: 'center', color: 'var(--text-muted)', fontSize: 'var(--font-size-sm)' }}>
+                  No notifications
+                </div>
+              ) : (
+                <div style={{ display: 'flex', flexDirection: 'column' }}>
+                  {(state.notifications || []).map(n => (
+                    <div
+                      key={n.id}
+                      style={{
+                        display: 'flex', alignItems: 'flex-start', gap: 10,
+                        padding: '10px 14px', borderBottom: '1px solid var(--border-color)',
+                        cursor: 'pointer',
+                      }}
+                      onClick={() => dispatch({ type: 'CLEAR_NOTIFICATION', payload: n.id })}
+                    >
+                      <span style={{ fontSize: '0.9rem', flexShrink: 0, marginTop: 1 }}>
+                        {n.type === 'success' ? '✅' : n.type === 'error' ? '❌' : 'ℹ️'}
+                      </span>
+                      <div style={{ flex: 1, minWidth: 0 }}>
+                        <div style={{ fontSize: 'var(--font-size-xs)', color: 'var(--text-secondary)', wordBreak: 'break-word' }}>
+                          {n.message}
+                        </div>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          )}
         </div>
+        {user && (
+          <button
+            className="btn btn-ghost btn-sm"
+            onClick={() => setFeedbackOpen(true)}
+            title="Send Feedback to Admin"
+            style={{ padding: '8px', color: 'var(--color-primary)' }}
+          >
+            <MessageSquare size={18} />
+          </button>
+        )}
         <button className="btn btn-ghost btn-sm" onClick={toggleTheme} title={theme === 'light' ? 'Dark Mode' : 'Light Mode'} style={{ padding: '8px' }}>
           {theme === 'light' ? <Moon size={18} /> : <Sun size={18} />}
         </button>
@@ -278,6 +465,14 @@ export default function Header() {
           </div>
         )}
       </div>
+      {feedbackOpen && (
+        <FeedbackModal
+          user={user}
+          onClose={() => setFeedbackOpen(false)}
+          dispatch={dispatch}
+          addNotification={addNotification}
+        />
+      )}
     </header>
   );
 }

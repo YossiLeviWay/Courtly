@@ -2,14 +2,53 @@
 // Courtly – Match Simulation Engine
 // ============================================================
 
-// ── Utilities ─────────────────────────────────────────────────
+// ── Constants ─────────────────────────────────────────────────
+
+/**
+ * Total real-time duration of a simulated game in seconds (~115 min).
+ * Q1 0-1500s | Q2 1500-3000s | Halftime 3000-3900s | Q3 3900-5400s | Q4 5400-6900s
+ */
+export const GAME_DURATION_SEC = 6900;
+
+/**
+ * Convert a game-minute + quarter to real elapsed seconds from tip-off.
+ * Used to stamp every event so the Live viewer can reveal them in real-time.
+ */
+export function gameMinToRelSec(gameMin, quarter) {
+  const q = Math.min(Math.max((quarter || 1) - 1, 0), 3);
+  const qRealStart = [0, 1500, 3900, 5400]; // real-second start of each quarter
+  const minInQ = Math.max(0, Math.min(gameMin - q * 10, 10));
+  return Math.round(qRealStart[q] + (minInQ / 10) * 1500);
+}
+
+// ── Seeded RNG (deterministic per-match) ─────────────────────
+// A module-level rng function is set at the start of each simulateMatch call.
+// This makes every match's outcome permanently deterministic for the same matchId,
+// regardless of how many times the simulation runs.
+
+let _rng = Math.random; // default; overridden inside simulateMatch
+
+function _hashStr(s) {
+  let h = 0;
+  for (let i = 0; i < s.length; i++) h = Math.imul(31, h) + s.charCodeAt(i) | 0;
+  return Math.abs(h) || 1;
+}
+
+function _mulberry32(seed) {
+  return function () {
+    seed |= 0; seed = seed + 0x6D2B79F5 | 0;
+    let t = Math.imul(seed ^ seed >>> 15, 1 | seed);
+    t = t + Math.imul(t ^ t >>> 7, 61 | t) ^ t;
+    return ((t ^ t >>> 14) >>> 0) / 4294967296;
+  };
+}
 
 function randomInt(min, max) {
-  return Math.floor(Math.random() * (max - min + 1)) + min;
+  return Math.floor(_rng() * (max - min + 1)) + min;
 }
 
 function randomFrom(arr) {
-  return arr[Math.floor(Math.random() * arr.length)];
+  return arr[Math.floor(_rng() * arr.length)];
 }
 
 function clamp(val, min, max) {
@@ -41,8 +80,44 @@ function teamAttackFactor(team) {
     }
   }
   const avg = count > 0 ? total / count : 55;
-  // Map avg (30-90) to factor (0.7-1.3)
-  return 0.7 + ((avg - 30) / 60) * 0.6;
+  let factor = 0.7 + ((avg - 30) / 60) * 0.6;
+
+  // recentForm bonus: each player's form (-5..+5) adds a small modifier
+  const avgForm = players.reduce((s, p) => s + (p.recentForm ?? 0), 0) / Math.max(players.length, 1);
+  factor += clamp(avgForm * 0.01, -0.05, 0.05);
+
+  // Tactics modifier
+  const style = team.tactics?.playingStyle;
+  if (style === 'Fast Break') {
+    factor *= 1.08;
+  } else if (style === 'Isolation') {
+    const topOVR = players.reduce((best, p) => Math.max(best, p.overall ?? p.attributes?.basketballIQ ?? 70), 0);
+    factor *= topOVR >= 80 ? 1.12 : 0.95;
+  } else if (style === 'Triangle Offense') {
+    const avgIQ = players.reduce((s, p) => s + (p.attributes?.basketballIQ ?? 60), 0) / Math.max(players.length, 1);
+    if (avgIQ >= 65) factor *= 1.07;
+  } else if (style === 'Post-Up') {
+    // Post-Up rewards interior scorers
+    const avgFinish = players.reduce((s, p) => s + (p.attributes?.finishingAtTheRim ?? 60), 0) / Math.max(players.length, 1);
+    if (avgFinish >= 65) factor *= 1.06;
+  }
+
+  // Pace modifier
+  const pace = team.tactics?.paceControl;
+  if (pace === 'Up-tempo') factor *= 1.05;
+  else if (pace === 'Slow') factor *= 0.95;
+
+  // Seven Seconds or Less: extreme up-tempo attack boost
+  if (team.tactics?.sevenSeconds) {
+    factor *= 1.12;
+  }
+
+  // Crash the Glass: second-chance points boost offense slightly
+  if (team.tactics?.crashGlass) {
+    factor *= 1.04;
+  }
+
+  return clamp(factor, 0.5, 1.6);
 }
 
 /** Get a team's "defense strength" factor (0.5–1.5) */
@@ -62,7 +137,37 @@ function teamDefenseFactor(team) {
     }
   }
   const avg = count > 0 ? total / count : 55;
-  return 0.7 + ((avg - 30) / 60) * 0.6;
+  let factor = 0.7 + ((avg - 30) / 60) * 0.6;
+
+  // Tactics modifier
+  const style = team.tactics?.playingStyle;
+  if (style === 'Fast Break') {
+    factor *= 0.95; // aggressive offense sacrifices some D
+  } else if (style === 'Motion Offense') {
+    factor *= 0.97; // slight D sacrifice for motion
+  }
+
+  // Closeout strategy
+  const closeout = team.tactics?.closeoutStrategy;
+  if (closeout === 'Aggressive') factor *= 1.06;
+  else if (closeout === 'Protect Lead') factor *= 1.03;
+
+  // Protect the Paint: interior defense boost
+  if (team.tactics?.protectPaint) {
+    factor *= 1.10;
+  }
+
+  // Seven Seconds or Less: defense penalty for all-out attack
+  if (team.tactics?.sevenSeconds) {
+    factor *= 0.88;
+  }
+
+  // Crash the Glass: weaker transition defense
+  if (team.tactics?.crashGlass) {
+    factor *= 0.93;
+  }
+
+  return clamp(factor, 0.5, 1.6);
 }
 
 /** Motivation / chemistry modifier (0.85–1.15) */
@@ -145,29 +250,29 @@ function simulateSegmentScore(homeTeam, awayTeam, minutes) {
  */
 function simulatePossession(shotQuality) {
   const turnoverChance = clamp(0.15 - (shotQuality - 1) * 0.05, 0.05, 0.25);
-  if (Math.random() < turnoverChance) return 0;
+  if (_rng() < turnoverChance) return 0;
 
-  const roll = Math.random();
+  const roll = _rng();
   // Distributes: ~20% three-point attempts, ~55% two-point, ~25% FT trips
   if (roll < 0.20) {
     // Three-point attempt
-    const made = Math.random() < clamp(0.30 * shotQuality, 0.15, 0.55);
+    const made = _rng() < clamp(0.30 * shotQuality, 0.15, 0.55);
     return made ? 3 : 0;
   } else if (roll < 0.75) {
     // Two-point attempt (includes layups/dunks/mid-range)
-    const made = Math.random() < clamp(0.48 * shotQuality, 0.25, 0.72);
+    const made = _rng() < clamp(0.48 * shotQuality, 0.25, 0.72);
     if (made) {
       // And-one?
-      if (Math.random() < 0.08) {
-        return 2 + (Math.random() < 0.75 ? 1 : 0);
+      if (_rng() < 0.08) {
+        return 2 + (_rng() < 0.75 ? 1 : 0);
       }
       return 2;
     }
     return 0;
   } else {
     // Free throw trip
-    const ft1 = Math.random() < clamp(0.72 * shotQuality, 0.50, 0.92);
-    const ft2 = Math.random() < clamp(0.72 * shotQuality, 0.50, 0.92);
+    const ft1 = _rng() < clamp(0.72 * shotQuality, 0.50, 0.92);
+    const ft2 = _rng() < clamp(0.72 * shotQuality, 0.50, 0.92);
     return (ft1 ? 1 : 0) + (ft2 ? 1 : 0);
   }
 }
@@ -175,52 +280,67 @@ function simulatePossession(shotQuality) {
 // ── Event Generation ──────────────────────────────────────────
 
 const DUNK_DESCRIPTIONS = [
-  '{player} rises up and THROWS IT DOWN!',
-  '{player} with a thunderous two-handed slam!',
-  '{player} posterises the defender for a massive dunk!',
-  '{player} catches the lob and hammers it home!',
-  'BOOM! {player} with an emphatic finish at the rim!',
+  '{player} rises up and THROWS IT DOWN! +2',
+  '{player} with a thunderous two-handed slam! +2',
+  '{player} posterises the defender for a massive dunk! +2',
+  '{player} catches the lob and hammers it home! +2',
+  'BOOM! {player} with an emphatic finish at the rim! +2',
+  '{player} goes coast-to-coast and DUNKS on the break! +2',
 ];
 
 const LAYUP_DESCRIPTIONS = [
-  '{player} glides in for the finger roll!',
-  '{player} splits the defense and lays it in softly.',
-  '{player} with a quick drive and a smooth layup.',
-  '{player} converts the reverse layup!',
-  'Clever footwork from {player} for the easy two.',
+  '{player} glides in for the finger roll! +2',
+  '{player} splits the defense and lays it in softly. +2',
+  '{player} with a quick drive and a smooth layup. +2',
+  '{player} converts the reverse layup! +2',
+  'Clever footwork from {player} — easy two off the glass. +2',
+  '{player} draws the defense and kisses it off the board. +2',
 ];
 
 const THREE_DESCRIPTIONS = [
-  '{player} steps back and drains the triple!',
-  'SPLASH! {player} from well beyond the arc!',
-  '{player} fires from the corner — BANG, three!',
-  'Ice in the veins from {player}! Triple!',
-  '{player} pulls up from deep — it\'s good!',
+  '{player} steps back and drains the triple! +3',
+  'SPLASH! {player} from well beyond the arc! +3',
+  '{player} fires from the corner — BANG, three! +3',
+  'Ice in the veins from {player}! Triple! +3',
+  '{player} pulls up from deep — it\'s good! +3',
+  '{player} catches and fires — THREE! +3',
+  'Nothing but net for {player} from downtown! +3',
 ];
 
 const MIDRANGE_DESCRIPTIONS = [
-  '{player} hits the mid-range jumper!',
-  '{player} with the pull-up from 18 feet.',
-  'Textbook form from {player} — mid-range money.',
-  '{player} fades away and hits the jumper!',
+  '{player} hits the mid-range jumper! +2',
+  '{player} with the pull-up from 18 feet. +2',
+  'Textbook form from {player} — mid-range money. +2',
+  '{player} fades away and hits the jumper! +2',
+  '{player} stops on a dime and knocks it down. +2',
+];
+
+const FREE_THROW_DESCRIPTIONS = [
+  '{player} steps to the line and converts. +1',
+  'Cool and calm — {player} makes the free throw. +1',
+  '{player} sinks the charity stripe shot. +1',
+  'No sweat — {player} nails the free throw. +1',
 ];
 
 const STEAL_DESCRIPTIONS = [
   '{player} reads the pass and picks the pocket!',
-  'Quickhands from {player} — steal and push!',
-  '{player} strips the ball and the crowd erupts!',
+  'Quick hands from {player} — steal and push!',
+  '{player} strips the ball clean on the drive!',
+  '{player} deflects the pass and pounces on it!',
 ];
 
 const BLOCK_DESCRIPTIONS = [
-  '{player} rejects the shot at the rim!',
+  '{player} rejects the shot at the rim! No good!',
   'DENIED! {player} with the emphatic block!',
-  '{player} sends it into the third row!',
+  '{player} swats it away — sent into the crowd!',
+  '{player} comes from behind with the chase-down block!',
 ];
 
 const FOUL_DESCRIPTIONS = [
   '{player} picks up a foul. Referee calls it quickly.',
   'Whistled on {player} — that\'s a personal foul.',
   '{player} reaches in and the referee blows the whistle.',
+  'Foul on {player} — too aggressive on the drive.',
 ];
 
 const TURNOVER_DESCRIPTIONS = [
@@ -228,12 +348,14 @@ const TURNOVER_DESCRIPTIONS = [
   'Bad pass from {player}. Turnover.',
   '{player} dribbles off their own foot. Turnover.',
   'Ball knocked away — {player} coughs it up.',
+  '{player} telegraphs the pass and it\'s intercepted.',
 ];
 
 const TIMEOUT_DESCRIPTIONS = [
   '{team} calls a timeout to regroup.',
   'Timeout on the floor — {team} needs a breather.',
   '{team}\'s bench calls for a stoppage.',
+  'TV timeout — {team} huddles up to discuss strategy.',
 ];
 
 const INJURY_DESCRIPTIONS = [
@@ -245,7 +367,7 @@ const INJURY_DESCRIPTIONS = [
 const FIGHT_DESCRIPTIONS = [
   'Tempers flare! {player} and an opponent jaw at each other — officials step in.',
   'A scuffle breaks out near the paint! {player} is restrained by teammates.',
-  'Pushing and shoving after the whistle — {player} is involved in the altercation.',
+  'Pushing and shoving after the whistle — {player} is involved.',
 ];
 
 const TECHNICAL_DESCRIPTIONS = [
@@ -257,7 +379,7 @@ const TECHNICAL_DESCRIPTIONS = [
 const COMEBACK_DESCRIPTIONS = [
   '{team} storms back! They\'re cutting into the lead!',
   'Incredible run from {team} — this game is not over!',
-  '{team} with a 7-0 burst to get back in it!',
+  '{team} with a quick burst to get back in it!',
 ];
 
 function fillTemplate(template, player, team) {
@@ -266,272 +388,239 @@ function fillTemplate(template, player, team) {
     .replace('{team}', team?.name ?? 'The team');
 }
 
+/**
+ * Build scoring plays for a team that sum EXACTLY to targetPts.
+ * Returns array of raw play objects (no time assigned yet).
+ */
+function buildScoringPlays(team, targetPts) {
+  const plays = [];
+  let pts = 0;
+  while (pts < targetPts) {
+    const remaining = targetPts - pts;
+    let type, playPts;
+    if (remaining === 1) {
+      type = 'free_throw'; playPts = 1;
+    } else if (remaining === 2) {
+      const r = _rng();
+      type = r < 0.45 ? 'dunk' : r < 0.80 ? 'layup' : 'midrange';
+      playPts = 2;
+    } else {
+      const r = _rng();
+      if (r < 0.25) { type = 'three_pointer'; playPts = 3; }
+      else {
+        const r2 = _rng();
+        type = r2 < 0.40 ? 'dunk' : r2 < 0.72 ? 'layup' : r2 < 0.88 ? 'midrange' : 'free_throw';
+        playPts = type === 'free_throw' ? 1 : 2;
+      }
+    }
+    const player = pickPlayer(team);
+    const templates = {
+      three_pointer: THREE_DESCRIPTIONS,
+      dunk: DUNK_DESCRIPTIONS,
+      layup: LAYUP_DESCRIPTIONS,
+      midrange: MIDRANGE_DESCRIPTIONS,
+      free_throw: FREE_THROW_DESCRIPTIONS,
+    };
+    plays.push({
+      type,
+      pts: playPts,
+      player: player.name,
+      playerId: player.id,
+      team: team.name,
+      teamId: team.id,
+      description: fillTemplate(randomFrom(templates[type]), player, team),
+    });
+    pts += playPts;
+  }
+  return plays;
+}
+
+/**
+ * Build non-scoring event objects (fouls, steals, blocks, turnovers, subs, etc.)
+ * for a single quarter. No time or score assigned yet.
+ */
+function buildNonScoringEvents(homeTeam, awayTeam) {
+  const evts = [];
+  const mk = (type, team, player, desc) => ({
+    type, pts: 0,
+    player: player?.name ?? null,
+    playerId: player?.id ?? null,
+    team: team?.name ?? null,
+    teamId: team?.id ?? null,
+    description: desc,
+  });
+
+  // Fouls: 2-4
+  const fouls = 2 + Math.floor(_rng() * 3);
+  for (let i = 0; i < fouls; i++) {
+    const t = _rng() < 0.5 ? homeTeam : awayTeam;
+    const p = pickPlayer(t);
+    evts.push(mk('foul', t, p, fillTemplate(randomFrom(FOUL_DESCRIPTIONS), p, t)));
+  }
+  // Steals: 1-3
+  const steals = 1 + Math.floor(_rng() * 3);
+  for (let i = 0; i < steals; i++) {
+    const t = _rng() < 0.5 ? homeTeam : awayTeam;
+    const p = pickPlayer(t);
+    evts.push(mk('steal', t, p, fillTemplate(randomFrom(STEAL_DESCRIPTIONS), p, t)));
+  }
+  // Blocks: 1-2
+  const blocks = 1 + Math.floor(_rng() * 2);
+  for (let i = 0; i < blocks; i++) {
+    const t = _rng() < 0.5 ? homeTeam : awayTeam;
+    const p = pickPlayer(t);
+    evts.push(mk('block', t, p, fillTemplate(randomFrom(BLOCK_DESCRIPTIONS), p, t)));
+  }
+  // Turnovers: 1-3
+  const tovs = 1 + Math.floor(_rng() * 3);
+  for (let i = 0; i < tovs; i++) {
+    const t = _rng() < 0.5 ? homeTeam : awayTeam;
+    const p = pickPlayer(t);
+    evts.push(mk('turnover', t, p, fillTemplate(randomFrom(TURNOVER_DESCRIPTIONS), p, t)));
+  }
+  // Substitutions: 1-2 per team
+  for (const t of [homeTeam, awayTeam]) {
+    const subs = 1 + Math.floor(_rng() * 2);
+    for (let i = 0; i < subs; i++) {
+      const outP = pickPlayer(t);
+      const inP  = pickPlayer(t);
+      evts.push(mk('substitution', t, inP,
+        `${t.name} makes a change: ${inP.name} comes on for ${outP.name}.`));
+    }
+  }
+  // Timeout: 0-1 per side
+  if (_rng() < 0.40) {
+    const t = _rng() < 0.5 ? homeTeam : awayTeam;
+    evts.push(mk('timeout', t, null, fillTemplate(randomFrom(TIMEOUT_DESCRIPTIONS), null, t)));
+  }
+  // Rare: injury (~10%), technical (~8%), fight (~4%)
+  if (_rng() < 0.10) {
+    const t = _rng() < 0.5 ? homeTeam : awayTeam;
+    const p = pickPlayer(t);
+    evts.push(mk('injury', t, p, fillTemplate(randomFrom(INJURY_DESCRIPTIONS), p, t)));
+  }
+  if (_rng() < 0.08) {
+    const t = _rng() < 0.5 ? homeTeam : awayTeam;
+    const p = pickPlayer(t);
+    evts.push(mk('technical_foul', t, p, fillTemplate(randomFrom(TECHNICAL_DESCRIPTIONS), p, t)));
+  }
+  if (_rng() < 0.04) {
+    const t = _rng() < 0.5 ? homeTeam : awayTeam;
+    const p = pickPlayer(t);
+    evts.push(mk('fight', t, p, fillTemplate(randomFrom(FIGHT_DESCRIPTIONS), p, t)));
+  }
+  return evts;
+}
+
+/**
+ * generateHighlightEvents — fully synced to quarter scores.
+ *
+ * For each quarter:
+ *  1. Build scoring plays for home + away that sum EXACTLY to qScore.home / qScore.away
+ *  2. Build non-scoring events (fouls, steals, subs, etc.)
+ *  3. Merge, shuffle, assign evenly-spaced unique times within the 10-min window
+ *  4. Walk in time order, increment running score as each scoring event fires
+ *  5. Every event carries the LIVE score AFTER it was processed
+ */
 function generateHighlightEvents(homeTeam, awayTeam, quarterScores) {
   const events = [];
-  const totalMinutes = 40;
-  const quarterLength = 10;
-
-  // Track running score for context
-  let homeRunning = 0;
-  let awayRunning = 0;
-  let homeTOsLeft = [2, 2]; // timeouts per half [0]=first half, [1]=second half
-  let awayTOsLeft = [2, 2];
-  let homeFoulsThisQuarter = 0;
-  let awayFoulsThisQuarter = 0;
+  let homeTotal = 0;
+  let awayTotal = 0;
   let eventId = 0;
 
-  const quarterStarts = [0, 10, 20, 30];
-  const scoringEvents = 28; // target total highlight events
-  const eventsPerQuarter = Math.ceil(scoringEvents / 4);
+  // Tip-off
+  events.push({
+    id: eventId++, time: 0, quarter: 1,
+    type: 'game_start',
+    description: `🏀 Tip-off! ${homeTeam.name} host ${awayTeam.name}. The crowd is ready — let's play!`,
+    player: null, playerId: null,
+    team: homeTeam.name, teamId: homeTeam.id,
+    score: '0-0', relativeTime: 0,
+  });
 
   for (let q = 0; q < 4; q++) {
-    const qStart = quarterStarts[q];
-    const qScore = quarterScores[q];
-    homeRunning += qScore.home;
-    awayRunning += qScore.away;
+    const qStart = q * 10;
+    const { home: targetHome, away: targetAway } = quarterScores[q];
 
-    homeFoulsThisQuarter = 0;
-    awayFoulsThisQuarter = 0;
+    // 1. Scoring plays (exact totals)
+    const homePlays = buildScoringPlays(homeTeam, targetHome);
+    const awayPlays = buildScoringPlays(awayTeam, targetAway);
+    // 2. Non-scoring events
+    const nonScoring = buildNonScoringEvents(homeTeam, awayTeam);
 
-    // Spread events within the quarter
-    const minuteSlots = [];
-    for (let i = 0; i < eventsPerQuarter; i++) {
-      minuteSlots.push(parseFloat((qStart + Math.random() * quarterLength).toFixed(1)));
+    // 3. Merge and shuffle (Fisher-Yates)
+    const pool = [...homePlays, ...awayPlays, ...nonScoring];
+    for (let i = pool.length - 1; i > 0; i--) {
+      const j = Math.floor(_rng() * (i + 1));
+      [pool[i], pool[j]] = [pool[j], pool[i]];
     }
-    minuteSlots.sort((a, b) => a - b);
 
-    for (const minute of minuteSlots) {
-      eventId++;
-      const roll = Math.random();
-      let event;
+    // 4. Assign evenly-spread times within [qStart+0.2, qStart+9.7]
+    //    Each slot is separated by at least 0.3 min, with light jitter.
+    const n = pool.length;
+    const span = 9.5;
+    pool.forEach((ev, i) => {
+      const frac = n <= 1 ? 0.5 : i / (n - 1);
+      const base = qStart + 0.2 + frac * span;
+      const jitter = (_rng() - 0.5) * Math.min(0.4, span / (n + 1));
+      ev.time = parseFloat(Math.max(qStart + 0.1, Math.min(qStart + 9.8, base + jitter)).toFixed(1));
+      ev.quarter = q + 1;
+    });
+    // Sort by assigned time
+    pool.sort((a, b) => a.time - b.time);
 
-      if (roll < 0.22) {
-        // Three pointer
-        const team = Math.random() < 0.5 ? homeTeam : awayTeam;
-        const player = pickPlayer(team);
-        event = {
-          id: eventId,
-          time: minute,
-          type: 'three_pointer',
-          description: fillTemplate(randomFrom(THREE_DESCRIPTIONS), player, team),
-          player: player.name,
-          playerId: player.id,
-          team: team.name,
-          teamId: team.id,
-          score: { home: homeRunning, away: awayRunning },
-        };
-      } else if (roll < 0.42) {
-        // Dunk
-        const team = Math.random() < 0.5 ? homeTeam : awayTeam;
-        const player = pickPlayer(team);
-        event = {
-          id: eventId,
-          time: minute,
-          type: 'dunk',
-          description: fillTemplate(randomFrom(DUNK_DESCRIPTIONS), player, team),
-          player: player.name,
-          playerId: player.id,
-          team: team.name,
-          teamId: team.id,
-          score: { home: homeRunning, away: awayRunning },
-        };
-      } else if (roll < 0.55) {
-        // Layup
-        const team = Math.random() < 0.5 ? homeTeam : awayTeam;
-        const player = pickPlayer(team);
-        event = {
-          id: eventId,
-          time: minute,
-          type: 'layup',
-          description: fillTemplate(randomFrom(LAYUP_DESCRIPTIONS), player, team),
-          player: player.name,
-          playerId: player.id,
-          team: team.name,
-          teamId: team.id,
-          score: { home: homeRunning, away: awayRunning },
-        };
-      } else if (roll < 0.63) {
-        // Foul
-        const team = Math.random() < 0.5 ? homeTeam : awayTeam;
-        const player = pickPlayer(team);
-        if (team === homeTeam) homeFoulsThisQuarter++;
-        else awayFoulsThisQuarter++;
-        event = {
-          id: eventId,
-          time: minute,
-          type: 'foul',
-          description: fillTemplate(randomFrom(FOUL_DESCRIPTIONS), player, team),
-          player: player.name,
-          playerId: player.id,
-          team: team.name,
-          teamId: team.id,
-          score: { home: homeRunning, away: awayRunning },
-        };
-      } else if (roll < 0.70) {
-        // Turnover
-        const team = Math.random() < 0.5 ? homeTeam : awayTeam;
-        const player = pickPlayer(team);
-        event = {
-          id: eventId,
-          time: minute,
-          type: 'turnover',
-          description: fillTemplate(randomFrom(TURNOVER_DESCRIPTIONS), player, team),
-          player: player.name,
-          playerId: player.id,
-          team: team.name,
-          teamId: team.id,
-          score: { home: homeRunning, away: awayRunning },
-        };
-      } else if (roll < 0.75) {
-        // Steal
-        const team = Math.random() < 0.5 ? homeTeam : awayTeam;
-        const player = pickPlayer(team);
-        event = {
-          id: eventId,
-          time: minute,
-          type: 'steal',
-          description: fillTemplate(randomFrom(STEAL_DESCRIPTIONS), player, team),
-          player: player.name,
-          playerId: player.id,
-          team: team.name,
-          teamId: team.id,
-          score: { home: homeRunning, away: awayRunning },
-        };
-      } else if (roll < 0.79) {
-        // Block
-        const team = Math.random() < 0.5 ? homeTeam : awayTeam;
-        const player = pickPlayer(team);
-        event = {
-          id: eventId,
-          time: minute,
-          type: 'block',
-          description: fillTemplate(randomFrom(BLOCK_DESCRIPTIONS), player, team),
-          player: player.name,
-          playerId: player.id,
-          team: team.name,
-          teamId: team.id,
-          score: { home: homeRunning, away: awayRunning },
-        };
-      } else if (roll < 0.84) {
-        // Timeout
-        const halfIdx = q < 2 ? 0 : 1;
-        let team, teamTOs;
-        if (Math.random() < 0.5 && homeTOsLeft[halfIdx] > 0) {
-          team = homeTeam; homeTOsLeft[halfIdx]--;
-        } else if (awayTOsLeft[halfIdx] > 0) {
-          team = awayTeam; awayTOsLeft[halfIdx]--;
-        } else {
-          team = homeTeam;
-        }
-        event = {
-          id: eventId,
-          time: minute,
-          type: 'timeout',
-          description: fillTemplate(randomFrom(TIMEOUT_DESCRIPTIONS), null, team),
-          player: null,
-          playerId: null,
-          team: team.name,
-          teamId: team.id,
-          score: { home: homeRunning, away: awayRunning },
-        };
-      } else if (roll < 0.87) {
-        // Substitution
-        const team = Math.random() < 0.5 ? homeTeam : awayTeam;
-        const outPlayer = pickPlayer(team);
-        const inPlayer = pickPlayer(team);
-        event = {
-          id: eventId,
-          time: minute,
-          type: 'substitution',
-          description: `${team.name} makes a change: ${inPlayer.name} comes on for ${outPlayer.name}.`,
-          player: inPlayer.name,
-          playerId: inPlayer.id,
-          team: team.name,
-          teamId: team.id,
-          score: { home: homeRunning, away: awayRunning },
-        };
-      } else if (roll < 0.90) {
-        // Technical foul (rare)
-        const team = Math.random() < 0.5 ? homeTeam : awayTeam;
-        const player = pickPlayer(team);
-        event = {
-          id: eventId,
-          time: minute,
-          type: 'technical_foul',
-          description: fillTemplate(randomFrom(TECHNICAL_DESCRIPTIONS), player, team),
-          player: player.name,
-          playerId: player.id,
-          team: team.name,
-          teamId: team.id,
-          score: { home: homeRunning, away: awayRunning },
-        };
-      } else if (roll < 0.93) {
-        // Comeback moment
-        const leadDiff = homeRunning - awayRunning;
-        let trailingTeam = leadDiff < 0 ? homeTeam : awayTeam;
-        event = {
-          id: eventId,
-          time: minute,
+    // 5. Walk in order — update running score after each scoring play
+    let homeQ = 0, awayQ = 0;
+    for (const ev of pool) {
+      if (ev.pts) {
+        if (ev.teamId === homeTeam.id) homeQ += ev.pts;
+        else awayQ += ev.pts;
+      }
+      ev.score = `${homeTotal + homeQ}-${awayTotal + awayQ}`;
+      ev.id = eventId++;
+      events.push(ev);
+    }
+
+    homeTotal += targetHome;
+    awayTotal += targetAway;
+
+    // Quarter / halftime break marker
+    const isHalf = q === 1;
+    events.push({
+      id: eventId++,
+      time: qStart + 10,
+      quarter: q + 1,
+      type: isHalf ? 'half_time' : 'quarter_end',
+      description: isHalf
+        ? `HALF TIME: ${homeTeam.name} ${homeTotal} – ${awayTotal} ${awayTeam.name}`
+        : `End of Q${q + 1}: ${homeTeam.name} ${homeTotal} – ${awayTotal} ${awayTeam.name}`,
+      player: null, playerId: null, team: null, teamId: null,
+      score: `${homeTotal}-${awayTotal}`,
+    });
+
+    // Momentum commentary mid-game (halves only, when big gap)
+    if (q === 1 || q === 3) {
+      const diff = homeTotal - awayTotal;
+      if (Math.abs(diff) >= 10) {
+        const trailingTeam = diff > 0 ? awayTeam : homeTeam;
+        events.push({
+          id: eventId++,
+          time: qStart + 10.05,
+          quarter: q + 1,
           type: 'comeback',
           description: fillTemplate(randomFrom(COMEBACK_DESCRIPTIONS), null, trailingTeam),
-          player: null,
-          playerId: null,
-          team: trailingTeam.name,
-          teamId: trailingTeam.id,
-          score: { home: homeRunning, away: awayRunning },
-        };
-      } else if (roll < 0.96) {
-        // Injury (rare)
-        const team = Math.random() < 0.5 ? homeTeam : awayTeam;
-        const player = pickPlayer(team);
-        event = {
-          id: eventId,
-          time: minute,
-          type: 'injury',
-          description: fillTemplate(randomFrom(INJURY_DESCRIPTIONS), player, team),
-          player: player.name,
-          playerId: player.id,
-          team: team.name,
-          teamId: team.id,
-          score: { home: homeRunning, away: awayRunning },
-        };
-      } else {
-        // Fight (very rare)
-        const team = Math.random() < 0.5 ? homeTeam : awayTeam;
-        const player = pickPlayer(team);
-        event = {
-          id: eventId,
-          time: minute,
-          type: 'fight',
-          description: fillTemplate(randomFrom(FIGHT_DESCRIPTIONS), player, team),
-          player: player.name,
-          playerId: player.id,
-          team: team.name,
-          teamId: team.id,
-          score: { home: homeRunning, away: awayRunning },
-        };
+          player: null, playerId: null,
+          team: trailingTeam.name, teamId: trailingTeam.id,
+          score: `${homeTotal}-${awayTotal}`,
+        });
       }
-
-      events.push(event);
     }
-
-    // Quarter / half-time marker
-    const isHalfTime = q === 1;
-    eventId++;
-    events.push({
-      id: eventId,
-      time: qStart + quarterLength,
-      type: isHalfTime ? 'half_time' : 'quarter_end',
-      description: isHalfTime
-        ? `HALF TIME: ${homeTeam.name} ${homeRunning} – ${awayRunning} ${awayTeam.name}`
-        : `End of Q${q + 1}: ${homeTeam.name} ${homeRunning} – ${awayRunning} ${awayTeam.name}`,
-      player: null,
-      playerId: null,
-      team: null,
-      teamId: null,
-      score: { home: homeRunning, away: awayRunning },
-    });
   }
+
+  // Stamp real-time offsets for live-mode sync
+  events.forEach(ev => {
+    ev.relativeTime = gameMinToRelSec(ev.time ?? 0, ev.quarter ?? 1);
+  });
 
   return events;
 }
@@ -577,7 +666,7 @@ function distributePlayerStats(team, teamTotals) {
     for (const stat of statsToDistribute) {
       if (teamTotals[stat] != null) {
         // Add some noise
-        const raw = teamTotals[stat] * share * (0.7 + Math.random() * 0.6);
+        const raw = teamTotals[stat] * share * (0.7 + _rng() * 0.6);
         s[stat] = Math.round(raw);
       }
     }
@@ -631,7 +720,12 @@ function deriveTeamTotals(score, oppScore) {
  * @param {string|Date} matchDate
  * @returns {Object} match result
  */
-export function simulateMatch(homeTeam, awayTeam, matchDate) {
+export function simulateMatch(homeTeam, awayTeam, matchDate, matchId = null) {
+  // Seed the RNG from the matchId so the result is always identical for the same match.
+  // This prevents different scores on each page refresh.
+  const seed = matchId ? _hashStr(String(matchId)) : (Number(matchDate) || Date.now());
+  _rng = _mulberry32(seed);
+
   // Simulate each quarter score
   const quarterScores = [];
   let homeTotal = 0;
@@ -649,7 +743,7 @@ export function simulateMatch(homeTeam, awayTeam, matchDate) {
 
   // Prevent ties: give 1 extra point to the leader or flip a coin
   if (homeTotal === awayTotal) {
-    if (Math.random() < 0.5) homeTotal++;
+    if (_rng() < 0.5) homeTotal++;
     else awayTotal++;
   }
 
@@ -697,12 +791,16 @@ export function updateTeamAfterMatch(team, matchResult, isHome) {
   const won = teamScore > oppScore;
   const scoreDiff = teamScore - oppScore;
 
+  // Ensure record objects exist (NPC teams from Firestore may not have them)
+  if (!team.seasonRecord)  team.seasonRecord  = { wins: 0, losses: 0 };
+  if (!team.overallRecord) team.overallRecord = { wins: 0, losses: 0 };
+
   // Season and overall record
   if (won) {
-    team.seasonRecord.wins = (team.seasonRecord.wins ?? 0) + 1;
+    team.seasonRecord.wins  = (team.seasonRecord.wins  ?? 0) + 1;
     team.overallRecord.wins = (team.overallRecord.wins ?? 0) + 1;
   } else {
-    team.seasonRecord.losses = (team.seasonRecord.losses ?? 0) + 1;
+    team.seasonRecord.losses  = (team.seasonRecord.losses  ?? 0) + 1;
     team.overallRecord.losses = (team.overallRecord.losses ?? 0) + 1;
   }
 
@@ -737,14 +835,27 @@ export function updateTeamAfterMatch(team, matchResult, isHome) {
   else if (won) team.reputation = clamp((team.reputation ?? 10) + 1, 0, 100);
   else if (!won && scoreDiff <= -15) team.reputation = clamp((team.reputation ?? 10) - 2, 0, 100);
 
-  // Add to match history (keep last 20)
+  // Add to match history (keep last 20).
+  // log and playerStats are NOT stored here – they are saved to match_logs/{matchId}
+  // in Firebase and loaded on-demand. This prevents the user_team_state doc from
+  // exceeding Firestore's 1 MB document limit.
   const historyEntry = {
-    matchDate: matchResult.matchDate,
-    opponent: isHome ? matchResult.awayTeamName : matchResult.homeTeamName,
+    matchId:      matchResult.matchId || `m_${matchResult.matchDate}_${matchResult.homeTeamId}`,
+    matchDate:    matchResult.matchDate,
+    opponent:     isHome ? matchResult.awayTeamName : matchResult.homeTeamName,
+    opponentId:   isHome ? matchResult.awayTeamId   : matchResult.homeTeamId,
     teamScore,
     oppScore,
-    result: won ? 'W' : 'L',
+    result:       won ? 'W' : 'L',
     isHome,
+    homeTeam:     matchResult.homeTeamName,
+    awayTeam:     matchResult.awayTeamName,
+    homeScore:    matchResult.homeScore,
+    awayScore:    matchResult.awayScore,
+    quarterScores: matchResult.quarterScores || [],
+    // Keep log + playerStats in memory only (stripped before Firestore save)
+    log:          matchResult.log         || [],
+    playerStats:  matchResult.playerStats || {},
   };
   team.matchHistory = [historyEntry, ...(team.matchHistory ?? [])].slice(0, 20);
 
@@ -808,10 +919,10 @@ export function updatePlayerAfterMatch(player, playerMatchStats) {
   player.lastFormRating = Math.round((player.lastFormRating ?? 65) * 0.6 + newFormRaw * 0.4);
 
   // Injury check (very low probability, especially if fatigued)
-  const injuryRoll = Math.random();
+  const injuryRoll = _rng();
   const injuryThreshold = player.fatigue > 70 ? 0.06 : 0.02;
   if (player.injuryStatus === 'healthy' && injuryRoll < injuryThreshold) {
-    const severity = Math.random();
+    const severity = _rng();
     if (severity < 0.6) {
       player.injuryStatus = 'minor';
       player.injuryDaysRemaining = randomInt(2, 5);

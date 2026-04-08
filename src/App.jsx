@@ -10,7 +10,7 @@ import Staff from './pages/Staff.jsx';
 import Training from './pages/Training.jsx';
 import Facilities from './pages/Facilities.jsx';
 import Fans from './pages/Fans.jsx';
-import Calendar from './pages/Calendar.jsx';
+import Fixtures from './pages/Fixtures.jsx';
 import League from './pages/League.jsx';
 import Transfer from './pages/Transfer.jsx';
 import TeamInfo from './pages/TeamInfo.jsx';
@@ -19,6 +19,10 @@ import Profile from './pages/Profile.jsx';
 import LiveMatch from './pages/LiveMatch.jsx';
 import FinancialReport from './pages/FinancialReport.jsx';
 import SearchPage from './pages/Search.jsx';
+import YouthAcademy from './pages/YouthAcademy.jsx';
+import Scouts from './pages/Scouts.jsx';
+import Admin from './pages/Admin.jsx';
+import SetupAdmin from './pages/SetupAdmin.jsx';
 
 function ProtectedRoute({ children }) {
   const { state } = useGame();
@@ -45,9 +49,10 @@ function ProtectedRoute({ children }) {
 
 export default function App() {
   return (
-    <BrowserRouter>
+    <BrowserRouter basename="/Courtly">
       <Routes>
         <Route path="/login" element={<Login />} />
+        <Route path="/setup-admin" element={<SetupAdmin />} />
         <Route path="/" element={
           <ProtectedRoute>
             <Layout />
@@ -61,7 +66,8 @@ export default function App() {
           <Route path="training" element={<Training />} />
           <Route path="facilities" element={<Facilities />} />
           <Route path="fans" element={<Fans />} />
-          <Route path="calendar" element={<Calendar />} />
+          <Route path="fixtures" element={<Fixtures />} />
+          <Route path="calendar" element={<Fixtures />} />
           <Route path="league" element={<League />} />
           <Route path="transfer" element={<Transfer />} />
           <Route path="team" element={<TeamInfo />} />
@@ -70,6 +76,9 @@ export default function App() {
           <Route path="match/live" element={<LiveMatch />} />
           <Route path="finances" element={<FinancialReport />} />
           <Route path="search" element={<SearchPage />} />
+          <Route path="youth-academy" element={<ProtectedRoute><YouthAcademy /></ProtectedRoute>} />
+          <Route path="scouts" element={<ProtectedRoute><Scouts /></ProtectedRoute>} />
+          <Route path="admin" element={<ProtectedRoute><Admin /></ProtectedRoute>} />
         </Route>
         <Route path="*" element={<Navigate to="/" replace />} />
       </Routes>

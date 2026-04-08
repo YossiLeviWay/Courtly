@@ -26,9 +26,34 @@ export default function Profile() {
   const user = state.user;
   const team = state.userTeam;
 
-  const wins = user?.records?.wins || team?.overallRecord?.wins || 0;
-  const losses = user?.records?.losses || team?.overallRecord?.losses || 0;
+  const wins = user?.records?.wins || team?.seasonRecord?.wins || team?.overallRecord?.wins || 0;
+  const losses = user?.records?.losses || team?.seasonRecord?.losses || team?.overallRecord?.losses || 0;
   const honors = user?.records?.honors || [];
+
+  // Season stats from real data
+  const seasonWins = team?.seasonRecord?.wins || 0;
+  const seasonLosses = team?.seasonRecord?.losses || 0;
+  const seasonPlayed = (team?.seasonMatches || []).filter(m => m.played).length || (seasonWins + seasonLosses);
+  const winPct = seasonPlayed > 0 ? (seasonWins / seasonPlayed * 100).toFixed(0) : '—';
+
+  // League position
+  let leaguePosition = '—';
+  if (state.leagues && team) {
+    const userLeague = state.leagues.find(lg => lg.teams?.some(t => t.id === team.id));
+    if (userLeague?.standings) {
+      const sorted = [...userLeague.standings].sort((a, b) => b.wins - a.wins || a.losses - b.losses);
+      const idx = sorted.findIndex(s => s.teamId === team.id);
+      if (idx >= 0) leaguePosition = `#${idx + 1} of ${sorted.length}`;
+    }
+  }
+
+  // Top scorer from real player seasonStats
+  const players = team?.players || [];
+  const withStats = players.filter(p => p.seasonStats && (p.seasonStats.gamesPlayed || 0) > 0);
+  const topScorer = withStats.sort((a, b) =>
+    (b.seasonStats.points / (b.seasonStats.gamesPlayed || 1)) -
+    (a.seasonStats.points / (a.seasonStats.gamesPlayed || 1))
+  )[0];
 
   const earnedAwards = AWARD_GALLERY.filter(a => a.condition({ wins, losses }));
 
@@ -75,6 +100,30 @@ export default function Profile() {
 
       {tab === 'records' && (
         <div>
+          {/* Current season snapshot */}
+          <div className="card mb-4">
+            <div className="card-title mb-4">This Season</div>
+            <div className="stats-grid" style={{ gridTemplateColumns: 'repeat(4,1fr)', marginBottom: 16 }}>
+              <div className="stat-card"><div className="stat-value">{seasonWins}</div><div className="stat-label">Wins</div></div>
+              <div className="stat-card"><div className="stat-value">{seasonLosses}</div><div className="stat-label">Losses</div></div>
+              <div className="stat-card"><div className="stat-value">{winPct}{winPct !== '—' ? '%' : ''}</div><div className="stat-label">Win %</div></div>
+              <div className="stat-card"><div className="stat-value" style={{ fontSize: 'var(--font-size-lg)' }}>{leaguePosition}</div><div className="stat-label">League Rank</div></div>
+            </div>
+            {topScorer && (
+              <div style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '10px 12px', background: 'var(--bg-muted)', borderRadius: 'var(--radius-md)' }}>
+                <span style={{ fontSize: '1.2rem' }}>🏀</span>
+                <div>
+                  <div style={{ fontWeight: 700, fontSize: 'var(--font-size-sm)' }}>Top Scorer: {topScorer.name}</div>
+                  <div style={{ fontSize: 'var(--font-size-xs)', color: 'var(--text-muted)' }}>
+                    {(topScorer.seasonStats.points / (topScorer.seasonStats.gamesPlayed || 1)).toFixed(1)} PPG
+                    · {(topScorer.seasonStats.rebounds / (topScorer.seasonStats.gamesPlayed || 1)).toFixed(1)} RPG
+                    · {(topScorer.seasonStats.assists / (topScorer.seasonStats.gamesPlayed || 1)).toFixed(1)} APG
+                  </div>
+                </div>
+              </div>
+            )}
+          </div>
+
           {/* Overall record */}
           <div className="card mb-4">
             <div className="card-title mb-4">Career Record</div>
