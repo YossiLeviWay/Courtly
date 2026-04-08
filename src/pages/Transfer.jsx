@@ -4,7 +4,7 @@ import { ArrowLeftRight, Search, Filter, Clock, X, Eye, ChevronDown, ChevronUp, 
 import PlayerAvatar from '../components/ui/PlayerAvatar.jsx';
 import { calcPlayerMonthlyWage, calcStaffMonthlyWage } from './FinancialReport.jsx';
 import { ATTRIBUTE_NAMES, STAFF_ROLES, STAFF_CHARACTERIZATIONS } from '../data/constants.js';
-import { apiBuyFreeAgent } from '../api.js';
+import { apiBuyFreeAgent, apiHireStaff } from '../api.js';
 
 const POSITIONS = ['PG', 'SG', 'SF', 'PF', 'C'];
 
@@ -1118,8 +1118,16 @@ export default function Transfer() {
                       className="btn btn-primary btn-sm"
                       style={{ width: '100%' }}
                       disabled={!canAfford || alreadyHired}
-                      onClick={() => {
+                      onClick={async () => {
                         if (!canAfford || alreadyHired) return;
+
+                        // Claim from the shared Firestore market so no one else can take them
+                        const success = await apiHireStaff(listing.id);
+                        if (!success) {
+                          addNotification('Failed to hire. They may have already been signed by another GM!', 'error');
+                          return;
+                        }
+
                         const staffKey = listing.staffRole.toLowerCase().replace(/\s+/g, '_') + '_' + listing.id.slice(-4);
                         const newStaff = {
                           ...listing,

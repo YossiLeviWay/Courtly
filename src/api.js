@@ -314,6 +314,32 @@ export async function apiBuyFreeAgent(listingId, player, contractYears, salaryPe
   }
 }
 
+export async function apiHireStaff(listingId) {
+  try {
+    await deleteDoc(doc(db, 'transfer_market', listingId));
+    return true;
+  } catch (err) {
+    console.error('Hire staff error:', err);
+    return false;
+  }
+}
+
+export async function apiReleaseStaff(staffMember) {
+  try {
+    const ref = doc(collection(db, 'transfer_market'));
+    await setDoc(ref, {
+      ...staffMember,
+      id: ref.id, // Generate a new listing ID
+      isStaff: true,
+      listedAt: Date.now(),
+    });
+    return true;
+  } catch (err) {
+    console.error('Release staff error:', err);
+    return false;
+  }
+}
+
 // ── Matches ──────────────────────────────────────────────────────
 
 export async function apiGetMatches() {
