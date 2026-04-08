@@ -257,7 +257,7 @@ export function GameProvider({ children }) {
     if (!auth.currentUser) return;
 
     try {
-      const [world, dbMatches, dbStandings, userStateRes, transferMarket, gameBrainOverrides] = await Promise.all([
+      let [world, dbMatches, dbStandings, userStateRes, transferMarket, gameBrainOverrides] = await Promise.all([
         apiGetWorld(),
         apiGetMatches(),
         apiGetStandings(),
@@ -287,17 +287,20 @@ export function GameProvider({ children }) {
       const leagues = buildLeagues(world.leagues, dbMatches, dbStandings);
       const user    = buildUserProfile(userStateRes.user, userStateRes.state?.profileData || {});
 
-      // ── Auto-seed transfer market (admin only, max once per 7 days) ─
-      if (isAdminUser) {
+      // ── Auto-seed transfer market ─
+      // Trigger if admin OR if the market is completely empty (e.g. first time setup)
+      if (isAdminUser || transferMarket.length === 0) {
         try {
           const worldState = await apiGetWorldState();
           const lastSeedMs = worldState?.lastMarketSeedDate?.toMillis?.()
             ?? worldState?.lastMarketSeedDate?.seconds * 1000
             ?? 0;
           const daysSinceSeed = (Date.now() - lastSeedMs) / 86_400_000;
-          if (daysSinceSeed > 7) {
-            await Promise.all([apiSeedFreeAgents(5), apiSeedStaffMarket(3)]);
+          if (daysSinceSeed > 7 || transferMarket.length === 0) {
+            await Promise.all([apiSeedFreeAgents(), apiSeedStaffMarket()]);
             await apiStampMarketSeedDate();
+            // Refetch immediately so they appear on screen right away
+            transferMarket = await apiGetTransferMarket();
           }
         } catch { /* non-fatal */ }
       }
