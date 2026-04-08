@@ -885,7 +885,7 @@ export async function apiSeedStaffMarket(count = 100) {
     roleDef.abilities.forEach(k => {
       abilities[k] = Math.max(10, Math.min(99, avgAbility - 10 + Math.floor(Math.random() * 20)));
     });
-    const name = _randomStaffName(i + Date.now());
+    const name = _randomStaffName(String(i + Date.now()));
     const monthlyWage = 200 + Math.round(avgAbility * 30);
     const ref = doc(collection(db, 'transfer_market'));
     batch.set(ref, {
