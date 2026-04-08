@@ -47,7 +47,7 @@ const NAV_GROUPS = [
   {
     label: 'Account',
     items: [
-      { to: '/profile', icon: User, label: 'Profile' },
+      { to: '/profile', icon: User, label: 'My Profile' },
       { to: '/settings', icon: Settings, label: 'Settings' },
     ]
   }
