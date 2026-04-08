@@ -837,7 +837,7 @@ export async function apiMarkFeedbackRead(docId) {
 // ── Admin: Seed transfer market ──────────────────────────────────
 
 /** Seed N generated free agents into the transfer_market collection (admin only). */
-export async function apiSeedFreeAgents(count = 15) {
+export async function apiSeedFreeAgents(count = 45) {
   const { generatePlayer } = await import('./engine/playerGenerator.js');
   const POSITIONS = ['PG', 'SG', 'SF', 'PF', 'C'];
   const batch = writeBatch(db);
@@ -875,7 +875,7 @@ const STAFF_ROLE_DEFS = [
 ];
 
 /** Seed staff members into the transfer_market (admin only). */
-export async function apiSeedStaffMarket(count = 8) {
+export async function apiSeedStaffMarket(count = 100) {
   const batch = writeBatch(db);
   for (let i = 0; i < count; i++) {
     const roleDef = STAFF_ROLE_DEFS[i % STAFF_ROLE_DEFS.length];
