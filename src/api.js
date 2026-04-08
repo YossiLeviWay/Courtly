@@ -844,8 +844,9 @@ export async function apiSeedFreeAgents(count = 45) {
   for (let i = 0; i < count; i++) {
     const pos = POSITIONS[i % POSITIONS.length];
     const player = generatePlayer({ position: pos });
+    const { salaryDemand, contractDemand } = calcFreeAgentDemand(player); // Dynamic wage based on ability/age/form
+
     const ref = doc(collection(db, 'transfer_market'));
-    const salaryDemand = player.salary || Math.round(50 + player.overallRating * 1.5);
     batch.set(ref, {
       id: ref.id,
       isFreeAgent: true,
@@ -856,7 +857,7 @@ export async function apiSeedFreeAgents(count = 45) {
       age: player.age,
       nationality: player.nationality,
       salaryDemand,
-      contractYears: player.contractYears || 2,
+      contractYears: contractDemand || 2,
       releasedAt: Date.now() - Math.floor(Math.random() * 7 * 24 * 60 * 60 * 1000),
       seeded: true,
       playerData: player,
