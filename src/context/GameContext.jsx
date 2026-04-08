@@ -306,11 +306,23 @@ export function GameProvider({ children }) {
             if (daysSinceSeed > 7 || staffCount === 0) seedTasks.push(apiSeedStaffMarket());
 
             await Promise.all(seedTasks);
-            await apiStampMarketSeedDate();
+            
+            try {
+              await apiStampMarketSeedDate();
+            } catch (stampErr) {
+              console.warn('Could not stamp market seed date:', stampErr);
+            }
+            
             // Refetch immediately so they appear on screen right away
             transferMarket = await apiGetTransferMarket();
           }
-        } catch (e) { console.error('Market auto-seed error:', e); }
+        } catch (e) { 
+          console.error('Market auto-seed error:', e); 
+          dispatch({
+            type: 'ADD_NOTIFICATION',
+            payload: { id: Date.now(), message: 'Market auto-seed failed! Check Firebase permissions (Admin required).', type: 'error', timestamp: Date.now() }
+          });
+        }
       }
 
       // ── Simulate any pending matches ────────────────────────────
