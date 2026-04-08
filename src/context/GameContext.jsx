@@ -320,7 +320,7 @@ export function GameProvider({ children }) {
           console.error('Market auto-seed error:', e); 
           dispatch({
             type: 'ADD_NOTIFICATION',
-            payload: { id: Date.now(), message: 'Market auto-seed failed! Check Firebase permissions (Admin required).', type: 'error', timestamp: Date.now() }
+            payload: { id: Date.now(), message: `Market auto-seed failed: ${e.message}`, type: 'error', timestamp: Date.now() }
           });
         }
       }
