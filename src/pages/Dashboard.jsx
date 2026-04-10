@@ -140,9 +140,11 @@ export default function Dashboard() {
 
   const { seasonRecord, motivationBar, momentumBar, chemistryGauge, budget, fanCount, matchHistory, seasonMatches, players } = userTeam;
 
-  // ── Next match ────────────────────────────────────────────
+  // ── Next match (earliest unplayed, sorted by date) ───────
   const upcomingMatch = seasonMatches
-    ? seasonMatches.find((m) => !m.played)
+    ? [...seasonMatches]
+        .sort((a, b) => (a.date || a.scheduledDate || 0) - (b.date || b.scheduledDate || 0))
+        .find((m) => !m.played)
     : null;
 
   // ── Recent results (last 3) ───────────────────────────────
