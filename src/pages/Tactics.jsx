@@ -181,13 +181,17 @@ function PlayerPicker({ position, players, lineup, onAssign, onClose, anchorPos,
         const isSelected = lineup[position] === p.id;
         const isInjured = p.injuryStatus && p.injuryStatus !== 'healthy';
         return (
-          <button key={p.id} onClick={() => { onAssign(position, p.id); onClose(); }} style={{
-            width: '100%', display: 'flex', alignItems: 'center', gap: 'var(--space-2)',
-            padding: '7px 10px', borderRadius: 'var(--radius-md)',
-            border: isSelected ? '2px solid var(--color-primary)' : '1px solid transparent',
-            background: isSelected ? 'var(--color-primary-100)' : 'transparent',
-            cursor: 'pointer', marginBottom: 3, textAlign: 'left', opacity: isInjured ? 0.5 : 1,
-          }}>
+          <button key={p.id}
+            onClick={isInjured ? undefined : () => { onAssign(position, p.id); onClose(); }}
+            disabled={isInjured}
+            title={isInjured ? `${p.name} is injured and cannot start` : undefined}
+            style={{
+              width: '100%', display: 'flex', alignItems: 'center', gap: 'var(--space-2)',
+              padding: '7px 10px', borderRadius: 'var(--radius-md)',
+              border: isSelected ? '2px solid var(--color-primary)' : isInjured ? '1px solid rgba(239,68,68,0.3)' : '1px solid transparent',
+              background: isSelected ? 'var(--color-primary-100)' : isInjured ? 'rgba(239,68,68,0.05)' : 'transparent',
+              cursor: isInjured ? 'not-allowed' : 'pointer', marginBottom: 3, textAlign: 'left', opacity: isInjured ? 0.5 : 1,
+            }}>
             <div style={{
               width: 28, height: 28, borderRadius: '50%', background: 'var(--color-primary)',
               color: 'white', fontWeight: 800, fontSize: '0.65rem', display: 'flex',
@@ -547,11 +551,12 @@ export default function Tactics() {
     const positions  = ['PG', 'SG', 'SF', 'PF', 'C'];
     const newLineup  = { PG: null, SG: null, SF: null, PF: null, C: null };
     const usedIds    = new Set();
+    const isHealthy  = p => !p.injuryStatus || p.injuryStatus === 'healthy';
 
-    // First pass: exact position match
+    // First pass: exact position match (healthy only)
     for (const pos of positions) {
       const candidates = players
-        .filter(p => p.position === pos && (!p.injuryStatus || p.injuryStatus === 'healthy' || p.injuryStatus === 'minor') && !usedIds.has(p.id))
+        .filter(p => p.position === pos && isHealthy(p) && !usedIds.has(p.id))
         .sort((a, b) => calcOvr(b) - calcOvr(a));
       if (candidates.length > 0) {
         newLineup[pos] = candidates[0].id;
@@ -559,11 +564,11 @@ export default function Tactics() {
       }
     }
 
-    // Second pass: fill remaining from any available player
+    // Second pass: fill remaining starters from any healthy player
     for (const pos of positions) {
       if (!newLineup[pos]) {
         const candidates = players
-          .filter(p => !usedIds.has(p.id) && (!p.injuryStatus || p.injuryStatus === 'healthy' || p.injuryStatus === 'minor'))
+          .filter(p => !usedIds.has(p.id) && isHealthy(p))
           .sort((a, b) => calcOvr(b) - calcOvr(a));
         if (candidates.length > 0) {
           newLineup[pos] = candidates[0].id;
@@ -572,9 +577,16 @@ export default function Tactics() {
       }
     }
 
+    // Auto-fill bench: next best healthy players (up to 7)
+    const autoBench = players
+      .filter(p => !usedIds.has(p.id) && isHealthy(p))
+      .sort((a, b) => calcOvr(b) - calcOvr(a))
+      .slice(0, 7)
+      .map(p => p.id);
+
     const starters = Object.values(newLineup).filter(Boolean);
-    setTactics(prev => ({ ...prev, lineup: newLineup, startingFive: starters, selectedPlayers: [...new Set([...starters, ...prev.benchPlayers])] }));
-    addNotification('Auto-lineup set to best available players!', 'success');
+    setTactics(prev => ({ ...prev, lineup: newLineup, startingFive: starters, benchPlayers: autoBench, selectedPlayers: [...new Set([...starters, ...autoBench])] }));
+    addNotification(`Auto-lineup set: ${starters.length} starters + ${autoBench.length} bench players`, 'success');
   };
 
   const handleSave = () => {
@@ -639,30 +651,33 @@ export default function Tactics() {
         <div style={{ fontWeight: 700, fontSize: 'var(--font-size-sm)', marginBottom: 'var(--space-3)', color: 'var(--text-secondary)', display: 'flex', alignItems: 'center', gap: 'var(--space-2)' }}>
           <span>Bench Players</span>
           <span className="badge badge-gray">{tactics.benchPlayers.length}/7</span>
+          <span style={{ fontSize: 'var(--font-size-xs)', color: 'var(--text-muted)', marginLeft: 4 }}>Click to add/remove · Set minutes below</span>
         </div>
-        <div style={{ display: 'flex', flexWrap: 'wrap', gap: 'var(--space-2)' }}>
+        <div style={{ display: 'flex', flexWrap: 'wrap', gap: 'var(--space-2)', marginBottom: 'var(--space-3)' }}>
           {players.map(player => {
             const isStarter = Object.values(tactics.lineup).includes(player.id);
             const isBench   = tactics.benchPlayers.includes(player.id);
             const isInjured = player.injuryStatus && player.injuryStatus !== 'healthy';
             if (isStarter) return null;
             return (
-              <button key={player.id} onClick={() => toggleBench(player.id)}
-                disabled={isInjured && !isBench}
+              <button key={player.id}
+                onClick={() => !isInjured && toggleBench(player.id)}
+                disabled={isInjured}
+                title={isInjured ? `${player.name} is injured` : undefined}
                 onMouseEnter={e => { setHoverPlayer(player); setHoverPos({ x: e.clientX, y: e.clientY }); }}
                 onMouseMove={e => setHoverPos({ x: e.clientX, y: e.clientY })}
                 onMouseLeave={() => setHoverPlayer(null)}
                 style={{
                   display: 'flex', alignItems: 'center', gap: 'var(--space-2)',
                   padding: '6px 10px', borderRadius: 'var(--radius-md)',
-                  border: isBench ? '2px solid var(--color-primary)' : '1px solid var(--border-color)',
-                  background: isBench ? 'var(--color-primary-100)' : 'var(--bg-muted)',
-                  cursor: (isInjured && !isBench) ? 'not-allowed' : 'pointer',
+                  border: isBench ? '2px solid var(--color-primary)' : isInjured ? '1px solid rgba(239,68,68,0.3)' : '1px solid var(--border-color)',
+                  background: isBench ? 'var(--color-primary-100)' : isInjured ? 'rgba(239,68,68,0.05)' : 'var(--bg-muted)',
+                  cursor: isInjured ? 'not-allowed' : 'pointer',
                   opacity: isInjured ? 0.55 : 1, transition: 'all 0.15s',
                 }}>
                 <span style={{ fontWeight: 700, fontSize: 'var(--font-size-xs)', color: isBench ? 'var(--color-primary)' : 'var(--text-primary)' }}>{player.name}</span>
                 <span style={{ fontSize: '0.65rem', color: 'var(--text-muted)' }}>{player.position} · {calcOvr(player)}</span>
-                {isInjured && <span style={{ fontSize: '0.65rem', color: 'var(--color-danger)' }}>⚠</span>}
+                {isInjured && <span style={{ fontSize: '0.65rem', color: 'var(--color-danger)' }}>⚠ Out</span>}
               </button>
             );
           })}
@@ -670,6 +685,90 @@ export default function Tactics() {
             <span style={{ fontSize: 'var(--font-size-xs)', color: 'var(--text-muted)' }}>All players assigned as starters</span>
           )}
         </div>
+
+        {/* Minutes per player */}
+        {tactics.benchPlayers.length > 0 && (
+          <div style={{ background: 'var(--bg-muted)', borderRadius: 'var(--radius-md)', padding: 'var(--space-3)' }}>
+            <div style={{ fontWeight: 700, fontSize: 'var(--font-size-xs)', color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: 0.5, marginBottom: 'var(--space-3)' }}>
+              ⏱ Planned Minutes (Bench)
+            </div>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-2)' }}>
+              {/* Starters minutes */}
+              {Object.entries(tactics.lineup).filter(([, id]) => id).map(([pos, id]) => {
+                const p = players.find(pl => pl.id === id);
+                if (!p) return null;
+                const mins = tactics.playerMinutes?.[id] ?? 32;
+                return (
+                  <div key={id} style={{ display: 'flex', alignItems: 'center', gap: 'var(--space-3)' }}>
+                    <span className="badge badge-orange" style={{ width: 28, justifyContent: 'center' }}>{pos}</span>
+                    <span style={{ flex: 1, fontSize: 'var(--font-size-xs)', fontWeight: 600 }}>{p.name}</span>
+                    <input type="range" min={0} max={48} value={mins}
+                      onChange={e => setTactics(prev => ({ ...prev, playerMinutes: { ...(prev.playerMinutes || {}), [id]: Number(e.target.value) } }))}
+                      style={{ width: 100, accentColor: 'var(--color-primary)' }}
+                    />
+                    <span style={{ fontSize: 'var(--font-size-xs)', fontWeight: 800, color: 'var(--color-primary)', width: 28, textAlign: 'right' }}>{mins}m</span>
+                    {mins < 20 && <span style={{ fontSize: '0.6rem', color: '#f59e0b' }}>Low</span>}
+                  </div>
+                );
+              })}
+              {/* Bench minutes */}
+              {tactics.benchPlayers.map(id => {
+                const p = players.find(pl => pl.id === id);
+                if (!p) return null;
+                const mins = tactics.playerMinutes?.[id] ?? 12;
+                return (
+                  <div key={id} style={{ display: 'flex', alignItems: 'center', gap: 'var(--space-3)' }}>
+                    <span className="badge badge-gray" style={{ width: 28, justifyContent: 'center', fontSize: '0.6rem' }}>BN</span>
+                    <span style={{ flex: 1, fontSize: 'var(--font-size-xs)', fontWeight: 600 }}>{p.name}</span>
+                    <input type="range" min={0} max={30} value={mins}
+                      onChange={e => setTactics(prev => ({ ...prev, playerMinutes: { ...(prev.playerMinutes || {}), [id]: Number(e.target.value) } }))}
+                      style={{ width: 100, accentColor: 'var(--color-primary)' }}
+                    />
+                    <span style={{ fontSize: 'var(--font-size-xs)', fontWeight: 800, color: 'var(--text-secondary)', width: 28, textAlign: 'right' }}>{mins}m</span>
+                    {mins === 0 && <span style={{ fontSize: '0.6rem', color: '#ef4444' }}>DNP</span>}
+                  </div>
+                );
+              })}
+            </div>
+            <p style={{ fontSize: 'var(--font-size-xs)', color: 'var(--text-muted)', marginTop: 'var(--space-2)' }}>
+              More minutes → faster development. Very low minutes may affect player morale.
+            </p>
+          </div>
+        )}
+
+        {/* Player style mismatch alerts */}
+        {tactics.playingStyle && (() => {
+          const mismatchPlayers = [];
+          const styleId = tactics.playingStyle;
+          const allAssigned = [...Object.values(tactics.lineup).filter(Boolean), ...tactics.benchPlayers];
+          for (const id of allAssigned) {
+            const p = players.find(pl => pl.id === id);
+            if (!p || !p.attributes) continue;
+            const attrs = p.attributes;
+            let mismatch = null;
+            if (styleId === 'Isolation' && (attrs.clutchPerformance ?? 50) < 45 && (attrs.basketballIQ ?? 50) < 45) {
+              mismatch = `Not suited for Isolation — low clutch & IQ`;
+            } else if (styleId === 'Fast Break' && (attrs.agilityLateralSpeed ?? 50) < 45) {
+              mismatch = `Low agility for Fast Break style`;
+            } else if (styleId === 'Post-Up Oriented' && p.position !== 'C' && p.position !== 'PF' && (attrs.postMoves ?? 50) < 40) {
+              mismatch = `Weak post skills for Post-Up system`;
+            } else if (styleId === 'Triangle Offense' && (attrs.basketballIQ ?? 50) < 45) {
+              mismatch = `Low Basketball IQ for Triangle Offense`;
+            }
+            if (mismatch) mismatchPlayers.push({ name: p.name, issue: mismatch });
+          }
+          if (mismatchPlayers.length === 0) return null;
+          return (
+            <div style={{ marginTop: 'var(--space-3)', padding: 'var(--space-3)', background: 'rgba(234,179,8,0.08)', border: '1px solid rgba(234,179,8,0.4)', borderRadius: 'var(--radius-md)' }}>
+              <div style={{ fontWeight: 700, fontSize: 'var(--font-size-xs)', color: '#b45309', marginBottom: 6 }}>⚠ Player Feedback — Style Mismatch</div>
+              {mismatchPlayers.slice(0, 3).map(({ name, issue }) => (
+                <div key={name} style={{ fontSize: 'var(--font-size-xs)', color: '#92400e', marginBottom: 4 }}>
+                  <strong>{name}:</strong> "{issue}"
+                </div>
+              ))}
+            </div>
+          );
+        })()}
       </div>
     </div>
   );

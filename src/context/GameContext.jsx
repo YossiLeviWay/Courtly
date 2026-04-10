@@ -395,6 +395,7 @@ export function GameProvider({ children }) {
         return d.getTime();
       })();
       const lastFanGrowth = userStateRes.state?.lastFanGrowthDate ?? 0;
+      let fanGrowthApplied = false;
       if (userStateRes.state && lastFanGrowth < thisWeekSunday) {
         const enthusiasm = userStateRes.state.fanEnthusiasm ?? 20;
         const history = userStateRes.state.matchHistory ?? [];
@@ -413,6 +414,7 @@ export function GameProvider({ children }) {
         userStateRes.state.weeksPlayed = weeksPlayed + 1;
         // Store fan growth info for display in Fans.jsx
         userStateRes.state.lastWeekFanGrowth = { growth, recentWins, recentLosses };
+        fanGrowthApplied = true;
       }
 
       // ── Weekly training progression ──────────────────────────────
@@ -520,6 +522,17 @@ export function GameProvider({ children }) {
         ...l,
         teams: (l.teams || []).map(t => userTeam && t.id === userTeam.id ? userTeam : t),
       }));
+
+      // If fan growth (or training) was applied this cycle, save to DB immediately
+      // before dispatching — otherwise the justLoaded guard prevents auto-save
+      // and the next poll would overwrite with stale DB values.
+      if ((fanGrowthApplied || lastTrainingApplied < thisWeekSunday) && userStateRes.state) {
+        try {
+          await apiSaveUserState(userStateRes.state);
+        } catch (saveErr) {
+          console.warn('Failed to persist weekly fan/training update:', saveErr);
+        }
+      }
 
       justLoaded.current = true;
       dispatch({

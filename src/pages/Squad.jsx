@@ -259,7 +259,7 @@ function PlayerCard({ player, onClick, releaseConfirm, onReleaseConfirm, onRelea
   const flag = NATIONALITY_FLAGS[player.nationality] || '🌐';
 
   return (
-    <div className="player-card" onClick={onClick}>
+    <div className="player-card" onClick={(e) => onClick?.(e)}>
       {/* Header: avatar + name/position */}
       <div className="player-card-header">
         <PlayerAvatar player={player} size="md" />
@@ -496,12 +496,12 @@ export default function Squad() {
   // openPopups: array of { id, player, zIndex }
   const [openPopups, setOpenPopups] = useState([]);
 
-  const openPlayerPopup = useCallback((player) => {
+  const openPlayerPopup = useCallback((player, clickX, clickY) => {
     // Don't open duplicate
     setOpenPopups(prev => {
       if (prev.some(p => p.id === player.id)) return prev;
       _zCounter += 2;
-      return [...prev, { id: player.id, player, zIndex: _zCounter }];
+      return [...prev, { id: player.id, player, zIndex: _zCounter, clickX, clickY }];
     });
   }, []);
 
@@ -599,54 +599,29 @@ export default function Squad() {
         onSetViceCaptain={handleSetViceCaptain}
       />
 
-      {/* Filters */}
+      {/* Filters + view controls */}
       <div style={{ display: 'flex', alignItems: 'center', gap: 'var(--space-3)', marginBottom: 'var(--space-4)', flexWrap: 'wrap' }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: 'var(--space-2)' }}>
           <span style={{ fontSize: 'var(--font-size-xs)', color: 'var(--text-muted)', fontWeight: 600, textTransform: 'uppercase', letterSpacing: 0.5 }}>Position</span>
           {['ALL', 'PG', 'SG', 'SF', 'PF', 'C'].map(pos => (
-            <button
-              key={pos}
-              onClick={() => setFilterPosition(pos)}
-              style={{
-                padding: '4px 10px',
-                borderRadius: 'var(--radius-full)',
-                border: '1px solid',
-                borderColor: filterPosition === pos ? 'var(--color-primary)' : 'var(--border-color)',
-                background: filterPosition === pos ? 'var(--color-primary)' : 'transparent',
-                color: filterPosition === pos ? 'white' : 'var(--text-secondary)',
-                fontSize: 'var(--font-size-xs)',
-                fontWeight: 700,
-                cursor: 'pointer',
-                transition: 'all var(--transition-fast)',
-              }}
-            >
-              {pos}
-            </button>
+            <button key={pos} onClick={() => setFilterPosition(pos)} style={{
+              padding: '4px 10px', borderRadius: 'var(--radius-full)', border: '1px solid',
+              borderColor: filterPosition === pos ? 'var(--color-primary)' : 'var(--border-color)',
+              background: filterPosition === pos ? 'var(--color-primary)' : 'transparent',
+              color: filterPosition === pos ? 'white' : 'var(--text-secondary)',
+              fontSize: 'var(--font-size-xs)', fontWeight: 700, cursor: 'pointer', transition: 'all var(--transition-fast)',
+            }}>{pos}</button>
           ))}
         </div>
         <div style={{ display: 'flex', alignItems: 'center', gap: 'var(--space-2)', marginLeft: 'auto' }}>
-          <button
-            className="btn btn-ghost btn-sm"
-            style={{ fontSize: '0.7rem' }}
-            onClick={() => setShowSquadCompare(true)}
-          >
+          <button className="btn btn-ghost btn-sm" style={{ fontSize: '0.7rem' }} onClick={() => setShowSquadCompare(true)}>
             📊 Compare Position
           </button>
-          <span style={{ fontSize: 'var(--font-size-xs)', color: 'var(--text-muted)', fontWeight: 600, textTransform: 'uppercase', letterSpacing: 0.5 }}>Sort by</span>
-          <select
-            value={sortBy}
-            onChange={e => setSortBy(e.target.value)}
-            style={{
-              padding: '4px 10px',
-              borderRadius: 'var(--radius-md)',
-              border: '1px solid var(--border-color)',
-              background: 'var(--bg-card)',
-              color: 'var(--text-primary)',
-              fontSize: 'var(--font-size-xs)',
-              fontWeight: 600,
-              cursor: 'pointer',
-            }}
-          >
+          <span style={{ fontSize: 'var(--font-size-xs)', color: 'var(--text-muted)', fontWeight: 600, textTransform: 'uppercase', letterSpacing: 0.5 }}>Sort</span>
+          <select value={sortBy} onChange={e => setSortBy(e.target.value)} style={{
+            padding: '4px 10px', borderRadius: 'var(--radius-md)', border: '1px solid var(--border-color)',
+            background: 'var(--bg-card)', color: 'var(--text-primary)', fontSize: 'var(--font-size-xs)', fontWeight: 600, cursor: 'pointer',
+          }}>
             <option value="rating">Rating</option>
             <option value="fatigue">Fatigue</option>
             <option value="form">Form</option>
@@ -654,27 +629,114 @@ export default function Squad() {
         </div>
       </div>
 
-      {/* Player grid */}
+      {/* Roster table — grouped by position when ALL, flat when filtered */}
       {sorted.length === 0 ? (
         <div className="empty-state">
           <div className="empty-state-icon">🏀</div>
           <div className="empty-state-title">No players found</div>
           <div className="empty-state-desc">Try adjusting your filters.</div>
         </div>
-      ) : (
+      ) : filterPosition !== 'ALL' ? (
+        /* Filtered single position — card grid */
         <div className="grid-3" style={{ marginBottom: 'var(--space-6)' }}>
           {sorted.map(player => (
-            <PlayerCard
-              key={player.id}
-              player={player}
-              onClick={() => openPlayerPopup(player)}
-              releaseConfirm={releaseConfirm}
-              onReleaseConfirm={(id) => setReleaseConfirm(id)}
-              onReleaseClear={() => setReleaseConfirm(null)}
-              onReleasePlayer={handleReleasePlayer}
-              onCompare={(p) => setComparePlayer(p)}
-            />
+            <PlayerCard key={player.id} player={player} onClick={(e) => openPlayerPopup(player, e?.clientX, e?.clientY)}
+              releaseConfirm={releaseConfirm} onReleaseConfirm={(id) => setReleaseConfirm(id)}
+              onReleaseClear={() => setReleaseConfirm(null)} onReleasePlayer={handleReleasePlayer}
+              onCompare={(p) => setComparePlayer(p)} />
           ))}
+        </div>
+      ) : (
+        /* ALL — grouped roster table */
+        <div style={{ marginBottom: 'var(--space-6)' }}>
+          {['PG', 'SG', 'SF', 'PF', 'C'].map(pos => {
+            const posPlayers = sorted.filter(p => p.position === pos);
+            if (posPlayers.length === 0) return null;
+            const posLabel = { PG: 'Point Guards', SG: 'Shooting Guards', SF: 'Small Forwards', PF: 'Power Forwards', C: 'Centers' }[pos];
+            return (
+              <div key={pos} style={{ marginBottom: 'var(--space-4)' }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 'var(--space-2)', marginBottom: 'var(--space-2)' }}>
+                  <span className={`badge ${POSITION_COLORS[pos] || 'badge-gray'}`}>{pos}</span>
+                  <span style={{ fontWeight: 700, fontSize: 'var(--font-size-sm)', color: 'var(--text-secondary)' }}>{posLabel}</span>
+                  <span style={{ fontSize: 'var(--font-size-xs)', color: 'var(--text-muted)' }}>({posPlayers.length})</span>
+                </div>
+                <div className="card" style={{ padding: 0, overflow: 'hidden' }}>
+                  {/* Table header */}
+                  <div style={{ display: 'grid', gridTemplateColumns: '1fr 52px 60px 60px 60px 56px', gap: 0, padding: '6px 14px', background: 'var(--bg-muted)', borderBottom: '1px solid var(--border-color)', fontSize: '0.6rem', fontWeight: 700, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: 0.5 }}>
+                    <span>Player</span>
+                    <span style={{ textAlign: 'center' }}>OVR</span>
+                    <span style={{ textAlign: 'center' }}>Fatigue</span>
+                    <span style={{ textAlign: 'center' }}>Form</span>
+                    <span style={{ textAlign: 'center' }}>Status</span>
+                    <span style={{ textAlign: 'center' }}>Action</span>
+                  </div>
+                  {posPlayers.map((player, idx) => {
+                    const ovr = calcOvr(player);
+                    const fatigue = player.fatigue || 0;
+                    const fatigueColor = fatigue > 70 ? 'var(--color-danger)' : fatigue > 40 ? 'var(--color-warning)' : 'var(--color-success)';
+                    const injuryStatus = player.injuryStatus || 'healthy';
+                    const flag = NATIONALITY_FLAGS[player.nationality] || '🌐';
+                    return (
+                      <div key={player.id}
+                        onClick={(e) => openPlayerPopup(player, e?.clientX, e?.clientY)}
+                        style={{
+                          display: 'grid', gridTemplateColumns: '1fr 52px 60px 60px 60px 56px', gap: 0,
+                          padding: '10px 14px', alignItems: 'center',
+                          borderBottom: idx < posPlayers.length - 1 ? '1px solid var(--border-color)' : 'none',
+                          cursor: 'pointer', transition: 'background 0.12s',
+                          background: injuryStatus !== 'healthy' ? 'rgba(239,68,68,0.03)' : 'transparent',
+                        }}
+                        onMouseEnter={e => { e.currentTarget.style.background = 'var(--bg-muted)'; }}
+                        onMouseLeave={e => { e.currentTarget.style.background = injuryStatus !== 'healthy' ? 'rgba(239,68,68,0.03)' : 'transparent'; }}
+                      >
+                        {/* Name + badges */}
+                        <div style={{ display: 'flex', alignItems: 'center', gap: 8, minWidth: 0 }}>
+                          <div style={{ width: 30, height: 30, borderRadius: '50%', background: 'var(--color-primary)', color: 'white', fontWeight: 800, fontSize: '0.65rem', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
+                            {player.name?.split(' ').map(n => n[0]).join('').slice(0, 2)}
+                          </div>
+                          <div style={{ minWidth: 0 }}>
+                            <div style={{ fontWeight: 700, fontSize: 'var(--font-size-sm)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', display: 'flex', alignItems: 'center', gap: 4 }}>
+                              {player.name}
+                              {player.isCaptain && <span className="badge badge-orange" style={{ fontSize: '0.55rem', padding: '1px 4px' }}>C</span>}
+                              {player.isViceCaptain && <span className="badge badge-yellow" style={{ fontSize: '0.55rem', padding: '1px 4px' }}>VC</span>}
+                            </div>
+                            <div style={{ fontSize: '0.65rem', color: 'var(--text-muted)' }}>{flag} {player.nationality ?? ''} · Age {player.age ?? '?'} · ${player.salary ?? '?'}k</div>
+                          </div>
+                        </div>
+                        {/* OVR */}
+                        <div style={{ textAlign: 'center', fontWeight: 900, fontSize: 'var(--font-size-base)', color: ovr >= 75 ? 'var(--color-success)' : ovr >= 60 ? 'var(--color-primary)' : 'var(--color-danger)' }}>{ovr}</div>
+                        {/* Fatigue */}
+                        <div style={{ textAlign: 'center' }}>
+                          <div style={{ height: 5, background: 'var(--bg-muted)', borderRadius: 3, overflow: 'hidden', marginBottom: 2 }}>
+                            <div style={{ width: `${fatigue}%`, height: '100%', background: fatigueColor, borderRadius: 3 }} />
+                          </div>
+                          <span style={{ fontSize: '0.6rem', fontWeight: 700, color: fatigueColor }}>{fatigue}%</span>
+                        </div>
+                        {/* Form */}
+                        <div style={{ textAlign: 'center', fontWeight: 700, fontSize: 'var(--font-size-xs)', color: (player.lastFormRating ?? 50) >= 75 ? 'var(--color-success)' : (player.lastFormRating ?? 50) >= 50 ? 'var(--text-primary)' : 'var(--color-danger)' }}>
+                          {player.lastFormRating ?? '—'}
+                        </div>
+                        {/* Status */}
+                        <div style={{ textAlign: 'center' }}>
+                          <span className={`badge ${injuryBadgeClass(injuryStatus)}`} style={{ fontSize: '0.6rem', padding: '2px 6px', textTransform: 'capitalize' }}>
+                            {injuryStatus === 'healthy' ? '✓ OK' : injuryStatus}
+                          </span>
+                        </div>
+                        {/* Compare button */}
+                        <div style={{ textAlign: 'center' }}>
+                          <button className="btn btn-ghost btn-sm"
+                            style={{ fontSize: '0.65rem', padding: '3px 7px' }}
+                            onClick={e => { e.stopPropagation(); setComparePlayer(player); }}>
+                            VS
+                          </button>
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+            );
+          })}
         </div>
       )}
 
@@ -712,7 +774,7 @@ export default function Squad() {
       )}
 
       {/* One popup per open player */}
-      {openPopups.map(({ id, player, zIndex }) => {
+      {openPopups.map(({ id, player, zIndex, clickX, clickY }) => {
         const userLeague = (state.leagues || []).find(l => l.teams?.some(t => t.id === userTeam.id));
         const schedule = userLeague?.schedule || [];
         return (
@@ -723,6 +785,8 @@ export default function Squad() {
             schedule={schedule}
             userTeamId={userTeam.id}
             zIndex={zIndex + 1}
+            clickX={clickX}
+            clickY={clickY}
             onClose={() => closePopup(id)}
             onFocus={() => focusPopup(id)}
           />

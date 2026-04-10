@@ -72,13 +72,24 @@ export default function TeamInfo() {
   }
   const streakText = streak > 0 ? `${streak}-Game ${streakType === 'W' ? 'Winning' : 'Losing'} Streak` : 'No streak';
 
-  // Find league position
-  const leagueTeams = state.allTeams?.slice(0, 10) || [];
-  const sorted = [...leagueTeams].sort((a, b) =>
-    ((b.seasonRecord?.wins || 0) * 2 + (b.seasonRecord?.losses || 0)) -
-    ((a.seasonRecord?.wins || 0) * 2 + (a.seasonRecord?.losses || 0))
-  );
-  const position = sorted.findIndex(t => t.id === team.id) + 1 || '-';
+  // Find league position using actual league standings
+  let position = '—';
+  if (state.leagues) {
+    const userLeague = state.leagues.find(lg => lg.teams?.some(t => t.id === team.id));
+    if (userLeague?.standings?.length) {
+      const sortedStandings = [...userLeague.standings].sort((a, b) =>
+        b.wins - a.wins || a.losses - b.losses
+      );
+      const idx = sortedStandings.findIndex(s => s.teamId === team.id);
+      if (idx >= 0) position = `#${idx + 1}`;
+    } else {
+      // Fallback: sort all teams by wins
+      const leagueTeams = state.allTeams || [];
+      const sortedTeams = [...leagueTeams].sort((a, b) => (b.seasonRecord?.wins || 0) - (a.seasonRecord?.wins || 0));
+      const idx = sortedTeams.findIndex(t => t.id === team.id);
+      if (idx >= 0) position = `#${idx + 1}`;
+    }
+  }
 
   const leaders = getUniqueLeaders(team.players);
   const topScorer    = leaders.find(l => l.stat === 'points')?.player;
@@ -125,7 +136,7 @@ export default function TeamInfo() {
             </div>
             <div className="flex gap-2 mt-2">
               <span className="badge" style={{ background: 'rgba(255,255,255,0.2)', color: 'white' }}>
-                Liga C · #{position}
+                Liga C · {position}
               </span>
               <span className="badge" style={{ background: 'rgba(255,255,255,0.2)', color: 'white' }}>
                 {repInfo[3]} {repInfo[2]}
