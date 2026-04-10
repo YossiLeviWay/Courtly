@@ -141,9 +141,8 @@ export default function Dashboard() {
   const { seasonRecord, motivationBar, momentumBar, chemistryGauge, budget, fanCount, matchHistory, seasonMatches, players } = userTeam;
 
   // ── Next match ────────────────────────────────────────────
-  const now = Date.now();
   const upcomingMatch = seasonMatches
-    ? seasonMatches.find((m) => !m.played && new Date(m.date).getTime() > now)
+    ? seasonMatches.find((m) => !m.played)
     : null;
 
   // ── Recent results (last 3) ───────────────────────────────
@@ -492,9 +491,9 @@ export default function Dashboard() {
         </div>
       </div>
 
-      {/* Community news + Squad news */}
+      {/* League News + Squad News */}
       <div className="grid-2 mb-6">
-        {/* Community / league news */}
+        {/* League news */}
         <div className="card">
           <div className="card-header">
             <span className="card-title" style={{ display: 'flex', alignItems: 'center', gap: 'var(--space-2)' }}>
@@ -504,195 +503,84 @@ export default function Dashboard() {
           </div>
           <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-3)' }}>
             {(() => {
-              // Generate data-driven league news from real standings
               const leagues = state.leagues || [];
               const news = [];
-
               for (const lg of leagues.slice(0, 3)) {
                 const standings = (lg.standings || []).slice().sort((a, b) => b.wins - a.wins || a.losses - b.losses);
                 const leader = standings[0];
                 if (leader && (leader.wins + leader.losses) > 0) {
                   const gp = leader.wins + leader.losses;
                   const pct = ((leader.wins / gp) * 100).toFixed(0);
-                  news.push({ icon: '🏆', title: `${leader.teamName} lead ${lg.name || lg.id}`, body: `${leader.wins}W-${leader.losses}L (${pct}%) through ${gp} game${gp !== 1 ? 's' : ''}. Season progress well underway.` });
+                  news.push({ icon: '🏆', title: `${leader.teamName} lead ${lg.name || lg.id}`, body: `${leader.wins}W-${leader.losses}L (${pct}%) through ${gp} game${gp !== 1 ? 's' : ''}.` });
                 }
-
-                const teams = standings.filter(t => t.wins + t.losses >= 1);
-                if (teams.length >= 2) {
+                if (standings.length >= 2 && leader) {
                   const second = standings[1];
                   const gb = ((leader.wins - second.wins + second.losses - leader.losses) / 2).toFixed(1);
-                  if (gb <= 3 && gb > 0) {
-                    news.push({ icon: '📊', title: `Tight race in ${lg.name || lg.id}`, body: `${second.teamName} trails ${leader.teamName} by just ${gb} game${gb !== '1.0' ? 's' : ''}.` });
+                  if (Number(gb) <= 3 && Number(gb) > 0) {
+                    news.push({ icon: '📊', title: `Tight race in ${lg.name || lg.id}`, body: `${second.teamName} trails by just ${gb} game${gb !== '1.0' ? 's' : ''}.` });
                   }
                 }
-
-                // Check for winning streaks by looking at schedule
                 const playedMatches = (lg.schedule || []).filter(m => m.played);
                 if (playedMatches.length > 0) {
-                  news.push({ icon: '⚡', title: `${playedMatches.length} match${playedMatches.length !== 1 ? 'es' : ''} played in ${lg.name || lg.id}`, body: `${standings.length} teams in action this season so far.` });
+                  news.push({ icon: '⚡', title: `${playedMatches.length} match${playedMatches.length !== 1 ? 'es' : ''} played in ${lg.name || lg.id}`, body: `${standings.length} teams competing this season.` });
                 }
               }
-
               if (news.length === 0) {
-                news.push({ icon: '📅', title: 'Season about to begin', body: 'No results yet. The first matchday will reveal the season\'s opening standings.' });
-                news.push({ icon: '🏀', title: 'Prepare your squad', body: 'Review your tactics, training, and lineup before the season opener.' });
+                news.push({ icon: '📅', title: 'Season about to begin', body: 'No results yet. First matchday will reveal the opening standings.' });
+                news.push({ icon: '🏀', title: 'Prepare your squad', body: 'Review tactics, training, and lineup before the season opener.' });
               }
-
-              return news.slice(0, 4).map((item, i) => (
-                <NewsItem key={i} icon={item.icon} title={item.title} body={item.body} />
-              ));
+              return news.slice(0, 4).map((item, i) => <NewsItem key={i} icon={item.icon} title={item.title} body={item.body} />);
             })()}
           </div>
         </div>
 
-        {/* Squad news */}
+        {/* Squad News — training, fans, media, squad health */}
         <div className="card">
           <div className="card-header">
             <span className="card-title" style={{ display: 'flex', alignItems: 'center', gap: 'var(--space-2)' }}>
-              <Heart size={16} style={{ color: 'var(--color-primary)' }} />
+              <Newspaper size={16} style={{ color: 'var(--color-primary)' }} />
               Squad News
             </span>
           </div>
           <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-3)' }}>
-            {injured.length > 0 ? (
-              injured.slice(0, 2).map((p) => (
-                <div
-                  key={p.id}
-                  style={{
-                    display: 'flex',
-                    alignItems: 'flex-start',
-                    gap: 'var(--space-3)',
-                    paddingBottom: 'var(--space-3)',
-                    borderBottom: '1px solid var(--border-color)',
-                  }}
-                >
-                  <AlertCircle size={16} style={{ color: 'var(--color-danger)', flexShrink: 0, marginTop: 2 }} />
-                  <div>
-                    <p style={{ fontWeight: 700, fontSize: 'var(--font-size-sm)' }}>
-                      {p.name} – <span style={{ textTransform: 'capitalize' }}>{p.injuryStatus}</span> injury
-                    </p>
-                    <p style={{ fontSize: 'var(--font-size-xs)', color: 'var(--text-muted)' }}>
-                      {p.injuryDaysRemaining > 0
-                        ? `Expected return in ${p.injuryDaysRemaining} day${p.injuryDaysRemaining !== 1 ? 's' : ''}`
-                        : 'Recovery in progress'}
-                    </p>
-                  </div>
-                </div>
-              ))
-            ) : (
-              <div
-                style={{
-                  display: 'flex',
-                  alignItems: 'center',
-                  gap: 'var(--space-2)',
-                  paddingBottom: 'var(--space-3)',
-                  borderBottom: '1px solid var(--border-color)',
-                }}
-              >
-                <span style={{ color: 'var(--color-success)', fontSize: '1rem' }}>✔</span>
-                <p style={{ fontSize: 'var(--font-size-sm)', color: 'var(--text-secondary)', fontWeight: 600 }}>
-                  No injuries — full squad available
-                </p>
-              </div>
+            {/* Media: last match */}
+            {recentMatches[0] && (() => {
+              const m = recentMatches[0];
+              const won = m.result === 'W' || (m.teamScore ?? m.userScore ?? 0) > (m.oppScore ?? m.opponentScore ?? 0);
+              const oppName = m.opponent || m.opponentName || 'opponent';
+              const score = `${m.teamScore ?? m.userScore ?? '?'}–${m.oppScore ?? m.opponentScore ?? '?'}`;
+              return <NewsItem icon={won ? '📣' : '📰'} title={`Media: ${won ? 'Win' : 'Loss'} vs ${oppName} (${score})`} body={topScorer ? `${topScorer.name} led with ${getPlayerStats(topScorer).pts} PPG.` : `The team ${won ? 'picked up an important victory' : 'suffered a setback'}.`} />;
+            })()}
+
+            {/* Training highlights */}
+            {(userTeam.trainingHighlights ?? []).slice(0, 1).map((h, i) => (
+              <NewsItem key={`tr-${i}`} icon="🏋️" title="Training News" body={h} />
+            ))}
+            {(userTeam.trainingHighlights ?? []).length === 0 && (
+              <NewsItem icon="🏋️" title="Training News" body="Regular training sessions underway. Set a training plan to see highlights here." />
             )}
 
-            {highForm.length > 0 && (
-              <div
-                style={{
-                  display: 'flex',
-                  alignItems: 'flex-start',
-                  gap: 'var(--space-3)',
-                  paddingBottom: 'var(--space-3)',
-                  borderBottom: '1px solid var(--border-color)',
-                }}
-              >
-                <Star size={16} style={{ color: 'var(--color-warning)', flexShrink: 0, marginTop: 2 }} />
-                <div>
-                  <p style={{ fontWeight: 700, fontSize: 'var(--font-size-sm)' }}>
-                    {highForm[0].name} in great form
-                  </p>
-                  <p style={{ fontSize: 'var(--font-size-xs)', color: 'var(--text-muted)' }}>
-                    Form rating: {highForm[0].lastFormRating}/100 — on fire this week
-                  </p>
-                </div>
-              </div>
-            )}
+            {/* Fan news */}
+            {(() => {
+              const lastGrowth = userTeam.lastWeekFanGrowth;
+              const fc = userTeam.fanCount ?? 0;
+              const milestones = [500, 1000, 2500, 5000, 10000, 25000];
+              const hit = milestones.find(m => fc >= m && fc < m * 1.05);
+              if (hit) return <NewsItem icon="🎉" title={`Fans: ${hit.toLocaleString()} supporters milestone!`} body="The city is buzzing — your fanbase keeps growing!" />;
+              if (lastGrowth?.growth > 0) return <NewsItem icon="📈" title={`Fans: +${lastGrowth.growth} new supporters this week`} body={`${lastGrowth.recentWins}W-${lastGrowth.recentLosses}L form brings new fans to the club.`} />;
+              return <NewsItem icon="👥" title="Fans: Building the fanbase" body={`${fc.toLocaleString()} supporters follow the club. Win games to attract more.`} />;
+            })()}
 
-            {lowFatigue.length > 0 && (
-              <div
-                style={{
-                  display: 'flex',
-                  alignItems: 'flex-start',
-                  gap: 'var(--space-3)',
-                }}
-              >
-                <Activity size={16} style={{ color: 'var(--color-success)', flexShrink: 0, marginTop: 2 }} />
-                <div>
-                  <p style={{ fontWeight: 700, fontSize: 'var(--font-size-sm)' }}>
-                    {lowFatigue.length} player{lowFatigue.length !== 1 ? 's' : ''} fully rested
-                  </p>
-                  <p style={{ fontSize: 'var(--font-size-xs)', color: 'var(--text-muted)' }}>
-                    Low fatigue — ready for the next fixture
-                  </p>
-                </div>
-              </div>
-            )}
-
-            {highForm.length === 0 && lowFatigue.length === 0 && injured.length === 0 && (
-              <p style={{ color: 'var(--text-muted)', fontSize: 'var(--font-size-sm)', textAlign: 'center', padding: 'var(--space-4) 0' }}>
-                Nothing to report right now
-              </p>
-            )}
+            {/* Squad health */}
+            {injured.length > 0
+              ? <NewsItem icon="🚑" title={`Injuries: ${injured.map(p => p.name).join(', ')}`} body={`${injured.length} player${injured.length !== 1 ? 's' : ''} sidelined. Check Tactics to adjust your lineup.`} />
+              : highForm.length > 0
+                ? <NewsItem icon="⭐" title={`Form: ${highForm[0].name} on fire`} body={`Form rating ${highForm[0].lastFormRating}/100 — keep giving him minutes.`} />
+                : <NewsItem icon="✅" title="Squad: Full squad available" body="No injuries. Everyone is ready for the next fixture." />
+            }
           </div>
         </div>
       </div>
-
-      {/* Club News feed */}
-      {(() => {
-        const clubNews = [];
-        const lastMatch = recentMatches[0];
-        if (lastMatch) {
-          const won = lastMatch.result === 'W' || (lastMatch.teamScore ?? lastMatch.userScore ?? 0) > (lastMatch.oppScore ?? lastMatch.opponentScore ?? 0);
-          const oppName = lastMatch.opponent || lastMatch.opponentName || 'the opponent';
-          const topscorerInMatch = topScorer;
-          const pts = topscorerInMatch ? getPlayerStats(topscorerInMatch).pts : null;
-          clubNews.push({
-            icon: won ? '🏆' : '😤',
-            title: `${won ? 'Victory' : 'Defeat'} vs ${oppName}`,
-            body: topscorerInMatch && pts
-              ? `${topscorerInMatch.name} led the team with ${pts} PPG in the recent fixture.`
-              : `The team ${won ? 'picked up a win' : 'suffered a defeat'} against ${oppName}.`,
-          });
-        }
-        const trainingHighlights = userTeam.trainingHighlights ?? [];
-        trainingHighlights.slice(0, 2).forEach(h => clubNews.push({ icon: '🏋️', title: 'Training Milestone', body: h }));
-        const lastGrowth = userTeam.lastWeekFanGrowth;
-        if (lastGrowth?.growth > 0) {
-          clubNews.push({ icon: '📈', title: `+${lastGrowth.growth} new fans this week!`, body: `Your recent ${lastGrowth.recentWins}W-${lastGrowth.recentLosses}L record brought new supporters to the club.` });
-        }
-        const fanCount2 = userTeam.fanCount ?? 0;
-        const milestones = [500, 1000, 2500, 5000, 10000, 25000];
-        const reachedMilestone = milestones.find(m => fanCount2 >= m && fanCount2 < m * 1.05);
-        if (reachedMilestone) {
-          clubNews.push({ icon: '🎉', title: `${reachedMilestone.toLocaleString()} fans milestone!`, body: `Your fanbase has grown to over ${reachedMilestone.toLocaleString()} supporters. The city is buzzing!` });
-        }
-        if (clubNews.length === 0) return null;
-        return (
-          <div className="card mb-6">
-            <div className="card-header">
-              <span className="card-title" style={{ display: 'flex', alignItems: 'center', gap: 'var(--space-2)' }}>
-                <Newspaper size={16} style={{ color: 'var(--color-primary)' }} />
-                Club News
-              </span>
-            </div>
-            <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-3)' }}>
-              {clubNews.slice(0, 4).map((item, i) => (
-                <NewsItem key={i} icon={item.icon} title={item.title} body={item.body} />
-              ))}
-            </div>
-          </div>
-        );
-      })()}
 
       {/* Match detail modal (triggered by clicking recent results) */}
       {selectedMatch && (
@@ -723,42 +611,66 @@ export default function Dashboard() {
               <button className="btn btn-ghost btn-sm" onClick={() => setSelectedPlayer(null)}>✕</button>
             </div>
             <div className="modal-body" style={{ maxHeight: '65vh', overflowY: 'auto' }}>
-              {/* Season stats */}
-              {selectedPlayer.seasonStats && (
-                <div style={{ marginBottom: 16 }}>
-                  <div style={{ fontWeight: 700, fontSize: 'var(--font-size-sm)', marginBottom: 8, color: 'var(--color-primary)' }}>Season Stats</div>
-                  <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 8 }}>
-                    {['points', 'rebounds', 'assists', 'steals', 'blocks', 'turnovers'].map(k => {
-                      const gp = selectedPlayer.seasonStats.gamesPlayed || 1;
-                      const val = ((selectedPlayer.seasonStats[k] ?? 0) / gp).toFixed(1);
+              {/* Season averages */}
+              {selectedPlayer.seasonStats && (() => {
+                const ss = selectedPlayer.seasonStats;
+                const gp = ss.gamesPlayed || 1;
+                const stats = [
+                  { key: 'points', label: 'PTS', val: (ss.points / gp).toFixed(1) },
+                  { key: 'rebounds', label: 'REB', val: (ss.rebounds / gp).toFixed(1) },
+                  { key: 'assists', label: 'AST', val: (ss.assists / gp).toFixed(1) },
+                  { key: 'steals', label: 'STL', val: (ss.steals / gp).toFixed(1) },
+                  { key: 'blocks', label: 'BLK', val: (ss.blocks / gp).toFixed(1) },
+                  { key: 'turnovers', label: 'TO', val: (ss.turnovers / gp).toFixed(1) },
+                ];
+                const fgPct = ss.fgAttempts > 0 ? ((ss.fgMade / ss.fgAttempts) * 100).toFixed(1) + '%' : '—';
+                return (
+                  <div style={{ marginBottom: 16 }}>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 }}>
+                      <div style={{ fontWeight: 700, fontSize: 'var(--font-size-sm)', color: 'var(--color-primary)' }}>Season Averages</div>
+                      <div style={{ fontSize: 'var(--font-size-xs)', color: 'var(--text-muted)' }}>{gp} game{gp !== 1 ? 's' : ''} · FG {fgPct}</div>
+                    </div>
+                    <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 8 }}>
+                      {stats.map(({ key, label, val }) => (
+                        <div key={key} style={{ textAlign: 'center', background: 'var(--bg-muted)', borderRadius: 'var(--radius-sm)', padding: '10px 4px' }}>
+                          <div style={{ fontWeight: 800, fontSize: 'var(--font-size-lg)', color: 'var(--color-primary)' }}>{val}</div>
+                          <div style={{ fontSize: '0.65rem', color: 'var(--text-muted)', textTransform: 'uppercase', fontWeight: 600, letterSpacing: 0.5 }}>{label}</div>
+                        </div>
+                      ))}
+                    </div>
+                    {/* Last game highlight if available */}
+                    {selectedPlayer.lastGameStats && (() => {
+                      const lg = selectedPlayer.lastGameStats;
                       return (
-                        <div key={k} style={{ textAlign: 'center', background: 'var(--bg-muted)', borderRadius: 'var(--radius-sm)', padding: '6px 4px' }}>
-                          <div style={{ fontWeight: 800, fontSize: 'var(--font-size-sm)', color: 'var(--text-primary)' }}>{val}</div>
-                          <div style={{ fontSize: '0.6rem', color: 'var(--text-muted)', textTransform: 'uppercase' }}>{k.slice(0, 3)}</div>
+                        <div style={{ marginTop: 12, padding: '10px 12px', background: 'var(--color-primary-100)', borderRadius: 'var(--radius-md)', border: '1px solid var(--color-primary)', display: 'flex', gap: 12, flexWrap: 'wrap' }}>
+                          <span style={{ fontWeight: 700, fontSize: 'var(--font-size-xs)', color: 'var(--color-primary)' }}>Last Game</span>
+                          {Object.entries(lg).map(([k, v]) => (
+                            <span key={k} style={{ fontSize: 'var(--font-size-xs)', color: 'var(--text-secondary)' }}>
+                              <strong style={{ color: 'var(--text-primary)' }}>{v}</strong> {k.toUpperCase()}
+                            </span>
+                          ))}
                         </div>
                       );
-                    })}
-                  </div>
-                </div>
-              )}
-              {/* Attributes */}
-              {selectedPlayer.attributes && (
-                <div>
-                  <div style={{ fontWeight: 700, fontSize: 'var(--font-size-sm)', marginBottom: 8, color: 'var(--color-primary)' }}>Attributes</div>
-                  <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
-                    {Object.entries(selectedPlayer.attributes).slice(0, 12).map(([key, val]) => (
-                      <div key={key} style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                        <span style={{ width: 160, fontSize: 'var(--font-size-xs)', color: 'var(--text-muted)', textTransform: 'capitalize', flexShrink: 0 }}>
-                          {key.replace(/([A-Z])/g, ' $1').toLowerCase()}
+                    })()}
+                    {/* Status row */}
+                    <div style={{ marginTop: 12, display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+                      <span style={{ padding: '3px 10px', borderRadius: 'var(--radius-full)', background: 'var(--bg-muted)', fontSize: 'var(--font-size-xs)', color: 'var(--text-muted)', fontWeight: 600 }}>
+                        Fatigue {selectedPlayer.fatigue ?? 0}%
+                      </span>
+                      {selectedPlayer.injuryStatus && selectedPlayer.injuryStatus !== 'healthy' && (
+                        <span style={{ padding: '3px 10px', borderRadius: 'var(--radius-full)', background: 'rgba(239,68,68,0.1)', fontSize: 'var(--font-size-xs)', color: '#ef4444', fontWeight: 700 }}>
+                          ⚠ {selectedPlayer.injuryStatus}
                         </span>
-                        <div style={{ flex: 1, height: 6, background: 'var(--bg-muted)', borderRadius: 3, overflow: 'hidden' }}>
-                          <div style={{ width: `${val}%`, height: '100%', background: val >= 75 ? 'var(--color-success)' : val >= 55 ? 'var(--color-primary)' : 'var(--color-danger)', transition: 'width 0.3s' }} />
-                        </div>
-                        <span style={{ width: 28, fontWeight: 700, fontSize: 'var(--font-size-xs)', textAlign: 'right' }}>{Math.round(val)}</span>
-                      </div>
-                    ))}
+                      )}
+                      {selectedPlayer.isCaptain && (
+                        <span style={{ padding: '3px 10px', borderRadius: 'var(--radius-full)', background: 'rgba(249,115,22,0.1)', fontSize: 'var(--font-size-xs)', color: 'var(--color-primary)', fontWeight: 700 }}>C Captain</span>
+                      )}
+                    </div>
                   </div>
-                </div>
+                );
+              })()}
+              {!selectedPlayer.seasonStats && (
+                <p style={{ color: 'var(--text-muted)', fontSize: 'var(--font-size-sm)', textAlign: 'center', padding: 'var(--space-4)' }}>No season stats available yet</p>
               )}
             </div>
           </div>

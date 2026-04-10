@@ -465,7 +465,7 @@ function StaffTab({ player, staff, ovr }) {
   );
 }
 // ── Main Popup Component ──────────────────────────────────────────
-export default function PlayerProfilePopup({ player, staff, schedule, userTeamId, onClose, zIndex, onFocus }) {
+export default function PlayerProfilePopup({ player, staff, schedule, userTeamId, onClose, zIndex, onFocus, clickX, clickY }) {
   const popupRef = useRef(null);
   const headerRef = useRef(null);
   const dragRef = useRef(null);
@@ -479,22 +479,29 @@ export default function PlayerProfilePopup({ player, staff, schedule, userTeamId
   const ovrColor = ovr >= 80 ? '#22c55e' : ovr >= 65 ? '#f97316' : '#ef4444';
   const isMobile = typeof window !== 'undefined' && window.innerWidth < 640;
 
-  // Set initial position & size once mounted
+  // Set initial position & size once mounted — open near click location
   useEffect(() => {
     const el = popupRef.current;
     if (!el || isMobile) return;
     const vw = window.innerWidth, vh = window.innerHeight;
     const w = Math.min(DEFAULT_W, vw - 40);
     const h = Math.min(DEFAULT_H, vh - 80);
-    // Cascade slightly based on zIndex to separate multiple windows
-    const offset = ((zIndex - 1000) % 6) * 24;
-    const x = Math.max(20, Math.min(vw - w - 20, (vw - w) / 2 + offset - 60));
-    const y = Math.max(20, Math.min(vh - h - 20, (vh - h) / 2 + offset - 60));
+    let x, y;
+    if (clickX != null && clickY != null) {
+      // Position popup so it appears just to the right/below the click, clamped to viewport
+      x = Math.max(10, Math.min(vw - w - 10, clickX + 16));
+      y = Math.max(10, Math.min(vh - h - 10, clickY - 60));
+    } else {
+      // Fallback: center with cascade offset
+      const offset = ((zIndex - 1000) % 6) * 24;
+      x = Math.max(20, Math.min(vw - w - 20, (vw - w) / 2 + offset - 60));
+      y = Math.max(20, Math.min(vh - h - 20, (vh - h) / 2 + offset - 60));
+    }
     el.style.left = x + 'px';
     el.style.top = y + 'px';
     el.style.width = w + 'px';
     el.style.height = h + 'px';
-  }, [isMobile, zIndex]);
+  }, [isMobile, zIndex, clickX, clickY]);
 
   // Drag via header
   useEffect(() => {

@@ -606,9 +606,19 @@ function ResetZone({ onReset }) {
 
 function TeamsView({ leagues }) {
   const [expanded, setExpanded] = useState(null);
+  const [users, setUsers]       = useState([]);
+  const [editingUser, setEditingUser] = useState(null);
+
+  useEffect(() => {
+    apiGetAllUserStates().then(data => setUsers(data.filter(u => u.user)));
+  }, []);
 
   return (
     <div>
+      <div style={{ marginBottom: 16, padding: '10px 14px', background: 'rgba(232,98,26,0.08)', border: '1px solid rgba(232,98,26,0.2)', borderRadius: 'var(--radius-md)', fontSize: 'var(--font-size-sm)', color: 'var(--text-secondary)' }}>
+        💰 Click <strong>Edit Budget</strong> on any team to adjust their cash balance.
+      </div>
+
       {leagues.map(league => {
         const standings = league.standings?.length ? league.standings : (league.teams || []).map(t => ({ teamId: t.id, teamName: t.name, wins: 0, losses: 0, points: 0 }));
         const sorted = [...standings].sort((a, b) => (b.points || 0) - (a.points || 0));
@@ -622,6 +632,8 @@ function TeamsView({ leagues }) {
                 const teamName = standing.teamName || standing.name;
                 const isExp    = expanded === teamId;
                 const team     = league.teams?.find(t => t.id === teamId);
+                // Find the user who owns this team
+                const teamOwner = users.find(({ state: uState }) => uState?.teamId === teamId);
 
                 return (
                   <div key={teamId} className="card" style={{ padding: 0 }}>
@@ -631,14 +643,32 @@ function TeamsView({ leagues }) {
                     >
                       <div style={{ width: 24, textAlign: 'center', fontWeight: 800, color: si < 3 ? 'var(--color-primary)' : 'var(--text-muted)', fontSize: 'var(--font-size-xs)' }}>{si + 1}</div>
                       <div style={{ flex: 1, fontWeight: 600 }}>{teamName}</div>
-                      <div style={{ display: 'flex', gap: 16, fontSize: 'var(--font-size-xs)', color: 'var(--text-muted)' }}>
+                      <div style={{ display: 'flex', gap: 12, fontSize: 'var(--font-size-xs)', color: 'var(--text-muted)', alignItems: 'center' }}>
                         <span>{standing.wins || 0}W–{standing.losses || 0}L</span>
                         <span style={{ fontWeight: 700, color: 'var(--text-primary)' }}>{standing.points || 0} pts</span>
+                        {teamOwner && (
+                          <span style={{ fontWeight: 700, color: (teamOwner.state?.budget ?? 0) >= 0 ? 'var(--color-success)' : 'var(--color-danger)' }}>
+                            ${teamOwner.state?.budget ?? '?'}k
+                          </span>
+                        )}
+                        {teamOwner && (
+                          <button className="btn btn-ghost btn-sm" style={{ fontSize: '0.65rem', padding: '2px 8px' }}
+                            onClick={e => { e.stopPropagation(); setEditingUser(teamOwner); }}>
+                            <Edit2 size={11} /> Edit Budget
+                          </button>
+                        )}
                       </div>
                       {isExp ? <ChevronDown size={16} /> : <ChevronRight size={16} />}
                     </div>
                     {isExp && team && (
                       <div style={{ borderTop: '1px solid var(--border-color)', padding: '12px 16px' }}>
+                        {teamOwner && (
+                          <div style={{ marginBottom: 10, display: 'flex', gap: 16, flexWrap: 'wrap', fontSize: 'var(--font-size-xs)', color: 'var(--text-muted)' }}>
+                            <span>👤 {teamOwner.user?.username || teamOwner.user?.email}</span>
+                            <span>💰 Balance: <strong style={{ color: (teamOwner.state?.budget ?? 0) >= 0 ? 'var(--color-success)' : 'var(--color-danger)' }}>${teamOwner.state?.budget ?? '?'}k</strong></span>
+                            <span>Fans: {(teamOwner.state?.fanCount ?? 0).toLocaleString()}</span>
+                          </div>
+                        )}
                         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(200px, 1fr))', gap: 6 }}>
                           {(team.players || []).sort((a, b) => (b.overallRating || 0) - (a.overallRating || 0)).slice(0, 10).map(p => (
                             <div key={p.id} style={{ display: 'flex', justifyContent: 'space-between', fontSize: 'var(--font-size-xs)', padding: '3px 0', borderBottom: '1px solid var(--border-color)' }}>
@@ -657,6 +687,14 @@ function TeamsView({ leagues }) {
           </div>
         );
       })}
+
+      {editingUser && (
+        <BudgetEditModal
+          user={editingUser.user}
+          uState={editingUser.state}
+          onClose={() => setEditingUser(null)}
+        />
+      )}
     </div>
   );
 }
