@@ -83,7 +83,7 @@ function simResultToLog(result, match) {
   };
 }
 
-export default function MatchDetailModal({ match, allTeams, userTeamId, onClose }) {
+export default function MatchDetailModal({ match, allTeams, userTeamId, onClose, asPage = false }) {
   const [log, setLog]         = useState(null);
   const [loading, setLoading] = useState(true);
   const [tab, setTab]         = useState('highlights');
@@ -215,21 +215,19 @@ export default function MatchDetailModal({ match, allTeams, userTeamId, onClose 
     );
   }
 
-  return (
-    <div className="modal-overlay" onClick={onClose}>
-      <div
-        className="modal"
-        onClick={e => e.stopPropagation()}
-        style={{
-          maxWidth: 700, width: '96vw',
-          maxHeight: '92vh',
-          display: 'flex', flexDirection: 'column',
-          overflow: 'hidden',
-          padding: 0,
-        }}
-      >
-        {/* ── Fixed header ─────────────────────────────── */}
-        <div style={{ padding: '12px 16px 0', flexShrink: 0 }}>
+  const inner = (
+    <div style={asPage ? { display: 'flex', flexDirection: 'column' } : {
+      maxWidth: 700, width: '96vw',
+      maxHeight: '92vh',
+      display: 'flex', flexDirection: 'column',
+      overflow: 'hidden',
+      padding: 0,
+    }}
+      className={asPage ? undefined : 'modal'}
+      onClick={asPage ? undefined : e => e.stopPropagation()}
+    >
+      {/* ── Fixed header ─────────────────────────────── */}
+      <div style={{ padding: asPage ? '0 0 12px' : '12px 16px 0', flexShrink: 0 }}>
           {/* Title row */}
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 10 }}>
             <div>
@@ -250,9 +248,15 @@ export default function MatchDetailModal({ match, allTeams, userTeamId, onClose 
                 {formatMatchDate(match.scheduledDate)} · {isUserHome ? '🏠 Home' : '✈️ Away'}
               </div>
             </div>
-            <button className="btn btn-ghost btn-sm" onClick={onClose} style={{ flexShrink: 0, marginTop: -2 }}>
-              <X size={16} />
-            </button>
+            {asPage ? (
+              <button className="btn btn-ghost btn-sm" onClick={onClose} style={{ flexShrink: 0, fontWeight: 700, color: 'var(--color-primary)' }}>
+                ← Back
+              </button>
+            ) : (
+              <button className="btn btn-ghost btn-sm" onClick={onClose} style={{ flexShrink: 0, marginTop: -2 }}>
+                <X size={16} />
+              </button>
+            )}
           </div>
 
           {/* Score + quarter breakdown */}
@@ -348,7 +352,7 @@ export default function MatchDetailModal({ match, allTeams, userTeamId, onClose 
         </div>
 
         {/* ── Scrollable content ───────────────────────── */}
-        <div style={{ flex: 1, overflowY: 'auto', padding: '12px 16px', minHeight: 0 }}>
+        <div style={asPage ? { padding: '12px 0' } : { flex: 1, overflowY: 'auto', padding: '12px 16px', minHeight: 0 }}>
           {loading && (
             <div style={{ textAlign: 'center', color: 'var(--text-muted)', padding: 32 }}>
               Loading match data…
@@ -455,7 +459,13 @@ export default function MatchDetailModal({ match, allTeams, userTeamId, onClose 
             </div>
           )}
         </div>
-      </div>
+    </div>
+  );
+
+  if (asPage) return inner;
+  return (
+    <div className="modal-overlay" onClick={onClose}>
+      {inner}
     </div>
   );
 }

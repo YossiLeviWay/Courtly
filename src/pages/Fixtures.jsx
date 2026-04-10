@@ -4,7 +4,6 @@ import { Calendar as CalendarIcon, Clock, MapPin, Plus, ChevronLeft, ChevronRigh
 import { getNextMatch, formatMatchDate, getTimeUntilMatch } from '../engine/gameScheduler.js';
 import { useNavigate } from 'react-router-dom';
 import { apiGetTeamUserMap } from '../api.js';
-import MatchDetailModal from '../components/MatchDetailModal.jsx';
 
 const MONTHS = ['January','February','March','April','May','June','July','August','September','October','November','December'];
 const DAYS = ['Su','Mo','Tu','We','Th','Fr','Sa'];
@@ -344,7 +343,6 @@ export default function Fixtures() {
   const [showFriendly, setShowFriendly]     = useState(false);
   const [newEvent, setNewEvent]             = useState({ title: '', date: '', description: '' });
   const [selectedOpponent, setSelectedOpponent] = useState(null);
-  const [selectedMatch, setSelectedMatch]   = useState(null);
   const [teamUserMap, setTeamUserMap]       = useState({});
 
   // Load team → username map from Firestore once
@@ -456,7 +454,8 @@ export default function Fixtures() {
 
   function handleMatchClick(match) {
     if (match.played) {
-      setSelectedMatch(match);
+      navigate(`/match/${match.id}`);
+      return;
     } else {
       const isHome  = match.homeTeamId === team?.id;
       const oppId   = isHome ? match.awayTeamId  : match.homeTeamId;
@@ -758,20 +757,12 @@ export default function Fixtures() {
           teamScoutTargets={teamScoutTargets}
           teamUserMap={teamUserMap}
           onClose={() => setSelectedOpponent(null)}
-          onMatchClick={m => { setSelectedOpponent(null); setSelectedMatch(m); }}
+          onMatchClick={m => { setSelectedOpponent(null); navigate(`/match/${m.id}`); }}
           onAssignScout={handleAssignScout}
           onSendMessage={handleSendMessage}
         />
       )}
 
-      {selectedMatch && (
-        <MatchDetailModal
-          match={selectedMatch}
-          allTeams={state.allTeams}
-          userTeamId={team.id}
-          onClose={() => setSelectedMatch(null)}
-        />
-      )}
     </div>
   );
 }

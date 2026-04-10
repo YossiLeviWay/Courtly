@@ -23,6 +23,7 @@ import YouthAcademy from './pages/YouthAcademy.jsx';
 import Scouts from './pages/Scouts.jsx';
 import Admin from './pages/Admin.jsx';
 import SetupAdmin from './pages/SetupAdmin.jsx';
+import MatchDetailPage from './pages/MatchDetailPage.jsx';
 
 function ProtectedRoute({ children }) {
   const { state } = useGame();
@@ -74,6 +75,7 @@ export default function App() {
           <Route path="settings" element={<Settings />} />
           <Route path="profile" element={<Profile />} />
           <Route path="match/live" element={<LiveMatch />} />
+          <Route path="match/:matchId" element={<MatchDetailPage />} />
           <Route path="finances" element={<FinancialReport />} />
           <Route path="search" element={<SearchPage />} />
           <Route path="youth-academy" element={<ProtectedRoute><YouthAcademy /></ProtectedRoute>} />
