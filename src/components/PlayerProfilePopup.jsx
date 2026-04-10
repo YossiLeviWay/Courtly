@@ -288,11 +288,13 @@ function StatsTab({ player, schedule, userTeamId }) {
   const [games, setGames] = useState(null);
   const [loading, setLoading] = useState(false);
 
+  // Try to load per-game match logs in the background
   useEffect(() => {
     if (games !== null || loading) return;
     if (!schedule || !userTeamId) return;
     setLoading(true);
     const played = schedule.filter(m => m.played && (m.homeTeamId === userTeamId || m.awayTeamId === userTeamId));
+    if (played.length === 0) { setLoading(false); setGames([]); return; }
     Promise.all(
       played.map(m => apiGetMatchLog(m.id).then(log => ({ m, log })).catch(() => ({ m, log: null })))
     ).then(results => {
@@ -310,12 +312,24 @@ function StatsTab({ player, schedule, userTeamId }) {
         .sort((a, b) => b.date - a.date);
       setGames(rows);
       setLoading(false);
-    }).catch(() => setLoading(false));
+    }).catch(() => { setGames([]); setLoading(false); });
   }, [games, loading, schedule, userTeamId, player.id]);
 
-  if (loading) return <div style={{ padding:24, textAlign:'center', color:'var(--text-muted)' }}>Loading match stats…</div>;
+  // ── Primary data source: player.seasonStats (always available) ──
+  const ss = player.seasonStats || {};
+  const gp = ss.gamesPlayed || 0;
 
-  if (!games || games.length === 0) {
+  const hasSeason = gp > 0;
+  const hasMatchLogs = games && games.length > 0;
+
+  function pgAvg(val) {
+    if (!gp) return '—';
+    return ((val || 0) / gp).toFixed(1);
+  }
+  function pct(m, a) { return (a || 0) > 0 ? (((m || 0) / a) * 100).toFixed(0) + '%' : '—'; }
+
+  // If no data at all yet
+  if (!hasSeason && !loading && games !== null && !hasMatchLogs) {
     return (
       <div style={{ padding:24, textAlign:'center' }}>
         <div style={{ fontSize:'2rem', marginBottom:8 }}>📊</div>
@@ -325,111 +339,98 @@ function StatsTab({ player, schedule, userTeamId }) {
     );
   }
 
-  // Season totals
-  const tot = {
-    pts: games.reduce((s,g) => s + (g.points ?? 0), 0),
-    reb: games.reduce((s,g) => s + (g.rebounds ?? 0), 0),
-    ast: games.reduce((s,g) => s + (g.assists ?? 0), 0),
-    stl: games.reduce((s,g) => s + (g.steals ?? 0), 0),
-    blk: games.reduce((s,g) => s + (g.blocks ?? 0), 0),
-    to:  games.reduce((s,g) => s + (g.turnovers ?? 0), 0),
-    fgA: games.reduce((s,g) => s + (g.fgAttempts ?? 0), 0),
-    fgM: games.reduce((s,g) => s + (g.fgMade ?? 0), 0),
-    tpA: games.reduce((s,g) => s + (g.threePtAttempts ?? 0), 0),
-    tpM: games.reduce((s,g) => s + (g.threePtMade ?? 0), 0),
-    gp: games.length,
-  };
-  const avg = k => (tot[k] / tot.gp).toFixed(1);
-  const pct = (m, a) => a > 0 ? ((m / a) * 100).toFixed(0) + '%' : '—';
-
-  // vs team breakdown
-  const vsMap = {};
-  games.forEach(g => {
-    if (!vsMap[g.oppId]) vsMap[g.oppId] = { name: g.oppName, games: [] };
-    vsMap[g.oppId].games.push(g);
-  });
-
   return (
     <div style={{ padding:'0 16px 16px' }}>
-      {/* Season averages */}
+      {/* Season averages — from player.seasonStats */}
       <div style={{ marginBottom:16 }}>
         <div style={{ fontSize:'var(--font-size-xs)', fontWeight:800, textTransform:'uppercase', letterSpacing:1, color:'var(--text-muted)', marginBottom:10 }}>
-          Season Averages ({tot.gp} GP)
+          Season Averages ({gp} GP)
         </div>
-        <div style={{ display:'grid', gridTemplateColumns:'repeat(4, 1fr)', gap:8, marginBottom:8 }}>
-          {[['PPG', avg('pts')], ['RPG', avg('reb')], ['APG', avg('ast')], ['SPG', avg('stl')]].map(([l, v]) => (
-            <div key={l} style={{ textAlign:'center', padding:'10px 6px', background:'var(--bg-muted)', borderRadius:'var(--radius-md)' }}>
-              <div style={{ fontSize:'var(--font-size-lg)', fontWeight:900, color:'var(--color-primary)' }}>{v}</div>
-              <div style={{ fontSize:'0.6rem', color:'var(--text-muted)', fontWeight:700 }}>{l}</div>
-            </div>
-          ))}
-        </div>
-        <div style={{ display:'grid', gridTemplateColumns:'repeat(4, 1fr)', gap:8 }}>
-          {[['BPG', avg('blk')], ['TPG', avg('to')], ['FG%', pct(tot.fgM, tot.fgA)], ['3P%', pct(tot.tpM, tot.tpA)]].map(([l, v]) => (
-            <div key={l} style={{ textAlign:'center', padding:'10px 6px', background:'var(--bg-muted)', borderRadius:'var(--radius-md)' }}>
-              <div style={{ fontSize:'var(--font-size-lg)', fontWeight:900, color:'var(--text-primary)' }}>{v}</div>
-              <div style={{ fontSize:'0.6rem', color:'var(--text-muted)', fontWeight:700 }}>{l}</div>
-            </div>
-          ))}
-        </div>
-      </div>
-
-      {/* Last 5 games */}
-      <div style={{ marginBottom:16 }}>
-        <div style={{ fontSize:'var(--font-size-xs)', fontWeight:800, textTransform:'uppercase', letterSpacing:1, color:'var(--text-muted)', marginBottom:8 }}>Last 5 Games</div>
-        <div style={{ overflowX:'auto' }}>
-          <table style={{ width:'100%', borderCollapse:'collapse', fontSize:'var(--font-size-xs)', whiteSpace:'nowrap' }}>
-            <thead>
-              <tr style={{ color:'var(--text-muted)', borderBottom:'2px solid var(--border-color)' }}>
-                {['Opp','W/L','PTS','REB','AST','STL','BLK','FG%'].map(h => (
-                  <th key={h} style={{ padding:'4px 6px', textAlign:'center', fontWeight:700 }}>{h}</th>
-                ))}
-              </tr>
-            </thead>
-            <tbody>
-              {games.slice(0,5).map((g, i) => {
-                const fg = g.fgAttempts > 0 ? ((g.fgMade / g.fgAttempts) * 100).toFixed(0) + '%' : '—';
-                return (
-                  <tr key={i} style={{ borderBottom:'1px solid var(--border-color)', background: g.won ? 'rgba(34,197,94,0.04)' : 'rgba(239,68,68,0.04)' }}>
-                    <td style={{ padding:'5px 6px', fontWeight:600, maxWidth:90, overflow:'hidden', textOverflow:'ellipsis' }}>{g.oppName}</td>
-                    <td style={{ padding:'5px 6px', textAlign:'center' }}>
-                      <span className={`badge ${g.won ? 'badge-green' : 'badge-red'}`} style={{ fontSize:'0.55rem' }}>{g.won ? 'W' : 'L'}</span>
-                    </td>
-                    <td style={{ padding:'5px 6px', textAlign:'center', fontWeight:700, color:(g.points??0)>=20?'var(--color-primary)':'inherit' }}>{g.points ?? 0}</td>
-                    <td style={{ padding:'5px 6px', textAlign:'center' }}>{g.rebounds ?? 0}</td>
-                    <td style={{ padding:'5px 6px', textAlign:'center' }}>{g.assists ?? 0}</td>
-                    <td style={{ padding:'5px 6px', textAlign:'center' }}>{g.steals ?? 0}</td>
-                    <td style={{ padding:'5px 6px', textAlign:'center' }}>{g.blocks ?? 0}</td>
-                    <td style={{ padding:'5px 6px', textAlign:'center', color:'var(--text-muted)' }}>{fg}</td>
-                  </tr>
-                );
-              })}
-            </tbody>
-          </table>
-        </div>
-      </div>
-
-      {/* vs opponent breakdown */}
-      {Object.keys(vsMap).length > 1 && (
-        <div>
-          <div style={{ fontSize:'var(--font-size-xs)', fontWeight:800, textTransform:'uppercase', letterSpacing:1, color:'var(--text-muted)', marginBottom:8 }}>vs Opponent</div>
-          <div style={{ display:'flex', flexDirection:'column', gap:6 }}>
-            {Object.values(vsMap).map(({ name, games: gs }) => {
-              const avgPts = (gs.reduce((s,g) => s + (g.points ?? 0), 0) / gs.length).toFixed(1);
-              const avgReb = (gs.reduce((s,g) => s + (g.rebounds ?? 0), 0) / gs.length).toFixed(1);
-              const avgAst = (gs.reduce((s,g) => s + (g.assists ?? 0), 0) / gs.length).toFixed(1);
-              const wins = gs.filter(g => g.won).length;
-              return (
-                <div key={name} style={{ display:'flex', alignItems:'center', gap:10, padding:'8px 10px', background:'var(--bg-muted)', borderRadius:'var(--radius-sm)', fontSize:'var(--font-size-xs)' }}>
-                  <span style={{ fontWeight:700, flex:1, overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap' }}>{name}</span>
-                  <span style={{ color:'var(--text-muted)' }}>{gs.length}G</span>
-                  <span className={`badge ${wins === gs.length ? 'badge-green' : wins === 0 ? 'badge-red' : 'badge-yellow'}`} style={{ fontSize:'0.55rem' }}>{wins}-{gs.length-wins}</span>
-                  <span>{avgPts} pts</span>
-                  <span style={{ color:'var(--text-muted)' }}>{avgReb} reb</span>
-                  <span style={{ color:'var(--text-muted)' }}>{avgAst} ast</span>
+        {!hasSeason ? (
+          <div style={{ textAlign:'center', color:'var(--text-muted)', fontSize:'var(--font-size-xs)', padding:'12px 0' }}>
+            {loading ? 'Loading…' : 'No games played yet'}
+          </div>
+        ) : (
+          <>
+            <div style={{ display:'grid', gridTemplateColumns:'repeat(4, 1fr)', gap:8, marginBottom:8 }}>
+              {[
+                ['PPG', pgAvg(ss.points)],
+                ['RPG', pgAvg(ss.rebounds)],
+                ['APG', pgAvg(ss.assists)],
+                ['SPG', pgAvg(ss.steals)],
+              ].map(([l, v]) => (
+                <div key={l} style={{ textAlign:'center', padding:'10px 6px', background:'var(--bg-muted)', borderRadius:'var(--radius-md)' }}>
+                  <div style={{ fontSize:'var(--font-size-lg)', fontWeight:900, color:'var(--color-primary)' }}>{v}</div>
+                  <div style={{ fontSize:'0.6rem', color:'var(--text-muted)', fontWeight:700 }}>{l}</div>
                 </div>
-              );
-            })}
+              ))}
+            </div>
+            <div style={{ display:'grid', gridTemplateColumns:'repeat(4, 1fr)', gap:8 }}>
+              {[
+                ['BPG', pgAvg(ss.blocks)],
+                ['TPG', pgAvg(ss.turnovers)],
+                ['FG%', pct(ss.fgMade, ss.fgAttempts)],
+                ['3P%', pct(ss.threePtMade, ss.threePtAttempts)],
+              ].map(([l, v]) => (
+                <div key={l} style={{ textAlign:'center', padding:'10px 6px', background:'var(--bg-muted)', borderRadius:'var(--radius-md)' }}>
+                  <div style={{ fontSize:'var(--font-size-lg)', fontWeight:900, color:'var(--text-primary)' }}>{v}</div>
+                  <div style={{ fontSize:'0.6rem', color:'var(--text-muted)', fontWeight:700 }}>{l}</div>
+                </div>
+              ))}
+            </div>
+            {/* Season totals row */}
+            <div style={{ marginTop:10, display:'grid', gridTemplateColumns:'repeat(3, 1fr)', gap:6 }}>
+              {[
+                ['Total PTS', ss.points ?? 0],
+                ['Total REB', ss.rebounds ?? 0],
+                ['Total AST', ss.assists ?? 0],
+              ].map(([l, v]) => (
+                <div key={l} style={{ textAlign:'center', padding:'6px 4px', background:'var(--bg-muted)', borderRadius:'var(--radius-sm)' }}>
+                  <div style={{ fontSize:'var(--font-size-sm)', fontWeight:800 }}>{v}</div>
+                  <div style={{ fontSize:'0.6rem', color:'var(--text-muted)', fontWeight:700 }}>{l}</div>
+                </div>
+              ))}
+            </div>
+          </>
+        )}
+      </div>
+
+      {/* Last 5 games — from match logs if available */}
+      {loading && !hasMatchLogs && (
+        <div style={{ fontSize:'var(--font-size-xs)', color:'var(--text-muted)', textAlign:'center', padding:'8px 0' }}>Loading game log…</div>
+      )}
+      {hasMatchLogs && (
+        <div style={{ marginBottom:16 }}>
+          <div style={{ fontSize:'var(--font-size-xs)', fontWeight:800, textTransform:'uppercase', letterSpacing:1, color:'var(--text-muted)', marginBottom:8 }}>Last 5 Games</div>
+          <div style={{ overflowX:'auto' }}>
+            <table style={{ width:'100%', borderCollapse:'collapse', fontSize:'var(--font-size-xs)', whiteSpace:'nowrap' }}>
+              <thead>
+                <tr style={{ color:'var(--text-muted)', borderBottom:'2px solid var(--border-color)' }}>
+                  {['Opp','W/L','PTS','REB','AST','STL','BLK','FG%'].map(h => (
+                    <th key={h} style={{ padding:'4px 6px', textAlign:'center', fontWeight:700 }}>{h}</th>
+                  ))}
+                </tr>
+              </thead>
+              <tbody>
+                {games.slice(0,5).map((g, i) => {
+                  const fg = (g.fgAttempts ?? 0) > 0 ? ((g.fgMade / g.fgAttempts) * 100).toFixed(0) + '%' : '—';
+                  return (
+                    <tr key={i} style={{ borderBottom:'1px solid var(--border-color)', background: g.won ? 'rgba(34,197,94,0.04)' : 'rgba(239,68,68,0.04)' }}>
+                      <td style={{ padding:'5px 6px', fontWeight:600, maxWidth:90, overflow:'hidden', textOverflow:'ellipsis' }}>{g.oppName}</td>
+                      <td style={{ padding:'5px 6px', textAlign:'center' }}>
+                        <span className={`badge ${g.won ? 'badge-green' : 'badge-red'}`} style={{ fontSize:'0.55rem' }}>{g.won ? 'W' : 'L'}</span>
+                      </td>
+                      <td style={{ padding:'5px 6px', textAlign:'center', fontWeight:700, color:(g.points??0)>=20?'var(--color-primary)':'inherit' }}>{g.points ?? 0}</td>
+                      <td style={{ padding:'5px 6px', textAlign:'center' }}>{g.rebounds ?? 0}</td>
+                      <td style={{ padding:'5px 6px', textAlign:'center' }}>{g.assists ?? 0}</td>
+                      <td style={{ padding:'5px 6px', textAlign:'center' }}>{g.steals ?? 0}</td>
+                      <td style={{ padding:'5px 6px', textAlign:'center' }}>{g.blocks ?? 0}</td>
+                      <td style={{ padding:'5px 6px', textAlign:'center', color:'var(--text-muted)' }}>{fg}</td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
           </div>
         </div>
       )}
@@ -488,9 +489,9 @@ export default function PlayerProfilePopup({ player, staff, schedule, userTeamId
     const h = Math.min(DEFAULT_H, vh - 80);
     let x, y;
     if (clickX != null && clickY != null) {
-      // Position popup so it appears just to the right/below the click, clamped to viewport
-      x = Math.max(10, Math.min(vw - w - 10, clickX + 16));
-      y = Math.max(10, Math.min(vh - h - 10, clickY - 60));
+      // Center vertically so the popup is always fully visible; x follows click with clamping
+      x = Math.max(10, Math.min(vw - w - 10, clickX - w / 2));
+      y = Math.max(10, Math.min(vh - h - 10, (vh - h) / 2));
     } else {
       // Fallback: center with cascade offset
       const offset = ((zIndex - 1000) % 6) * 24;

@@ -700,7 +700,7 @@ export default function Squad() {
                               {player.isCaptain && <span className="badge badge-orange" style={{ fontSize: '0.55rem', padding: '1px 4px' }}>C</span>}
                               {player.isViceCaptain && <span className="badge badge-yellow" style={{ fontSize: '0.55rem', padding: '1px 4px' }}>VC</span>}
                             </div>
-                            <div style={{ fontSize: '0.65rem', color: 'var(--text-muted)' }}>{flag} {player.nationality ?? ''} · Age {player.age ?? '?'} · ${player.salary ?? '?'}k</div>
+                            <div style={{ fontSize: '0.65rem', color: 'var(--text-muted)' }}>{flag} {player.nationality ?? ''} · Age {player.age ?? '?'} · ${player.salary ?? (ovr >= 85 ? 24 : ovr >= 75 ? 14 : ovr >= 65 ? 7 : 4)}k</div>
                           </div>
                         </div>
                         {/* OVR */}
