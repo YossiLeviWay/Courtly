@@ -76,7 +76,14 @@ function buildUserTeam(leagues, userState) {
       isHome:       m.homeTeamId === userState.teamId,
       opponentName: m.homeTeamId === userState.teamId ? m.awayTeamName : m.homeTeamName,
       opponentId:   m.homeTeamId === userState.teamId ? m.awayTeamId   : m.homeTeamId,
-    }));
+    }))
+    .sort((a, b) => (a.scheduledDate || 0) - (b.scheduledDate || 0)); // always chronological
+
+  // Derive season record from standings (authoritative) rather than stale user state
+  const userStanding = (userLeague?.standings || []).find(s => s.teamId === userState.teamId);
+  const derivedRecord = userStanding
+    ? { wins: userStanding.wins || 0, losses: userStanding.losses || 0 }
+    : (userState.seasonRecord ?? { wins: 0, losses: 0 });
 
   return {
     ...baseTeam,
@@ -106,12 +113,9 @@ function buildUserTeam(leagues, userState) {
     lastMatchBrainHighlights: userState.lastMatchBrainHighlights ?? [],
     lastWeekFanGrowth:     userState.lastWeekFanGrowth     ?? null,
     trainingHighlights:    userState.trainingHighlights    ?? [],
-    wins:         userState.seasonRecord?.wins    ?? 0,
-    losses:       userState.seasonRecord?.losses  ?? 0,
-    seasonRecord: {
-      wins:   userState.seasonRecord?.wins   ?? 0,
-      losses: userState.seasonRecord?.losses ?? 0,
-    },
+    wins:         derivedRecord.wins,
+    losses:       derivedRecord.losses,
+    seasonRecord: derivedRecord,
   };
 }
 
