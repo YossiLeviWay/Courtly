@@ -147,8 +147,8 @@ export default function Dashboard() {
         .find((m) => !m.played)
     : null;
 
-  // ── Recent results (last 3) ───────────────────────────────
-  const recentMatches = matchHistory ? [...matchHistory].reverse().slice(0, 3) : [];
+  // ── Recent results (last 5) ───────────────────────────────
+  const recentMatches = matchHistory ? [...matchHistory].reverse().slice(0, 5) : [];
 
   // ── Top players (deduplicated — each player can only win one category) ─────
   const activePlayers = players || [];

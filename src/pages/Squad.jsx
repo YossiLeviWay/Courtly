@@ -1,4 +1,5 @@
 import { useState, useCallback } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { useGame } from '../context/GameContext.jsx';
 import { apiFreeAgentRelease } from '../api.js';
 import { calculateOverallRating } from '../engine/playerGenerator.js';
@@ -6,7 +7,6 @@ import GaugeBar from '../components/ui/GaugeBar.jsx';
 import AttrBar from '../components/ui/AttrBar.jsx';
 import PlayerAvatar from '../components/ui/PlayerAvatar.jsx';
 import SquadCompare from '../components/SquadCompare.jsx';
-import PlayerProfilePopup from '../components/PlayerProfilePopup.jsx';
 
 // Compute OVR from attributes when not stored directly
 function calcOvr(player) {
@@ -481,44 +481,20 @@ function CaptainDisplay({ players, onSetCaptain, onSetViceCaptain }) {
 
 // ── Main Squad page ────────────────────────────────────────────
 
-// Incrementing z-index counter for popup focus management
-let _zCounter = 1000;
-
 export default function Squad() {
   const { state, dispatch, addNotification } = useGame();
   const { userTeam } = state;
+  const navigate = useNavigate();
 
   const [filterPosition, setFilterPosition] = useState('ALL');
   const [sortBy, setSortBy] = useState('rating');
   const [releaseConfirm, setReleaseConfirm] = useState(null);
   const [comparePlayer, setComparePlayer] = useState(null);
   const [showSquadCompare, setShowSquadCompare] = useState(false);
-  // openPopups: array of { id, player, zIndex }
-  const [openPopups, setOpenPopups] = useState([]);
 
-  const openPlayerPopup = useCallback((player, clickX, clickY) => {
-    // Don't open duplicate
-    setOpenPopups(prev => {
-      if (prev.some(p => p.id === player.id)) return prev;
-      _zCounter += 2;
-      return [...prev, { id: player.id, player, zIndex: _zCounter, clickX, clickY }];
-    });
-  }, []);
-
-  const closePopup = useCallback((playerId) => {
-    setOpenPopups(prev => prev.filter(p => p.id !== playerId));
-  }, []);
-
-  const focusPopup = useCallback((playerId) => {
-    setOpenPopups(prev => {
-      const idx = prev.findIndex(p => p.id === playerId);
-      if (idx < 0) return prev;
-      _zCounter += 2;
-      const updated = [...prev];
-      updated[idx] = { ...updated[idx], zIndex: _zCounter };
-      return updated;
-    });
-  }, []);
+  const openPlayerProfile = useCallback((player) => {
+    navigate(`/squad/${player.id}`);
+  }, [navigate]);
 
   if (!userTeam) {
     return (
@@ -640,7 +616,7 @@ export default function Squad() {
         /* Filtered single position — card grid */
         <div className="grid-3" style={{ marginBottom: 'var(--space-6)' }}>
           {sorted.map(player => (
-            <PlayerCard key={player.id} player={player} onClick={(e) => openPlayerPopup(player, e?.clientX, e?.clientY)}
+            <PlayerCard key={player.id} player={player} onClick={(e) => openPlayerProfile(player, e?.clientX, e?.clientY)}
               releaseConfirm={releaseConfirm} onReleaseConfirm={(id) => setReleaseConfirm(id)}
               onReleaseClear={() => setReleaseConfirm(null)} onReleasePlayer={handleReleasePlayer}
               onCompare={(p) => setComparePlayer(p)} />
@@ -678,7 +654,7 @@ export default function Squad() {
                     const flag = NATIONALITY_FLAGS[player.nationality] || '🌐';
                     return (
                       <div key={player.id}
-                        onClick={(e) => openPlayerPopup(player, e?.clientX, e?.clientY)}
+                        onClick={(e) => openPlayerProfile(player, e?.clientX, e?.clientY)}
                         style={{
                           display: 'grid', gridTemplateColumns: '1fr 52px 60px 60px 60px 56px', gap: 0,
                           padding: '10px 14px', alignItems: 'center',
@@ -700,7 +676,7 @@ export default function Squad() {
                               {player.isCaptain && <span className="badge badge-orange" style={{ fontSize: '0.55rem', padding: '1px 4px' }}>C</span>}
                               {player.isViceCaptain && <span className="badge badge-yellow" style={{ fontSize: '0.55rem', padding: '1px 4px' }}>VC</span>}
                             </div>
-                            <div style={{ fontSize: '0.65rem', color: 'var(--text-muted)' }}>{flag} {player.nationality ?? ''} · Age {player.age ?? '?'} · ${player.salary ?? '?'}k</div>
+                            <div style={{ fontSize: '0.65rem', color: 'var(--text-muted)' }}>{flag} {player.nationality ?? ''} · Age {player.age ?? '?'} · ${player.salary ?? (ovr >= 85 ? 24 : ovr >= 75 ? 14 : ovr >= 65 ? 7 : 4)}k</div>
                           </div>
                         </div>
                         {/* OVR */}
@@ -758,40 +734,6 @@ export default function Squad() {
         />
       )}
 
-      {/* ── Player Profile Popup System ── */}
-      {/* Darkening overlay — shown behind all popups, closes on click */}
-      {openPopups.length > 0 && (
-        <div
-          style={{
-            position: 'fixed', inset: 0,
-            zIndex: 999,
-            background: 'rgba(0,0,0,0.45)',
-            backdropFilter: 'blur(2px)',
-            transition: 'opacity 0.2s',
-          }}
-          onClick={() => setOpenPopups([])}
-        />
-      )}
-
-      {/* One popup per open player */}
-      {openPopups.map(({ id, player, zIndex, clickX, clickY }) => {
-        const userLeague = (state.leagues || []).find(l => l.teams?.some(t => t.id === userTeam.id));
-        const schedule = userLeague?.schedule || [];
-        return (
-          <PlayerProfilePopup
-            key={id}
-            player={player}
-            staff={userTeam.staff}
-            schedule={schedule}
-            userTeamId={userTeam.id}
-            zIndex={zIndex + 1}
-            clickX={clickX}
-            clickY={clickY}
-            onClose={() => closePopup(id)}
-            onFocus={() => focusPopup(id)}
-          />
-        );
-      })}
     </div>
   );
 }
