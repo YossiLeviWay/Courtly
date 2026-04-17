@@ -672,6 +672,11 @@ function FreeAgentNegotiateModal({ listing, team, onClose, onSigned }) {
   const acceptanceThreshold = Math.round(demandSalary * (threshold + formBonus));
 
   async function handleSubmit() {
+    if (budget < 0) {
+      setResult('declined');
+      setIsLoading(false);
+      return;
+    }
     setIsLoading(true);
     if (offeredSalary >= acceptanceThreshold) {
       const signed = await apiBuyFreeAgent(listing.id, player, offeredSeasons, offeredSalary);
@@ -758,6 +763,20 @@ function FreeAgentNegotiateModal({ listing, team, onClose, onSigned }) {
             </div>
           </div>
 
+          {/* Deficit lock warning */}
+          {budget < 0 && (
+            <div style={{
+              background: 'rgba(239,68,68,0.10)', border: '1px solid rgba(239,68,68,0.35)',
+              borderRadius: 8, padding: '10px 14px', marginBottom: 16,
+              display: 'flex', alignItems: 'center', gap: 8,
+            }}>
+              <span style={{ fontSize: '1rem' }}>🔒</span>
+              <span style={{ fontWeight: 700, color: '#ef4444', fontSize: 'var(--font-size-sm)' }}>
+                Signings locked — clear your deficit first
+              </span>
+            </div>
+          )}
+
           {/* Demand summary */}
           <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8, marginBottom: 20 }}>
             <div style={{ padding: 10, background: 'rgba(239,68,68,0.08)', border: '1px solid rgba(239,68,68,0.25)', borderRadius: 8, textAlign: 'center' }}>
@@ -765,10 +784,10 @@ function FreeAgentNegotiateModal({ listing, team, onClose, onSigned }) {
               <div style={{ fontWeight: 900, color: 'var(--color-danger)' }}>${demandSalary}k/yr</div>
               <div style={{ fontSize: 'var(--font-size-xs)', color: 'var(--text-muted)' }}>{demandSeasons} season{demandSeasons > 1 ? 's' : ''}</div>
             </div>
-            <div style={{ padding: 10, background: 'rgba(34,197,94,0.08)', border: '1px solid rgba(34,197,94,0.25)', borderRadius: 8, textAlign: 'center' }}>
+            <div style={{ padding: 10, background: budget < 0 ? 'rgba(239,68,68,0.08)' : 'rgba(34,197,94,0.08)', border: `1px solid ${budget < 0 ? 'rgba(239,68,68,0.25)' : 'rgba(34,197,94,0.25)'}`, borderRadius: 8, textAlign: 'center' }}>
               <div style={{ fontSize: '0.65rem', color: 'var(--text-muted)', fontWeight: 700, textTransform: 'uppercase', marginBottom: 2 }}>Your Budget</div>
-              <div style={{ fontWeight: 900, color: 'var(--color-success)' }}>${budget}k</div>
-              <div style={{ fontSize: 'var(--font-size-xs)', color: 'var(--text-muted)' }}>available</div>
+              <div style={{ fontWeight: 900, color: budget < 0 ? 'var(--color-danger)' : 'var(--color-success)' }}>${budget}k</div>
+              <div style={{ fontSize: 'var(--font-size-xs)', color: 'var(--text-muted)' }}>{budget < 0 ? 'in deficit' : 'available'}</div>
             </div>
           </div>
 

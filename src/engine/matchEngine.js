@@ -631,52 +631,107 @@ function generateHighlightEvents(homeTeam, awayTeam, quarterScores) {
  * Distribute team totals across players realistically.
  * Starting 5 get more minutes/stats than bench.
  */
+// Return a player's attribute value (0-99) with fallback
+function attr(player, key, fallback = 55) {
+  return player.attributes?.[key] ?? fallback;
+}
+
+// Build a per-player "affinity" weight for each distributable stat bucket
+function buildStatWeights(player) {
+  const a = (key, fb) => attr(player, key, fb);
+  // Scoring ability: blend of finishing, mid-range, 3PT
+  const scoringAbility = (a('finishingAtTheRim') + a('midRangeScoring') + a('threePtShooting')) / 3;
+  // Playmaking: court vision + passing + IQ
+  const playmaking = (a('courtVision') * 2 + a('passingAccuracy') + a('basketballIQ')) / 4;
+  // Rebounding: reb + vertical
+  const reboundingAbility = (a('rebounding') * 2 + a('verticalLeapingAbility')) / 3;
+  // Steals: perimeter D + agility
+  const stealAbility = (a('perimeterDefense') + a('agilityLateralSpeed')) / 2;
+  // Blocks: interior D + vertical
+  const blockAbility = (a('interiorDefense') + a('verticalLeapingAbility')) / 2;
+  // Turnovers: inversely related to IQ + ball handling + patience
+  const ballSecurity = (a('basketballIQ') + a('ballHandlingDribbling') + a('patienceOffense')) / 3;
+  // Fouling: inversely related to discipline
+  const foulProne = 100 - a('disciplineFouling');
+  // 3PT tendency: driven primarily by 3PT shooting
+  const threePtTendency = a('threePtShooting') * 1.4;
+  // FT tendency: aggressiveness + finishing
+  const ftTendency = (a('aggressivenessOffensive') + a('finishingAtTheRim')) / 2;
+
+  return {
+    points:          scoringAbility,
+    assists:         playmaking,
+    rebounds:        reboundingAbility,
+    steals:          stealAbility,
+    blocks:          blockAbility,
+    turnovers:       100 - ballSecurity, // high security = fewer TOs
+    fouls:           foulProne,
+    fgAttempts:      scoringAbility,
+    threePtAttempts: threePtTendency,
+    ftAttempts:      ftTendency,
+    // made = proportional to attempts (efficiency handled separately)
+    fgMade:          scoringAbility,
+    threePtMade:     threePtTendency,
+    ftMade:          ftTendency,
+  };
+}
+
 function distributePlayerStats(team, teamTotals) {
   const statMap = buildStatMap(team);
   const players = team.players;
   if (players.length === 0) return statMap;
 
-  // Minutes: starters get ~28-36, bench 5-15
   const starterCount = Math.min(5, players.length);
 
-  // Assign minutes
-  let remainingMinutes = 200; // 5 players × 40 min
-  const minuteShare = [];
-  for (let i = 0; i < players.length; i++) {
-    if (i < starterCount) {
-      minuteShare.push(randomInt(26, 36));
-    } else {
-      minuteShare.push(randomInt(4, 14));
+  // Minutes: starters ~28-36, bench 4-14
+  const minuteShare = players.map((_, i) =>
+    i < starterCount ? randomInt(26, 36) : randomInt(4, 14)
+  );
+  const rawMinTotal = minuteShare.reduce((a, b) => a + b, 0);
+  const minutes = minuteShare.map(m => Math.round((m / rawMinTotal) * 200));
+
+  // Pre-compute attribute weights for all stat categories
+  const weights = players.map(p => buildStatWeights(p));
+
+  const statsToDistribute = [
+    'points', 'assists', 'rebounds', 'steals', 'blocks', 'turnovers', 'fouls',
+    'fgAttempts', 'fgMade', 'ftAttempts', 'ftMade', 'threePtAttempts', 'threePtMade',
+  ];
+
+  for (const stat of statsToDistribute) {
+    if (teamTotals[stat] == null) continue;
+
+    // Each player's effective weight = minutes * attribute-affinity, normalised 0-1
+    const rawWeights = players.map((_, i) => {
+      const minShare = minutes[i] / 200;
+      const attrAffinity = weights[i][stat] / 100; // 0-1
+      // Blend: 50% minutes, 50% attribute affinity, then add small noise
+      return (minShare * 0.5 + attrAffinity * 0.5) * (0.8 + _rng() * 0.4);
+    });
+    const totalWeight = rawWeights.reduce((a, b) => a + b, 0);
+
+    for (let i = 0; i < players.length; i++) {
+      const s = statMap[players[i].id];
+      const share = totalWeight > 0 ? rawWeights[i] / totalWeight : 1 / players.length;
+      s[stat] = Math.round(teamTotals[stat] * share);
     }
   }
-  // Normalise to 200 total
-  const rawTotal = minuteShare.reduce((a, b) => a + b, 0);
-  const normalised = minuteShare.map((m) => Math.round((m / rawTotal) * 200));
 
-  // Distribute each stat proportionally by minutes
-  const statsToDistribute = ['points', 'assists', 'rebounds', 'steals', 'blocks', 'turnovers', 'fouls',
-    'fgAttempts', 'fgMade', 'ftAttempts', 'ftMade', 'threePtAttempts', 'threePtMade'];
-
+  // Set minutes
   for (let i = 0; i < players.length; i++) {
-    const p = players[i];
-    const share = normalised[i] / 200;
+    statMap[players[i].id].minutesPlayed = minutes[i];
+  }
+
+  // Consistency: enforce shooting bounds
+  for (const p of players) {
     const s = statMap[p.id];
-    s.minutesPlayed = normalised[i];
-
-    for (const stat of statsToDistribute) {
-      if (teamTotals[stat] != null) {
-        // Add some noise
-        const raw = teamTotals[stat] * share * (0.7 + _rng() * 0.6);
-        s[stat] = Math.round(raw);
-      }
-    }
-
-    // Clamp fouls to 6 max (foul-out rule)
-    s.fouls = clamp(s.fouls, 0, 6);
-    // fgMade <= fgAttempts
-    s.fgMade = Math.min(s.fgMade, s.fgAttempts);
-    s.ftMade = Math.min(s.ftMade, s.ftAttempts);
+    s.fouls       = clamp(s.fouls, 0, 6);
+    s.fgMade      = Math.min(s.fgMade, s.fgAttempts);
+    s.ftMade      = Math.min(s.ftMade, s.ftAttempts);
     s.threePtMade = Math.min(s.threePtMade, s.threePtAttempts);
+    // threePtAttempts can't exceed fgAttempts
+    s.threePtAttempts = Math.min(s.threePtAttempts, s.fgAttempts);
+    s.threePtMade     = Math.min(s.threePtMade, s.threePtAttempts);
   }
 
   return statMap;
@@ -908,15 +963,54 @@ export function updatePlayerAfterMatch(player, playerMatchStats) {
   const fatigueDelta = Math.round((playerMatchStats.minutesPlayed ?? 20) * 0.3 * condFactor);
   player.fatigue = clamp((player.fatigue ?? 10) + fatigueDelta, 0, 100);
 
-  // Motivation — slight boost for big games, small drop for poor performance
+  // Motivation — boost or dip based on performance
   const pts = playerMatchStats.points ?? 0;
   const motivationDelta = pts >= 20 ? randomInt(3, 7) : pts >= 10 ? randomInt(1, 3) : randomInt(-3, 1);
   player.motivation = clamp((player.motivation ?? 70) + motivationDelta, 20, 100);
 
-  // Form rating — blend of points, efficiency, and randomness
-  const effortScore = (pts * 2 + (playerMatchStats.assists ?? 0) * 3 + (playerMatchStats.rebounds ?? 0));
-  const newFormRaw = clamp(40 + effortScore * 0.4 + randomInt(-10, 10), 30, 99);
-  player.lastFormRating = Math.round((player.lastFormRating ?? 65) * 0.6 + newFormRaw * 0.4);
+  // Form rating — multi-factor: performance, clutch, consistency, fatigue, motivation
+  const ast  = playerMatchStats.assists  ?? 0;
+  const reb  = playerMatchStats.rebounds ?? 0;
+  const stl  = playerMatchStats.steals   ?? 0;
+  const blk  = playerMatchStats.blocks   ?? 0;
+  const to   = playerMatchStats.turnovers ?? 0;
+  const mins = playerMatchStats.minutesPlayed ?? 20;
+
+  // Per-36-minute production score
+  const productionPer36 = mins > 0
+    ? ((pts * 1.5 + ast * 2.5 + reb * 1.0 + stl * 2.0 + blk * 2.0 - to * 1.5) / mins) * 36
+    : 0;
+
+  // Attribute factors
+  const clutch       = player.attributes?.clutchPerformance    ?? 55;
+  const consistency  = player.attributes?.consistencyPerformance ?? 55;
+  const stamina      = player.attributes?.staminaEndurance      ?? 55;
+
+  // Fatigue penalty: high fatigue reduces form
+  const fatiguePenalty = clamp((player.fatigue ?? 20) - 40, 0, 50) * 0.2;
+
+  // Motivation bonus: high motivation lifts performance ceiling
+  const motivationBonus = ((player.motivation ?? 70) - 50) * 0.15;
+
+  // Clutch floors: high clutch players never drop too low, low clutch collapses under pressure
+  const clutchFloor = clamp(clutch * 0.3, 20, 40);
+
+  // Consistency: dampens variance — high consistency → result closer to career average
+  const consistencyDamp = clamp(consistency / 100, 0.4, 0.85);
+
+  // Raw form from this game (0–99 scale)
+  const newFormRaw = clamp(
+    40 + productionPer36 * 0.7 + motivationBonus - fatiguePenalty + randomInt(-8, 8),
+    clutchFloor,
+    99
+  );
+
+  // Blend with prior form: consistent players change less, inconsistent ones swing more
+  const priorWeight = consistencyDamp * 0.55;
+  const newWeight   = 1 - priorWeight;
+  player.lastFormRating = Math.round(
+    clamp((player.lastFormRating ?? 65) * priorWeight + newFormRaw * newWeight, 25, 99)
+  );
 
   // Injury check (very low probability, especially if fatigued)
   const injuryRoll = _rng();
