@@ -107,12 +107,14 @@ function buildUserTeam(leagues, userState) {
     matchHistory:   userState.matchHistory   ?? [],
     youthDraft:     userState.youthDraft     ?? null,
     staff:          userState.staff          ?? {},
-    lastFanGrowthDate:     userState.lastFanGrowthDate     ?? null,
+    lastFanGrowthDate:     userState.lastFanGrowthDate     ?? 0,
     lastTrainingApplied:   userState.lastTrainingApplied   ?? 0,
     weeksPlayed:           userState.weeksPlayed           ?? 0,
     lastMatchBrainHighlights: userState.lastMatchBrainHighlights ?? [],
     lastWeekFanGrowth:     userState.lastWeekFanGrowth     ?? null,
     trainingHighlights:    userState.trainingHighlights    ?? [],
+    financeLog:            userState.financeLog            ?? [],
+    lastWeeklyFinanceTick: userState.lastWeeklyFinanceTick ?? 0,
     wins:         derivedRecord.wins,
     losses:       derivedRecord.losses,
     seasonRecord: derivedRecord,
@@ -155,12 +157,14 @@ function extractUserState(state) {
     matchHistory:   t.matchHistory   ?? [],
     youthDraft:     t.youthDraft     ?? null,
     staff:          t.staff          ?? {},
-    lastFanGrowthDate:   t.lastFanGrowthDate   ?? null,
+    lastFanGrowthDate:   t.lastFanGrowthDate   ?? 0,
     lastTrainingApplied: t.lastTrainingApplied ?? 0,
     weeksPlayed:         t.weeksPlayed         ?? 0,
     lastMatchBrainHighlights: t.lastMatchBrainHighlights ?? [],
     lastWeekFanGrowth:   t.lastWeekFanGrowth   ?? null,
     trainingHighlights:  t.trainingHighlights  ?? [],
+    financeLog:          t.financeLog          ?? [],
+    lastWeeklyFinanceTick: t.lastWeeklyFinanceTick ?? 0,
     seasonRecord:   { wins: t.wins ?? 0, losses: t.losses ?? 0 },
     profileData: {
       bio:                  state.user?.bio                  || '',
@@ -388,6 +392,40 @@ export function GameProvider({ children }) {
         console.warn('Match simulation error (non-fatal):', simErr);
       }
 
+      // ── Match day revenue (home games) ──────────────────────────
+      // For each home match that was just simulated for the user's team,
+      // add ticket revenue to the budget and log the transaction.
+      if (userStateRes.state && processedMatchData.length > 0) {
+        const userTeamIdForRevenue = userStateRes.state.teamId;
+        const facilities = userStateRes.state.facilities ?? {};
+        const getFacLevel = (key) => {
+          const f = facilities[key];
+          return typeof f === 'number' ? f : (f?.level ?? 0);
+        };
+        const stadiumCapacity = 600 + getFacLevel('basketballHall') * 200;
+        const ticketPriceForRevenue = userStateRes.state.ticketPrice ?? 20;
+        const fanEnthusiasmForRevenue = userStateRes.state.fanEnthusiasm ?? 20;
+        const fanCountForRevenue = userStateRes.state.fanCount ?? 250;
+
+        const homeMatchResults = processedMatchData.filter(md => md.homeTeamId === userTeamIdForRevenue);
+        const finLog = userStateRes.state.financeLog ?? [];
+
+        for (const md of homeMatchResults) {
+          const attendancePct = 0.30 + (fanEnthusiasmForRevenue / 100) * 0.50; // 30–80%
+          const attendance = Math.round(Math.min(stadiumCapacity, fanCountForRevenue) * attendancePct);
+          const revenue = Math.round(attendance * ticketPriceForRevenue);
+          userStateRes.state.budget = (userStateRes.state.budget ?? 50) + revenue;
+          finLog.unshift({
+            timestamp: now,
+            type: 'match_day_revenue',
+            description: `Ticket Sales – Home vs ${md.awayTeamName}`,
+            amount: revenue,
+            balanceAfter: userStateRes.state.budget,
+          });
+        }
+        userStateRes.state.financeLog = finLog.slice(0, 50);
+      }
+
       // ── Sunday fan growth ────────────────────────────────────────
       // Once per week (Sunday), apply fan growth based on enthusiasm + results.
       const now = Date.now();
@@ -403,22 +441,71 @@ export function GameProvider({ children }) {
       if (userStateRes.state && lastFanGrowth < thisWeekSunday) {
         const enthusiasm = userStateRes.state.fanEnthusiasm ?? 20;
         const history = userStateRes.state.matchHistory ?? [];
-        const recentWins = history.slice(0, 5).filter(m =>
+        const recentMatches = history.slice(0, 5);
+        const recentWins = recentMatches.filter(m =>
           m.result === 'W' || (m.teamScore ?? m.userScore ?? 0) > (m.oppScore ?? m.opponentScore ?? 0)
         ).length;
-        const recentLosses = Math.min(5, history.slice(0, 5).length) - recentWins;
+        const recentLosses = Math.min(5, recentMatches.length) - recentWins;
+        // Base growth matches the Fans page "Est. New Fans / Week" display
         const baseGrowth = Math.round((enthusiasm / 100) * 50 + (enthusiasm > 50 ? 20 : 0));
-        const resultBonus = (recentWins - 2) * 8; // -16..+24 based on last 5
+        // Result bonus: only positive (wins add fans, never penalise for losses on top of baseGrowth)
+        const resultBonus = Math.max(0, (recentWins - 1) * 5); // 0..+20 from 5 recent wins
         // Seniority bonus: each week played adds 1% growth (max 50% bonus)
         const weeksPlayed = userStateRes.state.weeksPlayed ?? 0;
         const seniorityMult = Math.min(1 + weeksPlayed * 0.01, 1.5);
-        const growth = Math.max(0, Math.round((baseGrowth + resultBonus) * seniorityMult));
+        const growth = Math.max(1, Math.round((baseGrowth + resultBonus) * seniorityMult));
         userStateRes.state.fanCount = (userStateRes.state.fanCount ?? 250) + growth;
         userStateRes.state.lastFanGrowthDate = now;
         userStateRes.state.weeksPlayed = weeksPlayed + 1;
         // Store fan growth info for display in Fans.jsx
         userStateRes.state.lastWeekFanGrowth = { growth, recentWins, recentLosses };
         fanGrowthApplied = true;
+      }
+
+      // ── Weekly finance tick (passive income + interest) ─────────
+      // Once per week (Sunday): merchandise passive income and deficit interest.
+      const lastWeeklyFinanceTick = userStateRes.state?.lastWeeklyFinanceTick ?? 0;
+      if (userStateRes.state && lastWeeklyFinanceTick < thisWeekSunday) {
+        const facilities = userStateRes.state.facilities ?? {};
+        const getFacLevel = (key) => {
+          const f = facilities[key];
+          return typeof f === 'number' ? f : (f?.level ?? 0);
+        };
+        const merchLevel = getFacLevel('merchandise');
+        const finLog = userStateRes.state.financeLog ?? [];
+
+        // Passive income from Merchandise Store (level > 0 required)
+        if (merchLevel > 0) {
+          const passiveIncome = Math.round(
+            (userStateRes.state.fanCount ?? 250) * 0.01 * (1 + merchLevel * 0.2)
+          );
+          userStateRes.state.budget = (userStateRes.state.budget ?? 50) + passiveIncome;
+          finLog.unshift({
+            timestamp: now,
+            type: 'passive_income',
+            description: `Merchandise Store Income (Lv ${merchLevel})`,
+            amount: passiveIncome,
+            balanceAfter: userStateRes.state.budget,
+          });
+        }
+
+        // 5% interest penalty on deficit
+        const currentBudget = userStateRes.state.budget ?? 50;
+        if (currentBudget < 0) {
+          const interestPenalty = Math.round(Math.abs(currentBudget) * 0.05);
+          userStateRes.state.budget = currentBudget - interestPenalty;
+          finLog.unshift({
+            timestamp: now,
+            type: 'interest_penalty',
+            description: 'Deficit Interest (5% weekly)',
+            amount: -interestPenalty,
+            balanceAfter: userStateRes.state.budget,
+          });
+        }
+
+        userStateRes.state.financeLog = finLog.slice(0, 50);
+        userStateRes.state.lastWeeklyFinanceTick = now;
+        fanGrowthApplied = true; // ensure save happens
       }
 
       // ── Weekly training progression ──────────────────────────────
@@ -503,7 +590,10 @@ export function GameProvider({ children }) {
           .find(t => t.id === userTeam.id);
         if (updatedUserTeam) {
           if (updatedUserTeam.matchHistory?.length) {
-            userTeam.matchHistory = updatedUserTeam.matchHistory;
+            // Merge: keep existing history, append only truly new entries (by matchId)
+            const existingIds = new Set((userTeam.matchHistory || []).map(m => m.matchId));
+            const newEntries = updatedUserTeam.matchHistory.filter(m => !existingIds.has(m.matchId));
+            userTeam.matchHistory = [...newEntries, ...(userTeam.matchHistory || [])].slice(0, 20);
           }
           if (updatedUserTeam.seasonRecord) {
             userTeam.seasonRecord = updatedUserTeam.seasonRecord;
@@ -527,14 +617,24 @@ export function GameProvider({ children }) {
         teams: (l.teams || []).map(t => userTeam && t.id === userTeam.id ? userTeam : t),
       }));
 
-      // If fan growth (or training) was applied this cycle, save to DB immediately
-      // before dispatching — otherwise the justLoaded guard prevents auto-save
-      // and the next poll would overwrite with stale DB values.
-      if ((fanGrowthApplied || lastTrainingApplied < thisWeekSunday) && userStateRes.state) {
+      // Propagate updated budget/financeLog from userStateRes.state back to userTeam
+      // (match day revenue + weekly finance tick mutate userStateRes.state directly)
+      if (userTeam && userStateRes.state) {
+        userTeam.budget     = userStateRes.state.budget     ?? userTeam.budget;
+        userTeam.financeLog = userStateRes.state.financeLog ?? userTeam.financeLog ?? [];
+        userTeam.lastWeeklyFinanceTick = userStateRes.state.lastWeeklyFinanceTick ?? 0;
+      }
+
+      // Save immediately if any weekly ticks or match-day revenue ran this cycle,
+      // before dispatching — the justLoaded guard would otherwise skip the auto-save.
+      const hasMatchRevenue = processedMatchData.some(
+        md => md.homeTeamId === userStateRes.state?.teamId
+      );
+      if ((fanGrowthApplied || lastTrainingApplied < thisWeekSunday || hasMatchRevenue) && userStateRes.state) {
         try {
           await apiSaveUserState(userStateRes.state);
         } catch (saveErr) {
-          console.warn('Failed to persist weekly fan/training update:', saveErr);
+          console.warn('Failed to persist weekly/match update:', saveErr);
         }
       }
 

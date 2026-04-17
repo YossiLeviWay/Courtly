@@ -524,6 +524,10 @@ export default function Facilities() {
   }, [userTeam, dispatch, addNotification]);
 
   function handleUpgrade(key, cost) {
+    if (budget < 0) {
+      addNotification('Cannot upgrade while in deficit. Clear your debt first.', 'error');
+      return;
+    }
     if (budget < cost) {
       addNotification('Insufficient budget for this upgrade.', 'error');
       return;
@@ -544,10 +548,23 @@ export default function Facilities() {
       [key]: { level: currentLevel, upgradeStarted: Date.now(), upgradeHours },
     };
 
+    const newBudget = budget - cost;
+    const financeLog = [
+      {
+        timestamp: Date.now(),
+        type: 'facility_upgrade',
+        description: `Facility Upgrade – ${def?.name ?? key} to Lv ${currentLevel + 1}`,
+        amount: -cost,
+        balanceAfter: newBudget,
+      },
+      ...(userTeam.financeLog ?? []),
+    ].slice(0, 50);
+
     const updatedTeam = {
       ...userTeam,
-      budget: budget - cost,
+      budget: newBudget,
       facilities: newFacilities,
+      financeLog,
       // Media Center upgrades increase teamExposure, which accelerates weekly fan growth
       ...(key === 'media' ? { teamExposure: currentLevel + 1 } : {}),
     };
@@ -583,6 +600,25 @@ export default function Facilities() {
           </div>
         </div>
       </div>
+
+      {/* Deficit lock warning */}
+      {budget < 0 && (
+        <div style={{
+          background: 'rgba(239,68,68,0.08)', border: '1px solid rgba(239,68,68,0.3)',
+          borderRadius: 'var(--radius-lg)', padding: '12px 16px', marginBottom: 'var(--space-5)',
+          display: 'flex', alignItems: 'center', gap: 12,
+        }}>
+          <Lock size={18} color="#ef4444" />
+          <div>
+            <span style={{ fontWeight: 700, color: '#ef4444', fontSize: 'var(--font-size-sm)' }}>
+              Upgrades locked — team is in deficit (${Math.abs(budget).toLocaleString()}k debt)
+            </span>
+            <span style={{ color: 'var(--text-muted)', fontSize: 'var(--font-size-sm)', marginLeft: 8 }}>
+              Clear your debt to resume facility upgrades.
+            </span>
+          </div>
+        </div>
+      )}
 
       {/* Facility Cards Grid */}
       <div

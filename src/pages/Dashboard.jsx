@@ -1,6 +1,5 @@
 import { useState } from 'react';
 import { useGame } from '../context/GameContext.jsx';
-import GaugeBar from '../components/ui/GaugeBar.jsx';
 import MatchDetailModal from '../components/MatchDetailModal.jsx';
 import {
   Trophy,
@@ -138,7 +137,7 @@ export default function Dashboard() {
   const [selectedMatch, setSelectedMatch] = useState(null);
   const [selectedPlayer, setSelectedPlayer] = useState(null);
 
-  const { seasonRecord, motivationBar, momentumBar, chemistryGauge, budget, fanCount, matchHistory, seasonMatches, players } = userTeam;
+  const { seasonRecord, motivationBar, momentumBar, chemistryGauge, budget, fanCount, matchHistory, seasonMatches, players, financeLog } = userTeam;
 
   // ── Next match (earliest unplayed, sorted by date) ───────
   const upcomingMatch = seasonMatches
@@ -257,7 +256,7 @@ export default function Dashboard() {
       {/* Debt alert */}
       {budget < 0 && (() => {
         const debtAmount = Math.abs(budget);
-        const monthlyInterest = Math.round(debtAmount * 0.04);
+        const weeklyInterest = Math.round(debtAmount * 0.05);
         return (
           <div style={{
             background: 'rgba(239,68,68,0.10)',
@@ -269,7 +268,7 @@ export default function Dashboard() {
             <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 10 }}>
               <AlertCircle size={20} color="#ef4444" />
               <span style={{ fontWeight: 800, color: '#ef4444', fontSize: 'var(--font-size-base)' }}>
-                ⚠️ Team in Debt
+                ⚠️ Team in Deficit — Upgrades & Signings Locked
               </span>
             </div>
             <div style={{ display: 'flex', flexWrap: 'wrap', gap: 'var(--space-5)', marginBottom: 10 }}>
@@ -278,20 +277,20 @@ export default function Dashboard() {
                   Current Debt
                 </div>
                 <div style={{ fontWeight: 900, fontSize: 'var(--font-size-xl)', color: '#ef4444' }}>
-                  ${debtAmount.toLocaleString()}
+                  ${debtAmount.toLocaleString()}k
                 </div>
               </div>
               <div>
                 <div style={{ fontSize: 'var(--font-size-xs)', color: 'var(--text-muted)', marginBottom: 2, textTransform: 'uppercase', letterSpacing: 0.5, fontWeight: 700 }}>
-                  Monthly Interest (4%)
+                  Weekly Interest (5%)
                 </div>
                 <div style={{ fontWeight: 900, fontSize: 'var(--font-size-xl)', color: '#ef4444' }}>
-                  ${monthlyInterest.toLocaleString()}
+                  ${weeklyInterest.toLocaleString()}k / week
                 </div>
               </div>
             </div>
             <div style={{ fontSize: 'var(--font-size-sm)', color: '#b91c1c', fontWeight: 600 }}>
-              Debt grows 4% monthly until resolved. Reduce expenses or increase revenue to clear the deficit.
+              Debt compounds 5% every Sunday. Win home games, grow fans, and upgrade your Merchandise Store to clear it.
             </div>
           </div>
         );
@@ -299,21 +298,143 @@ export default function Dashboard() {
 
       {/* Team gauges + Next match */}
       <div className="grid-2 mb-6">
-        {/* Gauges */}
-        <div className="card">
-          <div className="card-header">
-            <span className="card-title" style={{ display: 'flex', alignItems: 'center', gap: 'var(--space-2)' }}>
-              <Activity size={16} style={{ color: 'var(--color-primary)' }} />
-              Team Morale
-            </span>
-          </div>
-          <GaugeBar label="Motivation" value={motivationBar} type="motivation" />
-          <GaugeBar label="Momentum" value={momentumBar} type="momentum" />
-          <GaugeBar label="Chemistry" value={chemistryGauge} type="chemistry" />
-          {fanCount !== undefined && (
-            <GaugeBar label="Fan Enthusiasm" value={userTeam.fanEnthusiasm ?? 20} type="fan" />
-          )}
-        </div>
+        {/* Morale panel — creative multi-impact design */}
+        {(() => {
+          const mot  = motivationBar  ?? 60;
+          const mom  = momentumBar    ?? 65;
+          const chem = chemistryGauge ?? 50;
+          const enth = userTeam.fanEnthusiasm ?? 20;
+
+          const overallPulse = Math.round((mot + mom + chem + enth) / 4);
+          const pulseLabel = overallPulse >= 75 ? 'Excellent' : overallPulse >= 55 ? 'Good' : overallPulse >= 35 ? 'Average' : 'Low';
+          const pulseColor = overallPulse >= 75 ? '#22c55e' : overallPulse >= 55 ? '#f97316' : overallPulse >= 35 ? '#eab308' : '#ef4444';
+
+          function getStatus(v) {
+            if (v >= 70) return { label: 'High', color: '#22c55e' };
+            if (v >= 45) return { label: 'OK', color: '#eab308' };
+            return { label: 'Low', color: '#ef4444' };
+          }
+
+          const gauges = [
+            {
+              label: 'Motivation',
+              icon: '🔥',
+              value: mot,
+              type: 'motivation',
+              impacts: [
+                { area: '⚔️ Attack', detail: mot >= 70 ? `+${Math.round((mot-50)*0.08)}% scoring` : mot < 45 ? '−shot quality' : 'neutral' },
+                { area: '🏀 Plays', detail: mot >= 70 ? 'clutch shots ↑' : 'inconsistent' },
+                { area: '👥 Fans', detail: mot >= 60 ? 'growing faster' : 'slow growth' },
+              ],
+            },
+            {
+              label: 'Momentum',
+              icon: '⚡',
+              value: mom,
+              type: 'momentum',
+              impacts: [
+                { area: '📊 All Stats', detail: mom >= 70 ? `+${Math.round((mom-50)*0.06)}% boost` : mom < 45 ? 'stats dip' : 'baseline' },
+                { area: '🛡️ Defence', detail: mom >= 65 ? 'solid rotations' : 'breakdowns' },
+                { area: '🏟️ Crowd', detail: mom >= 60 ? 'home roar ↑' : 'quiet crowd' },
+              ],
+            },
+            {
+              label: 'Chemistry',
+              icon: '🤝',
+              value: chem,
+              type: 'chemistry',
+              impacts: [
+                { area: '🎯 Passing', detail: chem >= 70 ? 'fluid assists ↑' : chem < 40 ? 'turnovers ↑' : 'average' },
+                { area: '🧠 IQ', detail: chem >= 65 ? 'smart cuts ↑' : 'isolation ball' },
+                { area: '🤜 Unity', detail: chem >= 60 ? 'team-first' : 'selfish plays' },
+              ],
+            },
+            {
+              label: 'Fan Enthusiasm',
+              icon: '💜',
+              value: enth,
+              type: 'fan',
+              impacts: [
+                { area: '📈 Weekly', detail: `+${Math.round((enth/100)*50 + (enth>50?20:0))} new fans` },
+                { area: '🎟️ Tickets', detail: enth >= 60 ? 'high attendance' : enth < 30 ? 'empty seats' : 'half capacity' },
+                { area: '💰 Revenue', detail: enth >= 55 ? 'gate income ↑' : 'low gate $ ' },
+              ],
+            },
+          ];
+
+          return (
+            <div className="card" style={{ padding: 0, overflow: 'hidden' }}>
+              {/* Header with pulse score */}
+              <div style={{
+                background: `linear-gradient(135deg, ${pulseColor}18 0%, ${pulseColor}08 100%)`,
+                borderBottom: `1px solid ${pulseColor}30`,
+                padding: '14px 18px',
+                display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+              }}>
+                <span style={{ display: 'flex', alignItems: 'center', gap: 8, fontWeight: 800, fontSize: 'var(--font-size-sm)', color: 'var(--text-primary)' }}>
+                  <Activity size={16} style={{ color: pulseColor }} />
+                  Team Pulse
+                </span>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                  <div style={{
+                    width: 48, height: 8, borderRadius: 4, background: 'var(--bg-muted)', overflow: 'hidden',
+                  }}>
+                    <div style={{ width: `${overallPulse}%`, height: '100%', background: pulseColor, borderRadius: 4, transition: 'width 0.4s ease' }} />
+                  </div>
+                  <span style={{ fontWeight: 900, fontSize: 'var(--font-size-sm)', color: pulseColor }}>{pulseLabel}</span>
+                </div>
+              </div>
+
+              {/* Gauge rows */}
+              <div style={{ padding: '10px 0' }}>
+                {gauges.map(g => {
+                  const st = getStatus(g.value);
+                  return (
+                    <div key={g.label} style={{
+                      padding: '10px 18px 8px',
+                      borderBottom: '1px solid var(--border-color)',
+                    }}>
+                      {/* Label row */}
+                      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 6 }}>
+                        <span style={{ display: 'flex', alignItems: 'center', gap: 6, fontWeight: 700, fontSize: 'var(--font-size-xs)', color: 'var(--text-secondary)', textTransform: 'uppercase', letterSpacing: 0.5 }}>
+                          {g.icon} {g.label}
+                        </span>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                          <span style={{ fontSize: '0.65rem', fontWeight: 700, color: st.color, background: `${st.color}18`, padding: '2px 7px', borderRadius: 99 }}>
+                            {st.label}
+                          </span>
+                          <span style={{ fontWeight: 900, fontSize: 'var(--font-size-sm)', color: 'var(--text-primary)', minWidth: 26, textAlign: 'right' }}>
+                            {Math.round(g.value)}
+                          </span>
+                        </div>
+                      </div>
+
+                      {/* Bar */}
+                      <div style={{ height: 7, background: 'var(--bg-muted)', borderRadius: 4, marginBottom: 8, overflow: 'hidden' }}>
+                        <div className={`gauge-fill gauge-${g.type}`} style={{ width: `${g.value}%`, height: '100%', borderRadius: 4 }} />
+                      </div>
+
+                      {/* Impact chips */}
+                      <div style={{ display: 'flex', gap: 5, flexWrap: 'wrap' }}>
+                        {g.impacts.map((imp, i) => (
+                          <span key={i} style={{
+                            fontSize: '0.63rem', fontWeight: 600,
+                            color: 'var(--text-muted)',
+                            background: 'var(--bg-muted)',
+                            padding: '2px 7px', borderRadius: 99,
+                            whiteSpace: 'nowrap',
+                          }}>
+                            {imp.area}: <strong style={{ color: 'var(--text-secondary)' }}>{imp.detail}</strong>
+                          </span>
+                        ))}
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+          );
+        })()}
 
         {/* Next match */}
         {upcomingMatch ? (
@@ -492,6 +613,50 @@ export default function Dashboard() {
           </div>
         </div>
       </div>
+
+      {/* Finance Log */}
+      {financeLog && financeLog.length > 0 && (
+        <div className="card mb-6">
+          <div className="card-header">
+            <span className="card-title" style={{ display: 'flex', alignItems: 'center', gap: 'var(--space-2)' }}>
+              <DollarSign size={16} style={{ color: 'var(--color-primary)' }} />
+              Recent Transactions
+            </span>
+            <span style={{ fontSize: 'var(--font-size-xs)', color: 'var(--text-muted)' }}>Last {Math.min(financeLog.length, 6)} entries</span>
+          </div>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-2)' }}>
+            {financeLog.slice(0, 6).map((entry, i) => {
+              const isPositive = entry.amount >= 0;
+              const typeIcon = {
+                match_day_revenue: '🎟️',
+                passive_income: '🛍️',
+                facility_upgrade: '🏗️',
+                player_signed: '✍️',
+                interest_penalty: '📉',
+              }[entry.type] || '💰';
+              return (
+                <div key={i} style={{
+                  display: 'flex', alignItems: 'center', gap: 'var(--space-3)',
+                  padding: 'var(--space-2) var(--space-3)',
+                  borderRadius: 'var(--radius-md)',
+                  background: 'var(--bg-muted)',
+                }}>
+                  <span style={{ fontSize: '1rem', lineHeight: 1 }}>{typeIcon}</span>
+                  <span style={{ flex: 1, fontSize: 'var(--font-size-sm)', color: 'var(--text-secondary)', fontWeight: 600 }}>
+                    {entry.description}
+                  </span>
+                  <span style={{ fontWeight: 800, fontSize: 'var(--font-size-sm)', color: isPositive ? 'var(--color-success)' : 'var(--color-danger)', whiteSpace: 'nowrap' }}>
+                    {isPositive ? '+' : ''}${entry.amount}k
+                  </span>
+                  <span style={{ fontSize: 'var(--font-size-xs)', color: 'var(--text-muted)', whiteSpace: 'nowrap', minWidth: 44, textAlign: 'right' }}>
+                    ${entry.balanceAfter}k
+                  </span>
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      )}
 
       {/* League News + Squad News */}
       <div className="grid-2 mb-6">
