@@ -75,6 +75,7 @@ function normalizeUserState(s) {
     lastWeeklyFinanceTick: s.lastWeeklyFinanceTick  ?? 0,
     fanWeeklyHistory:      s.fanWeeklyHistory       ?? [],
     lastInvestmentTimestamp: s.lastInvestmentTimestamp ?? 0,
+    lastGameTopPerformers: s.lastGameTopPerformers ?? null,
     profileData:           s.profileData           ?? s.profile_data ?? {},
     updatedAt:           s.updatedAt           ?? s.updated_at,
   };
@@ -614,6 +615,7 @@ export async function apiSaveUserState(payload) {
       lastWeeklyFinanceTick: payload.lastWeeklyFinanceTick  ?? 0,
       fanWeeklyHistory:      (payload.fanWeeklyHistory      ?? []).slice(0, 52),
       lastInvestmentTimestamp: payload.lastInvestmentTimestamp ?? 0,
+      lastGameTopPerformers: payload.lastGameTopPerformers ?? null,
       profileData:           payload.profileData            ?? {},
       updatedAt:           Date.now(),
     }, { merge: true });
@@ -627,6 +629,49 @@ export async function apiSaveUserState(payload) {
 /** Admin: set a user's team budget directly by userId. */
 export async function apiAdminSetBudget(userId, newBudget) {
   await updateDoc(doc(db, 'user_team_state', userId), { budget: Number(newBudget) });
+}
+
+/** Admin: set arbitrary team-state fields for a specific user. */
+export async function apiAdminSetTeamState(userId, fields) {
+  await updateDoc(doc(db, 'user_team_state', userId), { ...fields, updatedAt: Date.now() });
+}
+
+/**
+ * Admin: reset every user's personal state to a fresh slate.
+ * Clears matchHistory, financeLog, seasonRecord, fans, morale gauges, and budget.
+ * Retains facilities, players, staff, and profile data.
+ */
+export async function apiAdminResetAllUsers() {
+  const snap = await getDocs(collection(db, 'user_team_state'));
+  const CHUNK = 400;
+  for (let i = 0; i < snap.docs.length; i += CHUNK) {
+    const batch = writeBatch(db);
+    snap.docs.slice(i, i + CHUNK).forEach(d => {
+      batch.update(d.ref, {
+        budget:              1500,
+        matchHistory:        [],
+        financeLog:          [],
+        seasonRecord:        { wins: 0, losses: 0 },
+        fanCount:            250,
+        fanEnthusiasm:       20,
+        fanWeeklyHistory:    [],
+        lastWeekFanGrowth:   null,
+        lastFanGrowthDate:   0,
+        weeksPlayed:         0,
+        motivationBar:       60,
+        chemistryGauge:      50,
+        momentumBar:         65,
+        lastWeeklyFinanceTick: 0,
+        lastTrainingApplied: 0,
+        lastInvestmentTimestamp: 0,
+        lastGameTopPerformers: null,
+        trainingHighlights:  [],
+        updatedAt:           Date.now(),
+      });
+    });
+    await batch.commit();
+  }
+  return snap.docs.length;
 }
 
 /** Batch-update the scheduledDate of a set of match documents (one round). */

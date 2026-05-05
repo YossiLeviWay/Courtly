@@ -21,6 +21,18 @@ import {
 const formatDate = (date) =>
   new Date(date).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
 
+function timeAgo(ts) {
+  if (!ts) return null;
+  const mins = Math.floor((Date.now() - ts) / 60000);
+  if (mins < 1)  return 'just now';
+  if (mins < 60) return `${mins}m ago`;
+  const hrs = Math.floor(mins / 60);
+  if (hrs < 24)  return `${hrs}h ago`;
+  const days = Math.floor(hrs / 24);
+  if (days < 7)  return `${days}d ago`;
+  return new Date(ts).toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+}
+
 function getPlayerStats(player) {
   const s = player.seasonStats || {};
   const gp = s.gamesPlayed || 1;
@@ -138,7 +150,7 @@ export default function Dashboard() {
   const [selectedPlayer, setSelectedPlayer] = useState(null);
   const [showFanHistory, setShowFanHistory] = useState(false);
 
-  const { seasonRecord, motivationBar, momentumBar, chemistryGauge, budget, fanCount, matchHistory, seasonMatches, players, financeLog, fanWeeklyHistory } = userTeam;
+  const { seasonRecord, motivationBar, momentumBar, chemistryGauge, budget, fanCount, matchHistory, seasonMatches, players, financeLog, fanWeeklyHistory, lastGameTopPerformers } = userTeam;
 
   // ── Next match (earliest unplayed, sorted by date) ───────
   const upcomingMatch = seasonMatches
@@ -148,7 +160,8 @@ export default function Dashboard() {
     : null;
 
   // ── Recent results (last 5) ───────────────────────────────
-  const recentMatches = matchHistory ? [...matchHistory].reverse().slice(0, 5) : [];
+  // matchHistory[0] is the newest entry (unshifted on each match), so no reverse needed
+  const recentMatches = matchHistory ? [...matchHistory].slice(0, 5) : [];
 
   // ── Top players (deduplicated — each player can only win one category) ─────
   const activePlayers = players || [];
@@ -559,41 +572,106 @@ export default function Dashboard() {
         })()}
 
         {/* Next match */}
-        {upcomingMatch ? (
-          <div className="card card-highlight">
-            <div className="card-header">
-              <span className="card-title" style={{ display: 'flex', alignItems: 'center', gap: 'var(--space-2)' }}>
-                <Calendar size={16} />
-                Next Match
-              </span>
-            </div>
-            <div style={{ marginBottom: 'var(--space-3)' }}>
-              <div style={{ fontSize: 'var(--font-size-2xl)', fontWeight: 900, marginBottom: 'var(--space-1)' }}>
-                {upcomingMatch.opponentName || 'Opponent TBD'}
+        {upcomingMatch ? (() => {
+          // Find rival team data from the league schedule
+          const rivalId   = upcomingMatch.isHome ? upcomingMatch.opponentId : upcomingMatch.opponentId;
+          const rivalName = upcomingMatch.opponentName || 'Opponent TBD';
+          const rivalTeam = userLeague?.teams?.find(t => t.id === rivalId || t.name === rivalName);
+
+          // Rival's recent form from schedule (last 5 played matches involving rival)
+          const rivalMatches = (userLeague?.schedule || [])
+            .filter(m => m.played && (m.homeTeamId === rivalId || m.awayTeamId === rivalId))
+            .sort((a, b) => (b.scheduledDate || 0) - (a.scheduledDate || 0))
+            .slice(0, 5);
+          const rivalForm = rivalMatches.map(m => {
+            if (!m.result) return null;
+            const rivalWon = m.homeTeamId === rivalId
+              ? m.result.homeScore > m.result.awayScore
+              : m.result.awayScore > m.result.homeScore;
+            return rivalWon ? 'W' : 'L';
+          }).filter(Boolean);
+          const rivalWins   = rivalForm.filter(r => r === 'W').length;
+          const rivalLosses = rivalForm.filter(r => r === 'L').length;
+
+          // Rival's top 2 players by overall rating
+          const rivalTopPlayers = [...(rivalTeam?.players || [])]
+            .sort((a, b) => (b.overallRating || 0) - (a.overallRating || 0))
+            .slice(0, 2);
+
+          return (
+            <div className="card card-highlight">
+              <div className="card-header">
+                <span className="card-title" style={{ display: 'flex', alignItems: 'center', gap: 'var(--space-2)' }}>
+                  <Calendar size={16} />
+                  Next Match
+                </span>
+                <span style={{ fontSize: 'var(--font-size-xs)', opacity: 0.8, fontWeight: 700, textTransform: 'uppercase', letterSpacing: 1 }}>
+                  {upcomingMatch.isHome ? 'Home' : 'Away'}
+                </span>
               </div>
-              <div style={{ opacity: 0.85, fontSize: 'var(--font-size-sm)' }}>
-                {formatDate(upcomingMatch.date)}
+
+              {/* Opponent name + date */}
+              <div style={{ marginBottom: 'var(--space-3)' }}>
+                <div style={{ fontSize: 'var(--font-size-2xl)', fontWeight: 900, marginBottom: 'var(--space-1)' }}>
+                  {rivalName}
+                </div>
+                <div style={{ opacity: 0.85, fontSize: 'var(--font-size-sm)' }}>
+                  {formatDate(upcomingMatch.date)}
+                </div>
+              </div>
+
+              {/* Rival form badges */}
+              {rivalForm.length > 0 && (
+                <div style={{ marginBottom: 'var(--space-3)' }}>
+                  <div style={{ fontSize: '0.65rem', fontWeight: 700, color: 'rgba(255,255,255,0.6)', textTransform: 'uppercase', letterSpacing: 0.5, marginBottom: 6 }}>
+                    Rival Form — {rivalWins}W {rivalLosses}L
+                  </div>
+                  <div style={{ display: 'flex', gap: 4 }}>
+                    {rivalForm.map((r, i) => (
+                      <span key={i} style={{
+                        width: 22, height: 22, borderRadius: '50%',
+                        display: 'flex', alignItems: 'center', justifyContent: 'center',
+                        fontSize: '0.65rem', fontWeight: 800,
+                        background: r === 'W' ? 'rgba(34,197,94,0.25)' : 'rgba(239,68,68,0.25)',
+                        color: r === 'W' ? '#4ade80' : '#f87171',
+                        border: `1px solid ${r === 'W' ? 'rgba(34,197,94,0.4)' : 'rgba(239,68,68,0.4)'}`,
+                      }}>{r}</span>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              {/* Rival key players */}
+              {rivalTopPlayers.length > 0 && (
+                <div style={{ marginBottom: 'var(--space-3)' }}>
+                  <div style={{ fontSize: '0.65rem', fontWeight: 700, color: 'rgba(255,255,255,0.6)', textTransform: 'uppercase', letterSpacing: 0.5, marginBottom: 6 }}>
+                    Watch out for
+                  </div>
+                  <div style={{ display: 'flex', gap: 8 }}>
+                    {rivalTopPlayers.map(p => (
+                      <div key={p.id} style={{
+                        display: 'flex', alignItems: 'center', gap: 6,
+                        background: 'rgba(255,255,255,0.12)', borderRadius: 'var(--radius-md)',
+                        padding: '4px 8px',
+                      }}>
+                        <span style={{ fontSize: '0.65rem', fontWeight: 800, color: 'rgba(255,255,255,0.9)' }}>
+                          {p.name?.split(' ').slice(-1)[0] || p.name}
+                        </span>
+                        <span style={{ fontSize: '0.6rem', color: 'rgba(255,255,255,0.55)' }}>
+                          {p.position} · {p.overallRating}
+                        </span>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              <div style={{ display: 'flex', alignItems: 'center', gap: 'var(--space-3)', marginTop: 'var(--space-2)' }}>
+                <ArrowRight size={16} style={{ opacity: 0.7, marginLeft: 'auto' }} />
               </div>
             </div>
-            <div style={{ display: 'flex', alignItems: 'center', gap: 'var(--space-3)', marginTop: 'var(--space-4)' }}>
-              <span
-                style={{
-                  padding: '3px 12px',
-                  borderRadius: 'var(--radius-full)',
-                  background: 'rgba(255,255,255,0.25)',
-                  fontWeight: 700,
-                  fontSize: 'var(--font-size-xs)',
-                  color: 'white',
-                  letterSpacing: 1,
-                  textTransform: 'uppercase',
-                }}
-              >
-                {upcomingMatch.isHome ? 'Home' : 'Away'}
-              </span>
-              <ArrowRight size={16} style={{ opacity: 0.7, marginLeft: 'auto' }} />
-            </div>
-          </div>
-        ) : (
+          );
+        })() : (
           <div className="card" style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: 'var(--space-3)', minHeight: 140 }}>
             <Calendar size={32} style={{ color: 'var(--text-muted)', opacity: 0.4 }} />
             <p style={{ color: 'var(--text-muted)', fontSize: 'var(--font-size-sm)' }}>No upcoming matches scheduled</p>
@@ -674,13 +752,24 @@ export default function Dashboard() {
               <Star size={16} style={{ color: 'var(--color-primary)' }} />
               Top Performers
             </span>
+            {lastGameTopPerformers ? (
+              <span style={{ fontSize: 'var(--font-size-xs)', color: 'var(--color-primary)', fontWeight: 700 }}>
+                vs {lastGameTopPerformers.opponent}
+              </span>
+            ) : (
+              <span style={{ fontSize: 'var(--font-size-xs)', color: 'var(--text-muted)' }}>Season avg</span>
+            )}
           </div>
           <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-3)' }}>
-            {[
-              { label: 'Top Scorer', player: topScorer, stat: topScorer ? `${getPlayerStats(topScorer).pts} PPG` : '–' },
+            {(lastGameTopPerformers ? [
+              { label: 'Top Scorer',    player: activePlayers.find(p => p.id === lastGameTopPerformers.topScorer?.playerId)    || { name: lastGameTopPerformers.topScorer?.name,    id: lastGameTopPerformers.topScorer?.playerId },    stat: `${lastGameTopPerformers.topScorer?.pts ?? 0} PTS` },
+              { label: 'Top Rebounder', player: activePlayers.find(p => p.id === lastGameTopPerformers.topRebounder?.playerId) || { name: lastGameTopPerformers.topRebounder?.name, id: lastGameTopPerformers.topRebounder?.playerId }, stat: `${lastGameTopPerformers.topRebounder?.reb ?? 0} REB` },
+              { label: 'Assist Leader', player: activePlayers.find(p => p.id === lastGameTopPerformers.topAssister?.playerId)  || { name: lastGameTopPerformers.topAssister?.name,  id: lastGameTopPerformers.topAssister?.playerId },  stat: `${lastGameTopPerformers.topAssister?.ast ?? 0} AST` },
+            ] : [
+              { label: 'Top Scorer',    player: topScorer,    stat: topScorer    ? `${getPlayerStats(topScorer).pts} PPG`    : '–' },
               { label: 'Top Rebounder', player: topRebounder, stat: topRebounder ? `${getPlayerStats(topRebounder).reb} RPG` : '–' },
-              { label: 'Assist Leader', player: topAssister, stat: topAssister ? `${getPlayerStats(topAssister).ast} APG` : '–' },
-            ].map(({ label, player, stat }) => (
+              { label: 'Assist Leader', player: topAssister,  stat: topAssister  ? `${getPlayerStats(topAssister).ast} APG`  : '–' },
+            ]).map(({ label, player, stat }) => (
               <div
                 key={label}
                 onClick={player ? () => setSelectedPlayer(player) : undefined}
@@ -797,28 +886,32 @@ export default function Dashboard() {
               for (const lg of leagues.slice(0, 3)) {
                 const standings = (lg.standings || []).slice().sort((a, b) => b.wins - a.wins || a.losses - b.losses);
                 const leader = standings[0];
+                // Latest played match date for this league
+                const lastPlayedTs = (lg.schedule || [])
+                  .filter(m => m.played && m.scheduledDate)
+                  .sort((a, b) => b.scheduledDate - a.scheduledDate)[0]?.scheduledDate ?? null;
                 if (leader && (leader.wins + leader.losses) > 0) {
                   const gp = leader.wins + leader.losses;
                   const pct = ((leader.wins / gp) * 100).toFixed(0);
-                  news.push({ icon: '🏆', title: `${leader.teamName} lead ${lg.name || lg.id}`, body: `${leader.wins}W-${leader.losses}L (${pct}%) through ${gp} game${gp !== 1 ? 's' : ''}.` });
+                  news.push({ icon: '🏆', title: `${leader.teamName} lead ${lg.name || lg.id}`, body: `${leader.wins}W-${leader.losses}L (${pct}%) through ${gp} game${gp !== 1 ? 's' : ''}.`, time: timeAgo(lastPlayedTs) });
                 }
                 if (standings.length >= 2 && leader) {
                   const second = standings[1];
                   const gb = ((leader.wins - second.wins + second.losses - leader.losses) / 2).toFixed(1);
                   if (Number(gb) <= 3 && Number(gb) > 0) {
-                    news.push({ icon: '📊', title: `Tight race in ${lg.name || lg.id}`, body: `${second.teamName} trails by just ${gb} game${gb !== '1.0' ? 's' : ''}.` });
+                    news.push({ icon: '📊', title: `Tight race in ${lg.name || lg.id}`, body: `${second.teamName} trails by just ${gb} game${gb !== '1.0' ? 's' : ''}.`, time: timeAgo(lastPlayedTs) });
                   }
                 }
                 const playedMatches = (lg.schedule || []).filter(m => m.played);
                 if (playedMatches.length > 0) {
-                  news.push({ icon: '⚡', title: `${playedMatches.length} match${playedMatches.length !== 1 ? 'es' : ''} played in ${lg.name || lg.id}`, body: `${standings.length} teams competing this season.` });
+                  news.push({ icon: '⚡', title: `${playedMatches.length} match${playedMatches.length !== 1 ? 'es' : ''} played in ${lg.name || lg.id}`, body: `${standings.length} teams competing this season.`, time: timeAgo(lastPlayedTs) });
                 }
               }
               if (news.length === 0) {
                 news.push({ icon: '📅', title: 'Season about to begin', body: 'No results yet. First matchday will reveal the opening standings.' });
                 news.push({ icon: '🏀', title: 'Prepare your squad', body: 'Review tactics, training, and lineup before the season opener.' });
               }
-              return news.slice(0, 4).map((item, i) => <NewsItem key={i} icon={item.icon} title={item.title} body={item.body} />);
+              return news.slice(0, 4).map((item, i) => <NewsItem key={i} icon={item.icon} title={item.title} body={item.body} time={item.time} />);
             })()}
           </div>
         </div>
@@ -838,12 +931,17 @@ export default function Dashboard() {
               const won = m.result === 'W' || (m.teamScore ?? m.userScore ?? 0) > (m.oppScore ?? m.opponentScore ?? 0);
               const oppName = m.opponent || m.opponentName || 'opponent';
               const score = `${m.teamScore ?? m.userScore ?? '?'}–${m.oppScore ?? m.opponentScore ?? '?'}`;
-              return <NewsItem icon={won ? '📣' : '📰'} title={`Media: ${won ? 'Win' : 'Loss'} vs ${oppName} (${score})`} body={topScorer ? `${topScorer.name} led with ${getPlayerStats(topScorer).pts} PPG.` : `The team ${won ? 'picked up an important victory' : 'suffered a setback'}.`} />;
+              const matchAgo = timeAgo(m.matchDate || m.date);
+              const perfName = lastGameTopPerformers?.topScorer?.name || topScorer?.name;
+              const perfPts  = lastGameTopPerformers?.topScorer?.pts != null
+                ? `${lastGameTopPerformers.topScorer.pts} PTS`
+                : (topScorer ? `${getPlayerStats(topScorer).pts} PPG` : null);
+              return <NewsItem icon={won ? '📣' : '📰'} title={`Media: ${won ? 'Win' : 'Loss'} vs ${oppName} (${score})`} body={perfName && perfPts ? `${perfName} led with ${perfPts}.` : `The team ${won ? 'picked up an important victory' : 'suffered a setback'}.`} time={matchAgo} />;
             })()}
 
             {/* Training highlights */}
             {(userTeam.trainingHighlights ?? []).slice(0, 1).map((h, i) => (
-              <NewsItem key={`tr-${i}`} icon="🏋️" title="Training News" body={h} />
+              <NewsItem key={`tr-${i}`} icon="🏋️" title="Training News" body={h} time={timeAgo(userTeam.lastTrainingApplied)} />
             ))}
             {(userTeam.trainingHighlights ?? []).length === 0 && (
               <NewsItem icon="🏋️" title="Training News" body="Regular training sessions underway. Set a training plan to see highlights here." />
@@ -853,19 +951,20 @@ export default function Dashboard() {
             {(() => {
               const lastGrowth = userTeam.lastWeekFanGrowth;
               const fc = userTeam.fanCount ?? 0;
+              const fanDate = timeAgo(userTeam.lastFanGrowthDate || 0);
               const milestones = [500, 1000, 2500, 5000, 10000, 25000];
               const hit = milestones.find(m => fc >= m && fc < m * 1.05);
-              if (hit) return <NewsItem icon="🎉" title={`Fans: ${hit.toLocaleString()} supporters milestone!`} body="The city is buzzing — your fanbase keeps growing!" />;
-              if (lastGrowth?.growth > 0) return <NewsItem icon="📈" title={`Fans: +${lastGrowth.growth} new supporters this week`} body={`${lastGrowth.recentWins}W-${lastGrowth.recentLosses}L form brings new fans to the club.`} />;
+              if (hit) return <NewsItem icon="🎉" title={`Fans: ${hit.toLocaleString()} supporters milestone!`} body="The city is buzzing — your fanbase keeps growing!" time={fanDate} />;
+              if (lastGrowth?.growth > 0) return <NewsItem icon="📈" title={`Fans: +${lastGrowth.growth} new supporters this week`} body={`${lastGrowth.recentWins}W-${lastGrowth.recentLosses}L form brings new fans to the club.`} time={fanDate} />;
               return <NewsItem icon="👥" title="Fans: Building the fanbase" body={`${fc.toLocaleString()} supporters follow the club. Win games to attract more.`} />;
             })()}
 
             {/* Squad health */}
             {injured.length > 0
-              ? <NewsItem icon="🚑" title={`Injuries: ${injured.map(p => p.name).join(', ')}`} body={`${injured.length} player${injured.length !== 1 ? 's' : ''} sidelined. Check Tactics to adjust your lineup.`} />
+              ? <NewsItem icon="🚑" title={`Injuries: ${injured.map(p => p.name).join(', ')}`} body={`${injured.length} player${injured.length !== 1 ? 's' : ''} sidelined. Check Tactics to adjust your lineup.`} time="Today" />
               : highForm.length > 0
-                ? <NewsItem icon="⭐" title={`Form: ${highForm[0].name} on fire`} body={`Form rating ${highForm[0].lastFormRating}/100 — keep giving him minutes.`} />
-                : <NewsItem icon="✅" title="Squad: Full squad available" body="No injuries. Everyone is ready for the next fixture." />
+                ? <NewsItem icon="⭐" title={`Form: ${highForm[0].name} on fire`} body={`Form rating ${highForm[0].lastFormRating}/100 — keep giving him minutes.`} time="Today" />
+                : <NewsItem icon="✅" title="Squad: Full squad available" body="No injuries. Everyone is ready for the next fixture." time="Today" />
             }
           </div>
         </div>

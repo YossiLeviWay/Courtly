@@ -117,6 +117,7 @@ function buildUserTeam(leagues, userState) {
     lastWeeklyFinanceTick:   userState.lastWeeklyFinanceTick   ?? 0,
     fanWeeklyHistory:        userState.fanWeeklyHistory        ?? [],
     lastInvestmentTimestamp: userState.lastInvestmentTimestamp ?? 0,
+    lastGameTopPerformers:   userState.lastGameTopPerformers   ?? null,
     wins:         derivedRecord.wins,
     losses:       derivedRecord.losses,
     seasonRecord: derivedRecord,
@@ -169,6 +170,7 @@ function extractUserState(state) {
     lastWeeklyFinanceTick:   t.lastWeeklyFinanceTick   ?? 0,
     fanWeeklyHistory:        t.fanWeeklyHistory        ?? [],
     lastInvestmentTimestamp: t.lastInvestmentTimestamp ?? 0,
+    lastGameTopPerformers:   t.lastGameTopPerformers   ?? null,
     seasonRecord:   { wins: t.wins ?? 0, losses: t.losses ?? 0 },
     profileData: {
       bio:                  state.user?.bio                  || '',
@@ -413,13 +415,17 @@ export function GameProvider({ children }) {
 
         const homeMatchResults = processedMatchData.filter(md => md.homeTeamId === userTeamIdForRevenue);
         const finLog = userStateRes.state.financeLog ?? [];
+        // Build a Set of matchIds already logged to prevent duplicate entries on re-renders
+        const loggedMatchIds = new Set(finLog.map(e => e.matchId).filter(Boolean));
 
         for (const md of homeMatchResults) {
+          if (loggedMatchIds.has(md.matchId)) continue; // already logged this game
           const attendancePct = 0.30 + (fanEnthusiasmForRevenue / 100) * 0.50; // 30–80%
           const attendance = Math.round(Math.min(stadiumCapacity, fanCountForRevenue) * attendancePct);
           const revenue = Math.round(attendance * ticketPriceForRevenue);
           userStateRes.state.budget = (userStateRes.state.budget ?? 50) + revenue;
           finLog.unshift({
+            matchId: md.matchId,
             timestamp: now,
             type: 'match_day_revenue',
             description: `Ticket Sales – Home vs ${md.awayTeamName}`,
@@ -628,6 +634,34 @@ export function GameProvider({ children }) {
             );
           }
         }
+
+        // Extract last-game top performers from playerStats (available in-memory before Firestore strips them)
+        const userMatchData = processedMatchData.find(md =>
+          md.homeTeamId === userTeam.id || md.awayTeamId === userTeam.id
+        );
+        if (userMatchData?.playerStats && Object.keys(userMatchData.playerStats).length > 0 && userStateRes.state) {
+          const userPlayerIds = new Set((userTeam.players || []).map(p => p.id));
+          const userStats = Object.entries(userMatchData.playerStats)
+            .filter(([pid]) => userPlayerIds.has(pid))
+            .map(([pid, s]) => ({
+              playerId: pid,
+              name: (userTeam.players || []).find(p => p.id === pid)?.name || pid,
+              pts: s.points || 0,
+              reb: s.rebounds || 0,
+              ast: s.assists || 0,
+            }));
+          if (userStats.length > 0) {
+            const isHome = userMatchData.homeTeamId === userTeam.id;
+            userStateRes.state.lastGameTopPerformers = {
+              matchId:  userMatchData.matchId,
+              opponent: isHome ? userMatchData.awayTeamName : userMatchData.homeTeamName,
+              date:     userMatchData.scheduledDate || now,
+              topScorer:    { ...userStats.slice().sort((a, b) => b.pts - a.pts)[0] },
+              topRebounder: { ...userStats.slice().sort((a, b) => b.reb - a.reb)[0] },
+              topAssister:  { ...userStats.slice().sort((a, b) => b.ast - a.ast)[0] },
+            };
+          }
+        }
       }
 
       const updatedLeagues = simulatedLeagues.map(l => ({
@@ -635,12 +669,15 @@ export function GameProvider({ children }) {
         teams: (l.teams || []).map(t => userTeam && t.id === userTeam.id ? userTeam : t),
       }));
 
-      // Propagate updated budget/financeLog from userStateRes.state back to userTeam
+      // Propagate updated budget/financeLog/lastGameTopPerformers from userStateRes.state back to userTeam
       // (match day revenue + weekly finance tick mutate userStateRes.state directly)
       if (userTeam && userStateRes.state) {
         userTeam.budget     = userStateRes.state.budget     ?? userTeam.budget;
         userTeam.financeLog = userStateRes.state.financeLog ?? userTeam.financeLog ?? [];
         userTeam.lastWeeklyFinanceTick = userStateRes.state.lastWeeklyFinanceTick ?? 0;
+        if (userStateRes.state.lastGameTopPerformers) {
+          userTeam.lastGameTopPerformers = userStateRes.state.lastGameTopPerformers;
+        }
       }
 
       // Save immediately if any weekly ticks or match-day revenue ran this cycle,
