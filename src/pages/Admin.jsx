@@ -9,7 +9,7 @@ import {
   apiGetFeedback, apiMarkFeedbackRead,
   apiSeedFreeAgents, apiSeedStaffMarket,
   apiGetGameBrainConfig, apiSaveGameBrainConfig,
-  apiAdminSetBudget,
+  apiAdminSetBudget, apiAdminSetTeamState, apiAdminResetAllUsers,
 } from '../api.js';
 import { buildRoundRobinRounds } from '../engine/gameScheduler.js';
 
@@ -580,6 +580,22 @@ function ResetZone({ onReset }) {
     setResetting(false);
   }
 
+  const [resettingUsers, setResettingUsers] = useState(false);
+  const [confirmStep, setConfirmStep]       = useState(0); // 0=idle, 1=first confirm, 2=second confirm
+
+  async function handleResetAllUsers() {
+    setResettingUsers(true);
+    setMsg('');
+    try {
+      const count = await apiAdminResetAllUsers();
+      setMsg(`✓ Reset ${count} user account${count !== 1 ? 's' : ''} to fresh state. Matches + standings remain. Users will see reset stats on next login.`);
+      setConfirmStep(0);
+    } catch (err) {
+      setMsg(`✗ Error: ${err.message}`);
+    }
+    setResettingUsers(false);
+  }
+
   return (
     <div style={{ marginTop: 40, padding: '20px 24px', border: '1px solid rgba(239,68,68,0.35)', borderRadius: 'var(--radius-lg)', background: 'rgba(239,68,68,0.04)' }}>
       <div style={{ fontWeight: 700, color: '#dc2626', marginBottom: 6, fontSize: 'var(--font-size-sm)' }}>⚠ Danger Zone</div>
@@ -589,14 +605,62 @@ function ResetZone({ onReset }) {
       {msg && (
         <div style={{ marginBottom: 12, fontSize: 'var(--font-size-sm)', fontWeight: 600, color: msg.startsWith('✓') ? '#16a34a' : '#dc2626' }}>{msg}</div>
       )}
-      <button
-        className="btn btn-sm"
-        style={{ background: '#dc2626', color: '#fff', border: 'none' }}
-        disabled={resetting}
-        onClick={handleReset}
-      >
-        {resetting ? <><RefreshCw size={13} style={{ animation: 'spin 1s linear infinite' }} /> Resetting…</> : '🔄 Reset All Results & Standings'}
-      </button>
+      <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap', alignItems: 'flex-start' }}>
+        <button
+          className="btn btn-sm"
+          style={{ background: '#dc2626', color: '#fff', border: 'none' }}
+          disabled={resetting}
+          onClick={handleReset}
+        >
+          {resetting ? <><RefreshCw size={13} style={{ animation: 'spin 1s linear infinite' }} /> Resetting…</> : '🔄 Reset All Results & Standings'}
+        </button>
+
+        {/* Reset all user personal state — requires 2 confirmations */}
+        <div style={{ borderLeft: '2px solid rgba(239,68,68,0.4)', paddingLeft: 12 }}>
+          <div style={{ fontSize: '0.7rem', fontWeight: 700, color: '#b91c1c', marginBottom: 6 }}>
+            Nuclear option: wipe all user progress
+          </div>
+          <p style={{ fontSize: '0.7rem', color: 'var(--text-muted)', marginBottom: 8 }}>
+            Resets every user's budget, fans, matchHistory, morale, and finance log to Day 1 values. Facilities, players, and profile are kept.
+          </p>
+          {confirmStep === 0 && (
+            <button className="btn btn-sm" style={{ background: '#7f1d1d', color: '#fff', border: 'none' }}
+              onClick={() => setConfirmStep(1)}>
+              💣 Reset Game for Everyone
+            </button>
+          )}
+          {confirmStep === 1 && (
+            <div style={{ padding: '8px 12px', background: 'rgba(239,68,68,0.1)', border: '1px solid rgba(239,68,68,0.35)', borderRadius: 'var(--radius-md)' }}>
+              <div style={{ fontWeight: 700, color: '#dc2626', fontSize: 'var(--font-size-sm)', marginBottom: 6 }}>
+                ⚠️ Are you sure? This will erase all users' match history, budgets, fans, and morale.
+              </div>
+              <div style={{ display: 'flex', gap: 8 }}>
+                <button className="btn btn-sm" style={{ background: '#dc2626', color: '#fff', border: 'none' }}
+                  onClick={() => setConfirmStep(2)}>Yes, continue</button>
+                <button className="btn btn-ghost btn-sm" onClick={() => setConfirmStep(0)}>Cancel</button>
+              </div>
+            </div>
+          )}
+          {confirmStep === 2 && (
+            <div style={{ padding: '8px 12px', background: 'rgba(239,68,68,0.15)', border: '2px solid rgba(239,68,68,0.6)', borderRadius: 'var(--radius-md)' }}>
+              <div style={{ fontWeight: 800, color: '#dc2626', fontSize: 'var(--font-size-sm)', marginBottom: 8 }}>
+                🚨 FINAL WARNING — This cannot be undone. All user stats will be wiped.
+              </div>
+              <div style={{ display: 'flex', gap: 8 }}>
+                <button
+                  className="btn btn-sm"
+                  style={{ background: '#991b1b', color: '#fff', border: 'none' }}
+                  disabled={resettingUsers}
+                  onClick={handleResetAllUsers}
+                >
+                  {resettingUsers ? <><RefreshCw size={13} style={{ animation: 'spin 1s linear infinite' }} /> Wiping…</> : '💣 YES, WIPE EVERYTHING'}
+                </button>
+                <button className="btn btn-ghost btn-sm" onClick={() => setConfirmStep(0)}>Cancel</button>
+              </div>
+            </div>
+          )}
+        </div>
+      </div>
       <style>{`@keyframes spin{from{transform:rotate(0deg)}to{transform:rotate(360deg)}}`}</style>
     </div>
   );
@@ -654,7 +718,7 @@ function TeamsView({ leagues }) {
                         {teamOwner && (
                           <button className="btn btn-ghost btn-sm" style={{ fontSize: '0.65rem', padding: '2px 8px' }}
                             onClick={e => { e.stopPropagation(); setEditingUser(teamOwner); }}>
-                            <Edit2 size={11} /> Edit Budget
+                            <Edit2 size={11} /> Edit Team
                           </button>
                         )}
                       </div>
@@ -689,7 +753,7 @@ function TeamsView({ leagues }) {
       })}
 
       {editingUser && (
-        <BudgetEditModal
+        <TeamStateEditModal
           user={editingUser.user}
           uState={editingUser.state}
           onClose={() => setEditingUser(null)}
@@ -699,58 +763,82 @@ function TeamsView({ leagues }) {
   );
 }
 
-// ── Budget Edit Modal ─────────────────────────────────────────
+// ── Team State Edit Modal ─────────────────────────────────────
 
-function BudgetEditModal({ user, uState, onClose }) {
-  const [newBudget, setNewBudget] = useState(uState?.budget ?? 250);
-  const [saving, setSaving]       = useState(false);
-  const [msg, setMsg]             = useState('');
+function TeamStateEditModal({ user, uState, onClose }) {
+  const [fields, setFields] = useState({
+    budget:        uState?.budget        ?? 250,
+    fanCount:      uState?.fanCount      ?? 250,
+    fanEnthusiasm: uState?.fanEnthusiasm ?? 20,
+    motivationBar: uState?.motivationBar ?? 60,
+    chemistryGauge: uState?.chemistryGauge ?? 50,
+    momentumBar:   uState?.momentumBar   ?? 65,
+  });
+  const [saving, setSaving] = useState(false);
+  const [msg, setMsg]       = useState('');
+
+  const set = (k, v) => setFields(f => ({ ...f, [k]: Number(v) }));
 
   async function handleSave() {
     setSaving(true);
     try {
-      await apiAdminSetBudget(user.id, newBudget);
-      setMsg(`Budget updated to $${newBudget}k`);
-      setTimeout(onClose, 1200);
+      await apiAdminSetTeamState(user.id, fields);
+      setMsg('Saved!');
+      setTimeout(onClose, 1000);
     } catch (e) {
       setMsg('Error: ' + e.message);
     }
     setSaving(false);
   }
 
+  const NumField = ({ label, fieldKey, min, max, step = 1, presets }) => (
+    <div style={{ marginBottom: 14 }}>
+      <label style={{ display: 'flex', justifyContent: 'space-between', fontWeight: 600, fontSize: 'var(--font-size-sm)', marginBottom: 4 }}>
+        {label}
+        <span style={{ fontWeight: 900, color: 'var(--color-primary)' }}>{fields[fieldKey]}</span>
+      </label>
+      <input
+        type="range" min={min} max={max} step={step} value={fields[fieldKey]}
+        onChange={e => set(fieldKey, e.target.value)}
+        style={{ width: '100%', marginBottom: 4 }}
+      />
+      {presets && (
+        <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
+          {presets.map(v => (
+            <button key={v} className="btn btn-sm" style={{ background: 'var(--bg-muted)', padding: '2px 8px', fontSize: '0.7rem' }}
+              onClick={() => set(fieldKey, v)}>{v}</button>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+
   return (
     <div className="modal-overlay" onClick={onClose}>
-      <div className="modal" onClick={e => e.stopPropagation()} style={{ maxWidth: 400 }}>
+      <div className="modal" onClick={e => e.stopPropagation()} style={{ maxWidth: 440 }}>
         <div className="modal-header">
-          <h3 className="card-title">Edit Budget — {user.username || user.email}</h3>
+          <h3 className="card-title">Edit Team State — {user.username || user.email}</h3>
           <button className="btn btn-ghost btn-sm" onClick={onClose}><X size={16} /></button>
         </div>
-        <div className="modal-body">
-          <div style={{ marginBottom: 12 }}>
-            <label style={{ display: 'block', fontWeight: 600, marginBottom: 6, fontSize: 'var(--font-size-sm)' }}>Budget (in $k)</label>
-            <input
-              type="number" className="input" value={newBudget}
-              onChange={e => setNewBudget(Number(e.target.value))}
-              style={{ width: '100%' }}
-            />
-          </div>
-          <div style={{ display: 'flex', gap: 8, marginBottom: 16, flexWrap: 'wrap' }}>
-            {[100, 500, 1000].map(bonus => (
-              <button key={bonus} className="btn btn-sm" style={{ background: 'var(--bg-muted)' }}
-                onClick={() => setNewBudget(v => v + bonus)}>
-                +${bonus}k
-              </button>
-            ))}
-          </div>
-          {msg && <div style={{ marginBottom: 12, color: msg.startsWith('Error') ? 'var(--color-danger)' : 'var(--color-success)', fontWeight: 600, fontSize: 'var(--font-size-sm)' }}>{msg}</div>}
-          <button className="btn btn-primary btn-sm" onClick={handleSave} disabled={saving}>
-            {saving ? 'Saving…' : <><Check size={14} /> Save Budget</>}
+        <div className="modal-body" style={{ maxHeight: '75vh', overflowY: 'auto' }}>
+          <NumField label="Budget ($k)" fieldKey="budget" min={-500} max={5000} step={50} presets={[0, 500, 1000, 1500]} />
+          <NumField label="Fan Count" fieldKey="fanCount" min={0} max={100000} step={50} presets={[250, 1000, 5000]} />
+          <NumField label="Fan Enthusiasm (0–100)" fieldKey="fanEnthusiasm" min={0} max={100} presets={[20, 50, 75]} />
+          <NumField label="Motivation Bar (0–100)" fieldKey="motivationBar" min={0} max={100} presets={[40, 60, 80]} />
+          <NumField label="Chemistry Gauge (0–100)" fieldKey="chemistryGauge" min={0} max={100} presets={[40, 60, 80]} />
+          <NumField label="Momentum Bar (0–100)" fieldKey="momentumBar" min={0} max={100} presets={[40, 65, 85]} />
+          {msg && <div style={{ marginBottom: 10, color: msg.startsWith('Error') ? 'var(--color-danger)' : 'var(--color-success)', fontWeight: 600, fontSize: 'var(--font-size-sm)' }}>{msg}</div>}
+          <button className="btn btn-primary btn-sm" onClick={handleSave} disabled={saving} style={{ width: '100%', marginTop: 8 }}>
+            {saving ? 'Saving…' : <><Check size={14} /> Save Changes</>}
           </button>
         </div>
       </div>
     </div>
   );
 }
+
+// Keep the old BudgetEditModal name as alias so UsersView still works
+const BudgetEditModal = TeamStateEditModal;
 
 // ── Users View ────────────────────────────────────────────────
 
