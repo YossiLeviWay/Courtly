@@ -113,8 +113,10 @@ function buildUserTeam(leagues, userState) {
     lastMatchBrainHighlights: userState.lastMatchBrainHighlights ?? [],
     lastWeekFanGrowth:     userState.lastWeekFanGrowth     ?? null,
     trainingHighlights:    userState.trainingHighlights    ?? [],
-    financeLog:            userState.financeLog            ?? [],
-    lastWeeklyFinanceTick: userState.lastWeeklyFinanceTick ?? 0,
+    financeLog:              userState.financeLog              ?? [],
+    lastWeeklyFinanceTick:   userState.lastWeeklyFinanceTick   ?? 0,
+    fanWeeklyHistory:        userState.fanWeeklyHistory        ?? [],
+    lastInvestmentTimestamp: userState.lastInvestmentTimestamp ?? 0,
     wins:         derivedRecord.wins,
     losses:       derivedRecord.losses,
     seasonRecord: derivedRecord,
@@ -163,8 +165,10 @@ function extractUserState(state) {
     lastMatchBrainHighlights: t.lastMatchBrainHighlights ?? [],
     lastWeekFanGrowth:   t.lastWeekFanGrowth   ?? null,
     trainingHighlights:  t.trainingHighlights  ?? [],
-    financeLog:          t.financeLog          ?? [],
-    lastWeeklyFinanceTick: t.lastWeeklyFinanceTick ?? 0,
+    financeLog:              t.financeLog              ?? [],
+    lastWeeklyFinanceTick:   t.lastWeeklyFinanceTick   ?? 0,
+    fanWeeklyHistory:        t.fanWeeklyHistory        ?? [],
+    lastInvestmentTimestamp: t.lastInvestmentTimestamp ?? 0,
     seasonRecord:   { wins: t.wins ?? 0, losses: t.losses ?? 0 },
     profileData: {
       bio:                  state.user?.bio                  || '',
@@ -454,11 +458,25 @@ export function GameProvider({ children }) {
         const weeksPlayed = userStateRes.state.weeksPlayed ?? 0;
         const seniorityMult = Math.min(1 + weeksPlayed * 0.01, 1.5);
         const growth = Math.max(1, Math.round((baseGrowth + resultBonus) * seniorityMult));
-        userStateRes.state.fanCount = (userStateRes.state.fanCount ?? 250) + growth;
+        const prevFanCount = userStateRes.state.fanCount ?? 250;
+        userStateRes.state.fanCount = prevFanCount + growth;
         userStateRes.state.lastFanGrowthDate = now;
         userStateRes.state.weeksPlayed = weeksPlayed + 1;
         // Store fan growth info for display in Fans.jsx
         userStateRes.state.lastWeekFanGrowth = { growth, recentWins, recentLosses };
+        // Append to weekly history (keep up to 52 weeks)
+        const historyEntry = {
+          week: weeksPlayed + 1,
+          date: now,
+          growth,
+          total: prevFanCount + growth,
+          recentWins,
+          recentLosses,
+        };
+        userStateRes.state.fanWeeklyHistory = [
+          historyEntry,
+          ...(userStateRes.state.fanWeeklyHistory ?? []),
+        ].slice(0, 52);
         fanGrowthApplied = true;
       }
 
