@@ -136,8 +136,9 @@ export default function Dashboard() {
 
   const [selectedMatch, setSelectedMatch] = useState(null);
   const [selectedPlayer, setSelectedPlayer] = useState(null);
+  const [showFanHistory, setShowFanHistory] = useState(false);
 
-  const { seasonRecord, motivationBar, momentumBar, chemistryGauge, budget, fanCount, matchHistory, seasonMatches, players, financeLog } = userTeam;
+  const { seasonRecord, motivationBar, momentumBar, chemistryGauge, budget, fanCount, matchHistory, seasonMatches, players, financeLog, fanWeeklyHistory } = userTeam;
 
   // ── Next match (earliest unplayed, sorted by date) ───────
   const upcomingMatch = seasonMatches
@@ -174,20 +175,41 @@ export default function Dashboard() {
   const highForm = activePlayers.filter((p) => p.lastFormRating >= 75);
   const lowFatigue = activePlayers.filter((p) => p.fatigue < 20);
 
-  // ── League position ───────────────────────────────────────
+  // ── League position + schedule-derived record (same source as League page) ──
+  // Derive W/L by walking the schedule so Dashboard always matches League page.
   let leaguePosition = '–';
-  if (state.leagues) {
-    const userLeague = state.leagues.find((lg) =>
-      lg.teams ? lg.teams.some((t) => t.id === userTeam.id) : false
-    );
-    if (userLeague && userLeague.standings) {
-      const sorted = [...userLeague.standings].sort(
-        (a, b) => b.wins - a.wins || a.losses - b.losses
-      );
-      const idx = sorted.findIndex((s) => s.teamId === userTeam.id);
-      leaguePosition = idx >= 0 ? `#${idx + 1}` : '–';
-    }
+  let scheduleWins = seasonRecord?.wins ?? 0;
+  let scheduleLosses = seasonRecord?.losses ?? 0;
+  const userLeague = state.leagues?.find(lg => lg.teams?.some(t => t.id === userTeam.id));
+  if (userLeague?.schedule) {
+    const winsMap = {}, lossesMap = {};
+    userLeague.schedule
+      .filter(m => m.played && m.result?.homeScore != null)
+      .forEach(m => {
+        const homeWon = m.result.homeScore > m.result.awayScore;
+        winsMap[m.homeTeamId]   = (winsMap[m.homeTeamId]   ?? 0) + (homeWon ? 1 : 0);
+        lossesMap[m.homeTeamId] = (lossesMap[m.homeTeamId] ?? 0) + (homeWon ? 0 : 1);
+        winsMap[m.awayTeamId]   = (winsMap[m.awayTeamId]   ?? 0) + (homeWon ? 0 : 1);
+        lossesMap[m.awayTeamId] = (lossesMap[m.awayTeamId] ?? 0) + (homeWon ? 1 : 0);
+      });
+
+    scheduleWins   = winsMap[userTeam.id]   ?? scheduleWins;
+    scheduleLosses = lossesMap[userTeam.id] ?? scheduleLosses;
+
+    // Position: sort all teams by the same schedule-derived W/L
+    const allTeamIds = (userLeague.teams || []).map(t => t.id);
+    const sorted = allTeamIds
+      .map(id => ({ id, wins: winsMap[id] ?? 0, losses: lossesMap[id] ?? 0 }))
+      .sort((a, b) => b.wins - a.wins || a.losses - b.losses);
+    const idx = sorted.findIndex(t => t.id === userTeam.id);
+    leaguePosition = idx >= 0 ? `#${idx + 1}` : '–';
+  } else if (userLeague?.standings) {
+    // Fallback to standings if schedule not available
+    const sorted = [...userLeague.standings].sort((a, b) => b.wins - a.wins || a.losses - b.losses);
+    const idx = sorted.findIndex(s => s.teamId === userTeam.id);
+    leaguePosition = idx >= 0 ? `#${idx + 1}` : '–';
   }
+  const gamesPlayed = scheduleWins + scheduleLosses;
 
   return (
     <div className="page-content animate-fade-in">
@@ -230,8 +252,8 @@ export default function Dashboard() {
         <StatCard
           icon={<Trophy size={18} />}
           label="Season Record"
-          value={`${seasonRecord.wins}–${seasonRecord.losses}`}
-          sub={`${seasonRecord.wins + seasonRecord.losses} games played`}
+          value={`${scheduleWins}–${scheduleLosses}`}
+          sub={`${gamesPlayed} game${gamesPlayed !== 1 ? 's' : ''} played`}
         />
         <StatCard
           icon={<TrendingUp size={18} />}
@@ -245,12 +267,27 @@ export default function Dashboard() {
           value={`$${budget?.toLocaleString?.() ?? budget}`}
           sub="Available funds"
         />
-        <StatCard
-          icon={<Users size={18} />}
-          label="Fan Count"
-          value={fanCount?.toLocaleString() ?? '–'}
-          sub="Season followers"
-        />
+        <div
+          className="stat-card"
+          onClick={() => setShowFanHistory(true)}
+          style={{ cursor: 'pointer', transition: 'box-shadow 0.15s' }}
+          onMouseEnter={e => e.currentTarget.style.boxShadow = '0 0 0 2px var(--color-primary)'}
+          onMouseLeave={e => e.currentTarget.style.boxShadow = ''}
+          title="Click to see weekly fan growth history"
+        >
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', marginBottom: 'var(--space-2)' }}>
+            <span style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', width: 36, height: 36, borderRadius: 'var(--radius-full)', background: 'var(--color-primary-100)', color: 'var(--color-primary)' }}>
+              <Users size={18} />
+            </span>
+          </div>
+          <div className="stat-value">{fanCount?.toLocaleString() ?? '–'}</div>
+          <div className="stat-label">Fan Count</div>
+          <div className="stat-change" style={{ color: 'var(--color-primary)', fontWeight: 700, fontSize: 'var(--font-size-xs)' }}>
+            {fanWeeklyHistory?.length > 0
+              ? `+${fanWeeklyHistory[0].growth} last week · tap for history`
+              : 'Tap to see history'}
+          </div>
+        </div>
       </div>
 
       {/* Debt alert */}
@@ -298,16 +335,78 @@ export default function Dashboard() {
 
       {/* Team gauges + Next match */}
       <div className="grid-2 mb-6">
-        {/* Morale panel — creative multi-impact design */}
+        {/* Team Pulse panel — Investment Pardon System */}
         {(() => {
+          const now = Date.now();
           const mot  = motivationBar  ?? 60;
           const mom  = momentumBar    ?? 65;
           const chem = chemistryGauge ?? 50;
           const enth = userTeam.fanEnthusiasm ?? 20;
 
-          const overallPulse = Math.round((mot + mom + chem + enth) / 4);
+          // ── Investment Pardon System ──────────────────────────────
+          const lastInvest = userTeam.lastInvestmentTimestamp ?? 0;
+          const daysSinceInvest = lastInvest > 0 ? (now - lastInvest) / 86400000 : 999;
+          const weeksPlayed = userTeam.weeksPlayed ?? 0;
+
+          // Determine investment state
+          const isInvesting   = daysSinceInvest < 7;   // active construction / recent upgrade
+          const isRecent      = daysSinceInvest >= 7  && daysSinceInvest < 14; // pardon window
+          const isStagnating  = daysSinceInvest >= 14 && daysSinceInvest < 30;
+          const isNeglecting  = daysSinceInvest >= 30;
+
+          // Expected minimum facility investment based on team age
+          const getFacLevel = (key) => {
+            const f = userTeam.facilities?.[key];
+            return typeof f === 'number' ? f : (f?.level ?? 0);
+          };
+          const totalFacLevel = ['trainingCourt', 'gym', 'youthAcademy', 'media', 'merchandise',
+            'basketballHall', 'medicalCenter', 'scoutingOffice'].reduce(
+              (sum, k) => sum + getFacLevel(k), 0
+            );
+          const expectedMinTotal = Math.floor(weeksPlayed / 3); // ~1 level per 3 weeks
+          const isBelowExpected  = weeksPlayed >= 4 && totalFacLevel < expectedMinTotal;
+
+          // Calculate gauge penalty modifiers
+          let motPenalty  = 0;
+          let chemPenalty = 0;
+          let enthPenalty = 0;
+          let penaltyReason = '';
+
+          if (!isInvesting && !isRecent) {
+            if (isNeglecting && isBelowExpected) {
+              // Severe neglect (30+ days + below expected)
+              motPenalty  = 15;
+              chemPenalty = 15;
+              enthPenalty = 15;
+              penaltyReason = 'severe_neglect';
+            } else if (isStagnating && isBelowExpected) {
+              // Stagnation (14-30 days + below expected)
+              motPenalty  = 5;
+              chemPenalty = 5;
+              penaltyReason = 'stagnating';
+            }
+          }
+
+          // Effective values (penalties are visual only here; real values come from match engine)
+          const motEff  = Math.max(10, mot  - motPenalty);
+          const momEff  = mom; // momentum not penalised by neglect
+          const chemEff = Math.max(10, chem - chemPenalty);
+          const enthEff = Math.max(5,  enth - enthPenalty);
+
+          const overallPulse = Math.round((motEff + momEff + chemEff + enthEff) / 4);
           const pulseLabel = overallPulse >= 75 ? 'Excellent' : overallPulse >= 55 ? 'Good' : overallPulse >= 35 ? 'Average' : 'Low';
           const pulseColor = overallPulse >= 75 ? '#22c55e' : overallPulse >= 55 ? '#f97316' : overallPulse >= 35 ? '#eab308' : '#ef4444';
+
+          // Investment state badge config
+          const investBadge = isInvesting
+            ? { label: '🏗️ Investing', color: '#22c55e', bg: 'rgba(34,197,94,0.12)', desc: 'Players see progress — all penalties waived' }
+            : isRecent
+            ? { label: '✅ Pardon', color: '#22c55e', bg: 'rgba(34,197,94,0.08)', desc: 'Recent upgrade keeps morale protected' }
+            : isStagnating && isBelowExpected
+            ? { label: '⚠️ Stagnating', color: '#eab308', bg: 'rgba(234,179,8,0.10)', desc: '14+ days without investment — minor penalty active' }
+            : isNeglecting && isBelowExpected
+            ? { label: '🔴 Neglect', color: '#ef4444', bg: 'rgba(239,68,68,0.10)', desc: '30+ days — severe morale & fan penalty active' }
+            : null;
 
           function getStatus(v) {
             if (v >= 70) return { label: 'High', color: '#22c55e' };
@@ -319,52 +418,60 @@ export default function Dashboard() {
             {
               label: 'Motivation',
               icon: '🔥',
-              value: mot,
+              value: motEff,
+              rawValue: mot,
+              penalty: motPenalty,
               type: 'motivation',
               impacts: [
-                { area: '⚔️ Attack', detail: mot >= 70 ? `+${Math.round((mot-50)*0.08)}% scoring` : mot < 45 ? '−shot quality' : 'neutral' },
-                { area: '🏀 Plays', detail: mot >= 70 ? 'clutch shots ↑' : 'inconsistent' },
-                { area: '👥 Fans', detail: mot >= 60 ? 'growing faster' : 'slow growth' },
+                { area: '⚔️ Attack', detail: motEff >= 70 ? `+${Math.round((motEff-50)*0.08)}% scoring` : motEff < 45 ? '−shot quality' : 'neutral' },
+                { area: '🏀 Clutch', detail: motEff >= 70 ? 'clutch shots ↑' : motEff < 45 ? 'chokes ↑' : 'average' },
+                { area: '👥 Fans', detail: motEff >= 60 ? 'growing faster' : 'slow growth' },
               ],
             },
             {
               label: 'Momentum',
               icon: '⚡',
-              value: mom,
+              value: momEff,
+              rawValue: mom,
+              penalty: 0,
               type: 'momentum',
               impacts: [
-                { area: '📊 All Stats', detail: mom >= 70 ? `+${Math.round((mom-50)*0.06)}% boost` : mom < 45 ? 'stats dip' : 'baseline' },
-                { area: '🛡️ Defence', detail: mom >= 65 ? 'solid rotations' : 'breakdowns' },
-                { area: '🏟️ Crowd', detail: mom >= 60 ? 'home roar ↑' : 'quiet crowd' },
+                { area: '📊 All Stats', detail: momEff >= 70 ? `+${Math.round((momEff-50)*0.06)}% boost` : momEff < 45 ? 'stats dip' : 'baseline' },
+                { area: '🛡️ Defence', detail: momEff >= 65 ? 'solid rotations' : 'breakdowns' },
+                { area: '🏟️ Crowd', detail: momEff >= 60 ? 'home roar ↑' : 'quiet crowd' },
               ],
             },
             {
               label: 'Chemistry',
               icon: '🤝',
-              value: chem,
+              value: chemEff,
+              rawValue: chem,
+              penalty: chemPenalty,
               type: 'chemistry',
               impacts: [
-                { area: '🎯 Passing', detail: chem >= 70 ? 'fluid assists ↑' : chem < 40 ? 'turnovers ↑' : 'average' },
-                { area: '🧠 IQ', detail: chem >= 65 ? 'smart cuts ↑' : 'isolation ball' },
-                { area: '🤜 Unity', detail: chem >= 60 ? 'team-first' : 'selfish plays' },
+                { area: '🎯 Passing', detail: chemEff >= 70 ? 'fluid assists ↑' : chemEff < 40 ? 'turnovers ↑' : 'average' },
+                { area: '🧠 IQ', detail: chemEff >= 65 ? 'smart cuts ↑' : 'isolation ball' },
+                { area: '🤜 Unity', detail: chemEff >= 60 ? 'team-first' : 'selfish plays' },
               ],
             },
             {
               label: 'Fan Enthusiasm',
               icon: '💜',
-              value: enth,
+              value: enthEff,
+              rawValue: enth,
+              penalty: enthPenalty,
               type: 'fan',
               impacts: [
-                { area: '📈 Weekly', detail: `+${Math.round((enth/100)*50 + (enth>50?20:0))} new fans` },
-                { area: '🎟️ Tickets', detail: enth >= 60 ? 'high attendance' : enth < 30 ? 'empty seats' : 'half capacity' },
-                { area: '💰 Revenue', detail: enth >= 55 ? 'gate income ↑' : 'low gate $ ' },
+                { area: '📈 Weekly', detail: `+${Math.round((enthEff/100)*50 + (enthEff>50?20:0))} new fans` },
+                { area: '🎟️ Tickets', detail: enthEff >= 60 ? 'high attendance' : enthEff < 30 ? 'empty seats' : 'half capacity' },
+                { area: '💰 Revenue', detail: enthEff >= 55 ? 'gate income ↑' : 'low gate $' },
               ],
             },
           ];
 
           return (
             <div className="card" style={{ padding: 0, overflow: 'hidden' }}>
-              {/* Header with pulse score */}
+              {/* Header */}
               <div style={{
                 background: `linear-gradient(135deg, ${pulseColor}18 0%, ${pulseColor}08 100%)`,
                 borderBottom: `1px solid ${pulseColor}30`,
@@ -376,30 +483,52 @@ export default function Dashboard() {
                   Team Pulse
                 </span>
                 <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                  <div style={{
-                    width: 48, height: 8, borderRadius: 4, background: 'var(--bg-muted)', overflow: 'hidden',
-                  }}>
+                  <div style={{ width: 48, height: 8, borderRadius: 4, background: 'var(--bg-muted)', overflow: 'hidden' }}>
                     <div style={{ width: `${overallPulse}%`, height: '100%', background: pulseColor, borderRadius: 4, transition: 'width 0.4s ease' }} />
                   </div>
                   <span style={{ fontWeight: 900, fontSize: 'var(--font-size-sm)', color: pulseColor }}>{pulseLabel}</span>
                 </div>
               </div>
 
+              {/* Investment Pardon banner */}
+              {investBadge && (
+                <div style={{
+                  padding: '8px 18px',
+                  background: investBadge.bg,
+                  borderBottom: `1px solid ${investBadge.color}30`,
+                  display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8,
+                }}>
+                  <span style={{ fontWeight: 800, fontSize: '0.72rem', color: investBadge.color }}>
+                    {investBadge.label}
+                  </span>
+                  <span style={{ fontSize: '0.65rem', color: 'var(--text-muted)', flex: 1 }}>
+                    {investBadge.desc}
+                  </span>
+                  {lastInvest > 0 && (
+                    <span style={{ fontSize: '0.62rem', color: 'var(--text-muted)', whiteSpace: 'nowrap' }}>
+                      {daysSinceInvest < 1 ? 'Today' : `${Math.floor(daysSinceInvest)}d ago`}
+                    </span>
+                  )}
+                </div>
+              )}
+
               {/* Gauge rows */}
-              <div style={{ padding: '10px 0' }}>
+              <div style={{ padding: '8px 0' }}>
                 {gauges.map(g => {
                   const st = getStatus(g.value);
+                  const hasPenalty = g.penalty > 0;
                   return (
-                    <div key={g.label} style={{
-                      padding: '10px 18px 8px',
-                      borderBottom: '1px solid var(--border-color)',
-                    }}>
-                      {/* Label row */}
-                      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 6 }}>
+                    <div key={g.label} style={{ padding: '9px 18px 7px', borderBottom: '1px solid var(--border-color)' }}>
+                      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 5 }}>
                         <span style={{ display: 'flex', alignItems: 'center', gap: 6, fontWeight: 700, fontSize: 'var(--font-size-xs)', color: 'var(--text-secondary)', textTransform: 'uppercase', letterSpacing: 0.5 }}>
                           {g.icon} {g.label}
                         </span>
                         <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                          {hasPenalty && (
+                            <span style={{ fontSize: '0.6rem', fontWeight: 700, color: '#ef4444', background: 'rgba(239,68,68,0.1)', padding: '1px 6px', borderRadius: 99 }}>
+                              −{g.penalty} neglect
+                            </span>
+                          )}
                           <span style={{ fontSize: '0.65rem', fontWeight: 700, color: st.color, background: `${st.color}18`, padding: '2px 7px', borderRadius: 99 }}>
                             {st.label}
                           </span>
@@ -408,21 +537,14 @@ export default function Dashboard() {
                           </span>
                         </div>
                       </div>
-
-                      {/* Bar */}
-                      <div style={{ height: 7, background: 'var(--bg-muted)', borderRadius: 4, marginBottom: 8, overflow: 'hidden' }}>
+                      <div style={{ height: 7, background: 'var(--bg-muted)', borderRadius: 4, marginBottom: 7, overflow: 'hidden' }}>
                         <div className={`gauge-fill gauge-${g.type}`} style={{ width: `${g.value}%`, height: '100%', borderRadius: 4 }} />
                       </div>
-
-                      {/* Impact chips */}
                       <div style={{ display: 'flex', gap: 5, flexWrap: 'wrap' }}>
                         {g.impacts.map((imp, i) => (
                           <span key={i} style={{
-                            fontSize: '0.63rem', fontWeight: 600,
-                            color: 'var(--text-muted)',
-                            background: 'var(--bg-muted)',
-                            padding: '2px 7px', borderRadius: 99,
-                            whiteSpace: 'nowrap',
+                            fontSize: '0.63rem', fontWeight: 600, color: 'var(--text-muted)',
+                            background: 'var(--bg-muted)', padding: '2px 7px', borderRadius: 99, whiteSpace: 'nowrap',
                           }}>
                             {imp.area}: <strong style={{ color: 'var(--text-secondary)' }}>{imp.detail}</strong>
                           </span>
@@ -748,6 +870,109 @@ export default function Dashboard() {
           </div>
         </div>
       </div>
+
+      {/* Fan history modal */}
+      {showFanHistory && (
+        <div className="modal-overlay" onClick={() => setShowFanHistory(false)}>
+          <div className="modal" onClick={e => e.stopPropagation()} style={{ maxWidth: 520 }}>
+            <div className="modal-header">
+              <div>
+                <h3 className="card-title" style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                  <Users size={16} style={{ color: 'var(--color-primary)' }} />
+                  Fan Growth History
+                </h3>
+                <div style={{ fontSize: 'var(--font-size-xs)', color: 'var(--text-muted)', marginTop: 2 }}>
+                  Weekly fan count since registration · Current: {(fanCount ?? 0).toLocaleString()} fans
+                </div>
+              </div>
+              <button className="btn btn-ghost btn-sm" onClick={() => setShowFanHistory(false)}>✕</button>
+            </div>
+            <div className="modal-body" style={{ maxHeight: '65vh', overflowY: 'auto' }}>
+              {(!fanWeeklyHistory || fanWeeklyHistory.length === 0) ? (
+                <div style={{ textAlign: 'center', padding: 'var(--space-6)', color: 'var(--text-muted)' }}>
+                  <div style={{ fontSize: '2rem', marginBottom: 8 }}>📅</div>
+                  <div style={{ fontWeight: 600 }}>No weekly data yet</div>
+                  <div style={{ fontSize: 'var(--font-size-xs)', marginTop: 4 }}>Fan growth is recorded every Sunday. Check back after the first week!</div>
+                </div>
+              ) : (
+                <>
+                  {/* Mini chart: bar graph of last 10 weeks */}
+                  {fanWeeklyHistory.length >= 2 && (() => {
+                    const recent = [...fanWeeklyHistory].slice(0, 10).reverse();
+                    const maxGrowth = Math.max(...recent.map(w => w.growth), 1);
+                    return (
+                      <div style={{ marginBottom: 20, padding: '12px 16px', background: 'var(--bg-muted)', borderRadius: 'var(--radius-lg)' }}>
+                        <div style={{ fontSize: 'var(--font-size-xs)', fontWeight: 700, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: 0.5, marginBottom: 10 }}>
+                          Growth trend (last {recent.length} weeks)
+                        </div>
+                        <div style={{ display: 'flex', alignItems: 'flex-end', gap: 4, height: 52 }}>
+                          {recent.map((w, i) => (
+                            <div key={i} style={{ flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 2 }}>
+                              <div style={{
+                                width: '100%', borderRadius: 3,
+                                background: w.growth > 0 ? 'var(--color-primary)' : 'var(--color-danger)',
+                                height: `${Math.max(4, (w.growth / maxGrowth) * 44)}px`,
+                                opacity: i === recent.length - 1 ? 1 : 0.6 + (i / recent.length) * 0.4,
+                              }} />
+                            </div>
+                          ))}
+                        </div>
+                        <div style={{ display: 'flex', justifyContent: 'space-between', marginTop: 4 }}>
+                          <span style={{ fontSize: '0.6rem', color: 'var(--text-muted)' }}>Week {recent[0]?.week}</span>
+                          <span style={{ fontSize: '0.6rem', color: 'var(--text-muted)' }}>Week {recent[recent.length - 1]?.week}</span>
+                        </div>
+                      </div>
+                    );
+                  })()}
+
+                  {/* Week-by-week table */}
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-2)' }}>
+                    {fanWeeklyHistory.map((entry, i) => {
+                      const date = new Date(entry.date);
+                      const dateStr = date.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+                      const isPositive = entry.growth > 0;
+                      return (
+                        <div key={i} style={{
+                          display: 'flex', alignItems: 'center', gap: 'var(--space-3)',
+                          padding: 'var(--space-2) var(--space-3)',
+                          borderRadius: 'var(--radius-md)',
+                          background: i === 0 ? 'var(--color-primary-100)' : 'var(--bg-muted)',
+                          border: i === 0 ? '1px solid var(--color-primary)' : 'none',
+                        }}>
+                          <div style={{
+                            width: 36, height: 36, borderRadius: 'var(--radius-full)',
+                            background: isPositive ? 'rgba(34,197,94,0.12)' : 'rgba(239,68,68,0.12)',
+                            display: 'flex', alignItems: 'center', justifyContent: 'center',
+                            flexShrink: 0,
+                            fontWeight: 800, fontSize: 'var(--font-size-xs)',
+                            color: isPositive ? 'var(--color-success)' : 'var(--color-danger)',
+                          }}>
+                            W{entry.week}
+                          </div>
+                          <div style={{ flex: 1, minWidth: 0 }}>
+                            <div style={{ fontWeight: 700, fontSize: 'var(--font-size-sm)' }}>
+                              {isPositive ? `+${entry.growth}` : entry.growth} new fans
+                            </div>
+                            <div style={{ fontSize: 'var(--font-size-xs)', color: 'var(--text-muted)' }}>
+                              {dateStr} · {entry.recentWins}W-{entry.recentLosses}L form
+                            </div>
+                          </div>
+                          <div style={{ textAlign: 'right', flexShrink: 0 }}>
+                            <div style={{ fontWeight: 900, fontSize: 'var(--font-size-base)', color: 'var(--color-primary)' }}>
+                              {(entry.total ?? 0).toLocaleString()}
+                            </div>
+                            <div style={{ fontSize: '0.6rem', color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: 0.3 }}>total</div>
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                </>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Match detail modal (triggered by clicking recent results) */}
       {selectedMatch && (

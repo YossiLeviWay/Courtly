@@ -71,9 +71,11 @@ function normalizeUserState(s) {
     lastWeekFanGrowth:   s.lastWeekFanGrowth   ?? null,
     trainingHighlights:  s.trainingHighlights  ?? [],
     lastMatchBrainHighlights: s.lastMatchBrainHighlights ?? [],
-    financeLog:          s.financeLog          ?? [],
-    lastWeeklyFinanceTick: s.lastWeeklyFinanceTick ?? 0,
-    profileData:         s.profileData         ?? s.profile_data    ?? {},
+    financeLog:            s.financeLog            ?? [],
+    lastWeeklyFinanceTick: s.lastWeeklyFinanceTick  ?? 0,
+    fanWeeklyHistory:      s.fanWeeklyHistory       ?? [],
+    lastInvestmentTimestamp: s.lastInvestmentTimestamp ?? 0,
+    profileData:           s.profileData           ?? s.profile_data ?? {},
     updatedAt:           s.updatedAt           ?? s.updated_at,
   };
 }
@@ -608,9 +610,11 @@ export async function apiSaveUserState(payload) {
       lastWeekFanGrowth:   payload.lastWeekFanGrowth   ?? null,
       trainingHighlights:  payload.trainingHighlights  ?? [],
       lastMatchBrainHighlights: payload.lastMatchBrainHighlights ?? [],
-      financeLog:          (payload.financeLog         ?? []).slice(0, 50),
-      lastWeeklyFinanceTick: payload.lastWeeklyFinanceTick ?? 0,
-      profileData:         payload.profileData         ?? {},
+      financeLog:            (payload.financeLog            ?? []).slice(0, 50),
+      lastWeeklyFinanceTick: payload.lastWeeklyFinanceTick  ?? 0,
+      fanWeeklyHistory:      (payload.fanWeeklyHistory      ?? []).slice(0, 52),
+      lastInvestmentTimestamp: payload.lastInvestmentTimestamp ?? 0,
+      profileData:           payload.profileData            ?? {},
       updatedAt:           Date.now(),
     }, { merge: true });
   } catch (err) {

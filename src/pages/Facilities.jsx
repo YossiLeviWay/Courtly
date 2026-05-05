@@ -565,6 +565,7 @@ export default function Facilities() {
       budget: newBudget,
       facilities: newFacilities,
       financeLog,
+      lastInvestmentTimestamp: Date.now(),
       // Media Center upgrades increase teamExposure, which accelerates weekly fan growth
       ...(key === 'media' ? { teamExposure: currentLevel + 1 } : {}),
     };
