@@ -33,6 +33,15 @@ function timeAgo(ts) {
   return new Date(ts).toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
 }
 
+function fmtMoney(n) {
+  if (n == null) return '–';
+  const abs = Math.abs(n);
+  const sign = n < 0 ? '-' : '';
+  if (abs >= 1_000_000) return `${sign}$${(abs / 1_000_000).toFixed(1)}M`;
+  if (abs >= 1_000) return `${sign}$${(abs / 1_000).toFixed(1)}k`;
+  return `${sign}$${Math.round(abs)}`;
+}
+
 function getPlayerStats(player) {
   const s = player.seasonStats || {};
   const gp = s.gamesPlayed || 1;
@@ -732,9 +741,9 @@ export default function Dashboard() {
                     <span style={{ fontWeight: 800, color: won ? 'var(--color-success)' : 'var(--color-danger)', fontSize: 'var(--font-size-sm)' }}>
                       {displayScore}
                     </span>
-                    {m.date && (
+                    {(m.date || m.matchDate) && (
                       <span style={{ fontSize: 'var(--font-size-xs)', color: 'var(--text-muted)' }}>
-                        {formatDate(m.date)}
+                        {formatDate(m.date || m.matchDate)}
                       </span>
                     )}
                     {hasMatchId && <span style={{ fontSize: 'var(--font-size-xs)', color: 'var(--color-primary)' }}>›</span>}
@@ -752,24 +761,14 @@ export default function Dashboard() {
               <Star size={16} style={{ color: 'var(--color-primary)' }} />
               Top Performers
             </span>
-            {lastGameTopPerformers ? (
-              <span style={{ fontSize: 'var(--font-size-xs)', color: 'var(--color-primary)', fontWeight: 700 }}>
-                vs {lastGameTopPerformers.opponent}
-              </span>
-            ) : (
-              <span style={{ fontSize: 'var(--font-size-xs)', color: 'var(--text-muted)' }}>Season avg</span>
-            )}
+            <span style={{ fontSize: 'var(--font-size-xs)', color: 'var(--text-muted)' }}>Season avg</span>
           </div>
           <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-3)' }}>
-            {(lastGameTopPerformers ? [
-              { label: 'Top Scorer',    player: activePlayers.find(p => p.id === lastGameTopPerformers.topScorer?.playerId)    || { name: lastGameTopPerformers.topScorer?.name,    id: lastGameTopPerformers.topScorer?.playerId },    stat: `${lastGameTopPerformers.topScorer?.pts ?? 0} PTS` },
-              { label: 'Top Rebounder', player: activePlayers.find(p => p.id === lastGameTopPerformers.topRebounder?.playerId) || { name: lastGameTopPerformers.topRebounder?.name, id: lastGameTopPerformers.topRebounder?.playerId }, stat: `${lastGameTopPerformers.topRebounder?.reb ?? 0} REB` },
-              { label: 'Assist Leader', player: activePlayers.find(p => p.id === lastGameTopPerformers.topAssister?.playerId)  || { name: lastGameTopPerformers.topAssister?.name,  id: lastGameTopPerformers.topAssister?.playerId },  stat: `${lastGameTopPerformers.topAssister?.ast ?? 0} AST` },
-            ] : [
+            {[
               { label: 'Top Scorer',    player: topScorer,    stat: topScorer    ? `${getPlayerStats(topScorer).pts} PPG`    : '–' },
               { label: 'Top Rebounder', player: topRebounder, stat: topRebounder ? `${getPlayerStats(topRebounder).reb} RPG` : '–' },
               { label: 'Assist Leader', player: topAssister,  stat: topAssister  ? `${getPlayerStats(topAssister).ast} APG`  : '–' },
-            ]).map(({ label, player, stat }) => (
+            ].map(({ label, player, stat }) => (
               <div
                 key={label}
                 onClick={player ? () => setSelectedPlayer(player) : undefined}
@@ -844,6 +843,9 @@ export default function Dashboard() {
                 facility_upgrade: '🏗️',
                 player_signed: '✍️',
                 interest_penalty: '📉',
+                monthly_revenue: '📺',
+                monthly_expenses: '💸',
+                bankruptcy_reset: '⚠️',
               }[entry.type] || '💰';
               return (
                 <div key={i} style={{
@@ -857,10 +859,10 @@ export default function Dashboard() {
                     {entry.description}
                   </span>
                   <span style={{ fontWeight: 800, fontSize: 'var(--font-size-sm)', color: isPositive ? 'var(--color-success)' : 'var(--color-danger)', whiteSpace: 'nowrap' }}>
-                    {isPositive ? '+' : ''}${entry.amount}k
+                    {isPositive ? `+${fmtMoney(entry.amount)}` : fmtMoney(entry.amount)}
                   </span>
                   <span style={{ fontSize: 'var(--font-size-xs)', color: 'var(--text-muted)', whiteSpace: 'nowrap', minWidth: 44, textAlign: 'right' }}>
-                    ${entry.balanceAfter}k
+                    {fmtMoney(entry.balanceAfter)}
                   </span>
                 </div>
               );

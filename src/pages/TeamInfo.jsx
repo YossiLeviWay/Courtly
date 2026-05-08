@@ -52,11 +52,24 @@ export default function TeamInfo() {
 
   if (!team) return <div className="empty-state"><div className="empty-state-title">No team data</div></div>;
 
-  const wins = team.seasonRecord?.wins || 0;
-  const losses = team.seasonRecord?.losses || 0;
-  // Use real played count from calendar (seasonMatches), fall back to wins+losses
-  const calendarPlayed = (team.seasonMatches || []).filter(m => m.played).length;
-  const played = calendarPlayed || (wins + losses);
+  let wins = team.seasonRecord?.wins || 0;
+  let losses = team.seasonRecord?.losses || 0;
+  const userLeagueForStats = state.leagues?.find(lg => lg.teams?.some(t => t.id === team.id));
+  if (userLeagueForStats?.schedule) {
+    const wMap = {}, lMap = {};
+    userLeagueForStats.schedule
+      .filter(m => m.played && m.result?.homeScore != null)
+      .forEach(m => {
+        const hw = m.result.homeScore > m.result.awayScore;
+        wMap[m.homeTeamId] = (wMap[m.homeTeamId] ?? 0) + (hw ? 1 : 0);
+        lMap[m.homeTeamId] = (lMap[m.homeTeamId] ?? 0) + (hw ? 0 : 1);
+        wMap[m.awayTeamId] = (wMap[m.awayTeamId] ?? 0) + (hw ? 0 : 1);
+        lMap[m.awayTeamId] = (lMap[m.awayTeamId] ?? 0) + (hw ? 1 : 0);
+      });
+    wins   = wMap[team.id] ?? wins;
+    losses = lMap[team.id] ?? losses;
+  }
+  const played = wins + losses;
   const totalWins = team.overallRecord?.wins || wins;
   const totalLosses = team.overallRecord?.losses || losses;
 
@@ -72,23 +85,37 @@ export default function TeamInfo() {
   }
   const streakText = streak > 0 ? `${streak}-Game ${streakType === 'W' ? 'Winning' : 'Losing'} Streak` : 'No streak';
 
-  // Find league position using actual league standings
+  // Find league position using schedule-derived W/L (same as Dashboard and League page)
   let position = '—';
-  if (state.leagues) {
-    const userLeague = state.leagues.find(lg => lg.teams?.some(t => t.id === team.id));
-    if (userLeague?.standings?.length) {
-      const sortedStandings = [...userLeague.standings].sort((a, b) =>
-        b.wins - a.wins || a.losses - b.losses
-      );
-      const idx = sortedStandings.findIndex(s => s.teamId === team.id);
-      if (idx >= 0) position = `#${idx + 1}`;
-    } else {
-      // Fallback: sort all teams by wins
-      const leagueTeams = state.allTeams || [];
-      const sortedTeams = [...leagueTeams].sort((a, b) => (b.seasonRecord?.wins || 0) - (a.seasonRecord?.wins || 0));
-      const idx = sortedTeams.findIndex(t => t.id === team.id);
-      if (idx >= 0) position = `#${idx + 1}`;
-    }
+  if (userLeagueForStats?.schedule) {
+    const wMap2 = {}, lMap2 = {};
+    userLeagueForStats.schedule
+      .filter(m => m.played && m.result?.homeScore != null)
+      .forEach(m => {
+        const hw = m.result.homeScore > m.result.awayScore;
+        wMap2[m.homeTeamId] = (wMap2[m.homeTeamId] ?? 0) + (hw ? 1 : 0);
+        lMap2[m.homeTeamId] = (lMap2[m.homeTeamId] ?? 0) + (hw ? 0 : 1);
+        wMap2[m.awayTeamId] = (wMap2[m.awayTeamId] ?? 0) + (hw ? 0 : 1);
+        lMap2[m.awayTeamId] = (lMap2[m.awayTeamId] ?? 0) + (hw ? 1 : 0);
+      });
+    const allTeamIds = (userLeagueForStats.teams || []).map(t => t.id);
+    const sortedTeams = allTeamIds
+      .map(id => ({ id, wins: wMap2[id] ?? 0, losses: lMap2[id] ?? 0 }))
+      .sort((a, b) => b.wins - a.wins || a.losses - b.losses);
+    const idx = sortedTeams.findIndex(t => t.id === team.id);
+    if (idx >= 0) position = `#${idx + 1}`;
+  } else if (userLeagueForStats?.standings?.length) {
+    const sortedStandings = [...userLeagueForStats.standings].sort((a, b) =>
+      b.wins - a.wins || a.losses - b.losses
+    );
+    const idx = sortedStandings.findIndex(s => s.teamId === team.id);
+    if (idx >= 0) position = `#${idx + 1}`;
+  } else if (state.leagues) {
+    // Fallback: sort all teams by wins
+    const leagueTeams = state.allTeams || [];
+    const sortedTeamsFb = [...leagueTeams].sort((a, b) => (b.seasonRecord?.wins || 0) - (a.seasonRecord?.wins || 0));
+    const idx = sortedTeamsFb.findIndex(t => t.id === team.id);
+    if (idx >= 0) position = `#${idx + 1}`;
   }
 
   const leaders = getUniqueLeaders(team.players);
@@ -136,7 +163,7 @@ export default function TeamInfo() {
             </div>
             <div className="flex gap-2 mt-2">
               <span className="badge" style={{ background: 'rgba(255,255,255,0.2)', color: 'white' }}>
-                Liga C · {position}
+                {userLeagueForStats?.name || 'Liga C'} · {position}
               </span>
               <span className="badge" style={{ background: 'rgba(255,255,255,0.2)', color: 'white' }}>
                 {repInfo[3]} {repInfo[2]}
