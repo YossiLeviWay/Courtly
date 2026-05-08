@@ -118,6 +118,9 @@ function buildUserTeam(leagues, userState) {
     fanWeeklyHistory:        userState.fanWeeklyHistory        ?? [],
     lastInvestmentTimestamp: userState.lastInvestmentTimestamp ?? 0,
     lastGameTopPerformers:   userState.lastGameTopPerformers   ?? null,
+    lastMonthlyFinanceTick:  userState.lastMonthlyFinanceTick  ?? 0,
+    consecutiveDebtSeasons:  userState.consecutiveDebtSeasons  ?? 0,
+    consecutiveDebtSeasonLastCheck: userState.consecutiveDebtSeasonLastCheck ?? 0,
     wins:         derivedRecord.wins,
     losses:       derivedRecord.losses,
     seasonRecord: derivedRecord,
@@ -171,6 +174,9 @@ function extractUserState(state) {
     fanWeeklyHistory:        t.fanWeeklyHistory        ?? [],
     lastInvestmentTimestamp: t.lastInvestmentTimestamp ?? 0,
     lastGameTopPerformers:   t.lastGameTopPerformers   ?? null,
+    lastMonthlyFinanceTick:  t.lastMonthlyFinanceTick  ?? 0,
+    consecutiveDebtSeasons:  t.consecutiveDebtSeasons  ?? 0,
+    consecutiveDebtSeasonLastCheck: t.consecutiveDebtSeasonLastCheck ?? 0,
     seasonRecord:   { wins: t.wins ?? 0, losses: t.losses ?? 0 },
     profileData: {
       bio:                  state.user?.bio                  || '',
@@ -532,6 +538,65 @@ export function GameProvider({ children }) {
         fanGrowthApplied = true; // ensure save happens
       }
 
+      // ── Monthly finance tick (wages, TV/sponsorship revenue) ──────
+      // Once per 30 days: deduct player/staff wages, facility maintenance, ops; add TV + sponsorship.
+      const THIRTY_DAYS = 30 * 24 * 60 * 60 * 1000;
+      const lastMonthlyFinanceTick = userStateRes.state?.lastMonthlyFinanceTick ?? 0;
+      if (userStateRes.state && lastMonthlyFinanceTick + THIRTY_DAYS <= now) {
+        const mFacilities = userStateRes.state.facilities ?? {};
+        const getMFacLevel = (key) => {
+          const f = mFacilities[key];
+          return typeof f === 'number' ? f : (f?.level ?? 0);
+        };
+        const mPlayers = userStateRes.state.playersState ?? [];
+        const mStaff = Object.values(userStateRes.state.staff ?? {});
+        const mLeagueTier = (() => {
+          const mLeague = simulatedLeagues.find(l => l.teams?.some(t => t.id === userStateRes.state.teamId));
+          return mLeague?.tier ?? mLeague?.id?.slice(-1) ?? 'C';
+        })();
+        const mReputation = userStateRes.state.reputation ?? 10;
+        const mFinLog = userStateRes.state.financeLog ?? [];
+
+        // Expenses
+        const playerWages = mPlayers.reduce((sum, p) => sum + (p.salary ?? 5) * 8, 0);
+        const staffWages = mStaff.reduce((sum, s) => sum + (s.salary ?? 100), 0);
+        const totalFacLevels = Object.values(mFacilities).reduce((sum, f) => {
+          return sum + (typeof f === 'number' ? f : (f?.level ?? 0));
+        }, 0);
+        const facMaintenance = totalFacLevels * 15;
+        const generalOps = 200;
+        const totalExpenses = playerWages + staffWages + facMaintenance + generalOps;
+
+        // Revenue
+        const tvRevenue = { A: 500, B: 250, C: 100 }[mLeagueTier] ?? 100;
+        const sponsorship = Math.round(mReputation * 10 + 100);
+
+        let mBudget = userStateRes.state.budget ?? 50;
+
+        mBudget -= totalExpenses;
+        mFinLog.unshift({
+          timestamp: now,
+          type: 'monthly_expenses',
+          description: `Monthly Expenses — wages $${playerWages + staffWages}, ops $${generalOps + facMaintenance}`,
+          amount: -totalExpenses,
+          balanceAfter: mBudget,
+        });
+
+        mBudget += tvRevenue + sponsorship;
+        mFinLog.unshift({
+          timestamp: now,
+          type: 'monthly_revenue',
+          description: `Monthly Revenue — TV $${tvRevenue}, sponsorship $${sponsorship}`,
+          amount: tvRevenue + sponsorship,
+          balanceAfter: mBudget,
+        });
+
+        userStateRes.state.budget = mBudget;
+        userStateRes.state.financeLog = mFinLog.slice(0, 50);
+        userStateRes.state.lastMonthlyFinanceTick = now;
+        fanGrowthApplied = true;
+      }
+
       // ── Weekly training progression ──────────────────────────────
       // Once per week (Sunday), apply attribute gains based on training plan.
       const TRAINING_ATTR_MAP = {
@@ -664,6 +729,70 @@ export function GameProvider({ children }) {
         }
       }
 
+      // ── Season-end debt check ─────────────────────────────────────
+      // After all season matches are played, check if budget is negative.
+      // Two consecutive debt seasons → full team reset.
+      if (userTeam && userStateRes.state) {
+        const totalSeasonGames = (userTeam.seasonMatches ?? []).length;
+        const playedGames = (userTeam.wins ?? 0) + (userTeam.losses ?? 0);
+        const lastDebtCheck = userStateRes.state.consecutiveDebtSeasonLastCheck ?? 0;
+
+        if (totalSeasonGames > 0 && playedGames >= totalSeasonGames && playedGames > lastDebtCheck) {
+          userStateRes.state.consecutiveDebtSeasonLastCheck = playedGames;
+          const currentBudget = userStateRes.state.budget ?? 0;
+
+          if (currentBudget < 0) {
+            const newDebtSeasons = (userStateRes.state.consecutiveDebtSeasons ?? 0) + 1;
+            userStateRes.state.consecutiveDebtSeasons = newDebtSeasons;
+
+            if (newDebtSeasons >= 2) {
+              // Full reset — wipe players, facilities, and all counters
+              userStateRes.state.budget = 1500;
+              userStateRes.state.playersState = [];
+              userStateRes.state.facilities = {};
+              userStateRes.state.matchHistory = [];
+              userStateRes.state.financeLog = [{
+                timestamp: now,
+                type: 'bankruptcy_reset',
+                description: '⚠️ Team reset: 2 consecutive debt seasons. All assets liquidated.',
+                amount: 0,
+                balanceAfter: 1500,
+              }];
+              userStateRes.state.seasonRecord = { wins: 0, losses: 0 };
+              userStateRes.state.fanCount = 250;
+              userStateRes.state.fanEnthusiasm = 20;
+              userStateRes.state.fanWeeklyHistory = [];
+              userStateRes.state.lastWeekFanGrowth = null;
+              userStateRes.state.lastFanGrowthDate = 0;
+              userStateRes.state.weeksPlayed = 0;
+              userStateRes.state.motivationBar = 60;
+              userStateRes.state.chemistryGauge = 50;
+              userStateRes.state.momentumBar = 65;
+              userStateRes.state.lastWeeklyFinanceTick = 0;
+              userStateRes.state.lastMonthlyFinanceTick = 0;
+              userStateRes.state.lastTrainingApplied = 0;
+              userStateRes.state.lastInvestmentTimestamp = 0;
+              userStateRes.state.lastGameTopPerformers = null;
+              userStateRes.state.trainingHighlights = [];
+              userStateRes.state.consecutiveDebtSeasons = 0;
+              userStateRes.state.consecutiveDebtSeasonLastCheck = 0;
+              dispatch({
+                type: 'ADD_NOTIFICATION',
+                payload: {
+                  id: Date.now(),
+                  message: '⚠️ Your team has been reset! Two consecutive seasons in debt — all assets liquidated.',
+                  type: 'error',
+                  timestamp: now,
+                },
+              });
+            }
+          } else {
+            userStateRes.state.consecutiveDebtSeasons = 0;
+          }
+          fanGrowthApplied = true;
+        }
+      }
+
       const updatedLeagues = simulatedLeagues.map(l => ({
         ...l,
         teams: (l.teams || []).map(t => userTeam && t.id === userTeam.id ? userTeam : t),
@@ -675,6 +804,9 @@ export function GameProvider({ children }) {
         userTeam.budget     = userStateRes.state.budget     ?? userTeam.budget;
         userTeam.financeLog = userStateRes.state.financeLog ?? userTeam.financeLog ?? [];
         userTeam.lastWeeklyFinanceTick = userStateRes.state.lastWeeklyFinanceTick ?? 0;
+        userTeam.lastMonthlyFinanceTick = userStateRes.state.lastMonthlyFinanceTick ?? 0;
+        userTeam.consecutiveDebtSeasons = userStateRes.state.consecutiveDebtSeasons ?? 0;
+        userTeam.consecutiveDebtSeasonLastCheck = userStateRes.state.consecutiveDebtSeasonLastCheck ?? 0;
         if (userStateRes.state.lastGameTopPerformers) {
           userTeam.lastGameTopPerformers = userStateRes.state.lastGameTopPerformers;
         }

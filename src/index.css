@@ -399,7 +399,7 @@ tbody tr:hover { background: var(--bg-card-hover); }
 .live-badge { display: inline-flex; align-items: center; gap: 6px; background: var(--color-danger); color: white; padding: 3px 10px; border-radius: var(--radius-full); font-size: var(--font-size-xs); font-weight: 800; letter-spacing: 1px; text-transform: uppercase; }
 .live-dot { width: 7px; height: 7px; background: white; border-radius: 50%; animation: pulse 1s infinite; }
 
-.modal-overlay { position: fixed; inset: 0; background: rgba(0,0,0,0.5); z-index: 200; display: flex; align-items: center; justify-content: center; padding: var(--space-4); animation: fadeIn 0.2s ease; }
+.modal-overlay { position: fixed; inset: 0; background: rgba(0,0,0,0.5); z-index: 200; display: flex; align-items: flex-start; justify-content: center; padding: min(8vh, 60px) var(--space-4) var(--space-4); overflow-y: auto; animation: fadeIn 0.2s ease; }
 .modal { background: var(--bg-card); border-radius: var(--radius-xl); box-shadow: var(--shadow-xl); max-width: 600px; width: 100%; max-height: 90vh; overflow-y: auto; animation: fadeIn 0.2s ease; }
 .modal-header { display: flex; align-items: center; justify-content: space-between; padding: var(--space-5) var(--space-6); border-bottom: 1px solid var(--border-color); }
 .modal-body { padding: var(--space-6); }

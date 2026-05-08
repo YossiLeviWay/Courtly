@@ -136,9 +136,9 @@ export default function FinancialReport() {
   const staff = Object.values(team.staff || {});
   const facilities = team.facilities || {};
 
-  // ── Revenue ────────────────────────────────────────────────
+  // ── Revenue (matching actual game-economy tick values) ─────
 
-  // Gate revenue (regular seats) — monthly estimate (4 home games/month)
+  // Gate revenue — matchday ticket sales (4 home games/month estimate)
   const HOME_GAMES_MONTH = 4;
   const basketballHallLevel = facilities.basketballHall?.level ?? 0;
   const arenaCapacity = 600 + basketballHallLevel * 200;
@@ -152,38 +152,38 @@ export default function FinancialReport() {
   const monthlyGateRevenue = Math.round(regularSeats * Math.min(attendanceRate, 1) * ticketPrice * HOME_GAMES_MONTH);
   const monthlySeasonTicketRevenue = Math.round(seasonTicketSeats * seasonTicketPrice * HOME_GAMES_MONTH);
 
-  // Merchandise — monthly
-  const merchandisePrice = team.merchandisePrice ?? 30;
+  // Merchandise — weekly passive income × 4
   const merchandiseLevel = facilities.merchandise?.level ?? 0;
-  const monthlyMerchRevenue = Math.round((fanCount * merchandisePrice * 0.01) * (1 + merchandiseLevel * 0.2) * 4);
+  const monthlyMerchRevenue = merchandiseLevel > 0
+    ? Math.round(fanCount * 0.01 * (1 + merchandiseLevel * 0.2)) * 4
+    : 0;
 
-  // TV revenue by league (monthly)
-  const leagueTVRevenue = { A: 50000, B: 20000, C: 5000 };
+  // TV + Sponsorship — from monthly finance tick (actual deducted amounts)
   const leagueTier = team.league ?? 'C';
-  const monthlyTVRevenue = leagueTVRevenue[leagueTier] ?? 5000;
-
-  // Sponsorship — scales with reputation
   const reputation = team.reputation ?? 10;
-  const monthlySponsorship = Math.round(reputation * 200 + 500);
+  const monthlyTVRevenue = { A: 500, B: 250, C: 100 }[leagueTier] ?? 100;
+  const monthlySponsorship = Math.round(reputation * 10 + 100);
 
   const totalMonthlyRevenue = monthlyGateRevenue + monthlySeasonTicketRevenue + monthlyMerchRevenue + monthlyTVRevenue + monthlySponsorship;
 
-  // ── Expenses ───────────────────────────────────────────────
+  // ── Expenses (matching actual monthly finance tick deductions) ─
 
-  // Player wages
-  const monthlyPlayerWages = players.reduce((sum, p) => sum + calcPlayerMonthlyWage(p), 0);
+  // Player wages: player.salary * 8 per month (salary field is in game units/year)
+  const monthlyPlayerWages = players.reduce((sum, p) => sum + (p.salary ?? 5) * 8, 0);
 
-  // Staff wages
-  const monthlyStaffWages = staff.reduce((sum, s) => sum + calcStaffMonthlyWage(s), 0);
+  // Staff wages: staff.salary per month
+  const monthlyStaffWages = staff.reduce((sum, s) => sum + (s.salary ?? 100), 0);
 
-  // Training costs (Training Court + Gym levels)
-  const trainingLevel = (facilities.trainingCourt?.level ?? 0) + (facilities.gym?.level ?? 0);
-  const monthlyTrainingCosts = trainingLevel * 500 + 200;
+  // Facility maintenance: total facility levels × $15/level/month
+  const totalFacLevels = Object.values(facilities).reduce((sum, f) => {
+    return sum + (typeof f === 'number' ? f : (f?.level ?? 0));
+  }, 0);
+  const monthlyFacMaintenance = totalFacLevels * 15;
 
   // General operational costs
-  const monthlyGeneralOps = 1500;
+  const monthlyGeneralOps = 200;
 
-  const totalMonthlyExpenses = monthlyPlayerWages + monthlyStaffWages + monthlyTrainingCosts + monthlyGeneralOps;
+  const totalMonthlyExpenses = monthlyPlayerWages + monthlyStaffWages + monthlyFacMaintenance + monthlyGeneralOps;
 
   const netMonthly = totalMonthlyRevenue - totalMonthlyExpenses;
 
@@ -214,10 +214,18 @@ export default function FinancialReport() {
   const totalLiabilities = 0;
   const equity = totalAssets - totalLiabilities;
 
+  // ── Debt season status ─────────────────────────────────────
+  const consecutiveDebtSeasons = team.consecutiveDebtSeasons ?? 0;
+  const lastMonthlyFinanceTick = team.lastMonthlyFinanceTick ?? 0;
+  const THIRTY_DAYS = 30 * 24 * 60 * 60 * 1000;
+  const nextMonthlyTick = lastMonthlyFinanceTick + THIRTY_DAYS;
+  const msUntilTick = nextMonthlyTick - Date.now();
+  const daysUntilTick = Math.max(0, Math.ceil(msUntilTick / (24 * 60 * 60 * 1000)));
+
   // ── Salary table ───────────────────────────────────────────
   const [salaryTab, setSalaryTab] = useState('players');
-  const sortedPlayers = [...players].sort((a, b) => calcPlayerMonthlyWage(b) - calcPlayerMonthlyWage(a));
-  const sortedStaff = [...staff].sort((a, b) => calcStaffMonthlyWage(b) - calcStaffMonthlyWage(a));
+  const sortedPlayers = [...players].sort((a, b) => (b.salary ?? 5) * 8 - (a.salary ?? 5) * 8);
+  const sortedStaff = [...staff].sort((a, b) => (b.salary ?? 100) - (a.salary ?? 100));
 
   return (
     <div className="page-content animate-fade-in">
@@ -264,11 +272,45 @@ export default function FinancialReport() {
         </div>
       </div>
 
+      {/* ── Consecutive Debt Season Warning ── */}
+      {consecutiveDebtSeasons > 0 && (
+        <div style={{
+          background: consecutiveDebtSeasons >= 2 ? 'rgba(127,0,0,0.12)' : 'rgba(239,68,68,0.08)',
+          border: `1.5px solid ${consecutiveDebtSeasons >= 2 ? '#7f0000' : 'rgba(239,68,68,0.40)'}`,
+          borderRadius: 'var(--radius-lg)',
+          padding: 'var(--space-5)',
+          marginBottom: 'var(--space-6)',
+        }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 'var(--space-3)' }}>
+            <TrendingDown size={20} color="#ef4444" />
+            <span style={{ fontWeight: 800, fontSize: 'var(--font-size-lg)', color: '#ef4444' }}>
+              Debt Season Warning — {consecutiveDebtSeasons}/2 Season{consecutiveDebtSeasons > 1 ? 's' : ''} in Debt
+            </span>
+          </div>
+          <div style={{
+            display: 'flex', gap: 6, marginBottom: 'var(--space-3)',
+          }}>
+            {[1, 2].map(n => (
+              <div key={n} style={{
+                flex: 1, height: 8, borderRadius: 4,
+                background: n <= consecutiveDebtSeasons ? '#ef4444' : 'var(--bg-muted)',
+                border: '1px solid var(--border-color)',
+              }} />
+            ))}
+          </div>
+          <div style={{ fontSize: 'var(--font-size-sm)', color: '#b91c1c', fontWeight: 600, lineHeight: 1.5 }}>
+            {consecutiveDebtSeasons === 1
+              ? 'You ended last season in debt. If you end this season in debt as well, your team will be fully reset — all players, facilities, and progress lost. Get your finances back in the green before the season ends.'
+              : 'DANGER: Two consecutive debt seasons detected. Your team is being reset to its starting state.'}
+          </div>
+        </div>
+      )}
+
       {/* ── Debt Overview (only shown when budget is negative) ── */}
       {cashReserves < 0 && (() => {
         const debtAmount = Math.abs(cashReserves);
-        const monthlyInterest = Math.round(debtAmount * 0.04);
-        const projected3Months = Math.round(debtAmount * Math.pow(1.04, 3));
+        const weeklyInterest = Math.round(debtAmount * 0.05);
+        const projected3Months = Math.round(debtAmount * Math.pow(1.05, 12));
         return (
           <div style={{
             background: 'rgba(239,68,68,0.08)',
@@ -294,10 +336,10 @@ export default function FinancialReport() {
               </div>
               <div>
                 <div style={{ fontSize: 'var(--font-size-xs)', color: 'var(--text-muted)', marginBottom: 2, textTransform: 'uppercase', letterSpacing: 0.5, fontWeight: 700 }}>
-                  Monthly Interest (4%)
+                  Weekly Interest (5%)
                 </div>
                 <div style={{ fontWeight: 900, fontSize: 'var(--font-size-2xl)', color: '#ef4444' }}>
-                  ${monthlyInterest.toLocaleString()}
+                  ${weeklyInterest.toLocaleString()}
                 </div>
               </div>
               <div>
@@ -318,7 +360,7 @@ export default function FinancialReport() {
               fontWeight: 600,
               lineHeight: 1.5,
             }}>
-              Your team is operating with a negative budget. A 4% monthly interest charge is applied to the outstanding debt balance. If left unresolved, the debt will compound — reaching ${projected3Months.toLocaleString()} in just 3 months. To recover, reduce player and staff wages, increase matchday revenue, or upgrade facilities to attract more fans.
+              Your team is operating with a negative budget. A 5% weekly interest charge compounds on the outstanding debt. To recover, win more home games for ticket revenue, sell players, and cut staff costs.
             </div>
           </div>
         );
@@ -345,7 +387,7 @@ export default function FinancialReport() {
           <SectionHeader label="Expenses" />
           <ExpenseRow label={`Player Wages (${players.length} players)`} monthly={monthlyPlayerWages * mult} />
           <ExpenseRow label={`Staff Wages (${staff.length} staff)`} monthly={monthlyStaffWages * mult} />
-          <ExpenseRow label="Training Facility Costs" monthly={monthlyTrainingCosts * mult} />
+          <ExpenseRow label={`Facility Maintenance (${totalFacLevels} levels)`} monthly={monthlyFacMaintenance * mult} />
           <ExpenseRow label="General Operations" monthly={monthlyGeneralOps * mult} highlight />
           <TotalRow label="Total Expenses" value={totalMonthlyExpenses * mult} positive={false} />
 
@@ -403,6 +445,31 @@ export default function FinancialReport() {
               </div>
             ))}
           </div>
+
+          {/* Monthly finance tick countdown */}
+          <div className="card" style={{ padding: 'var(--space-4)' }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 'var(--space-2)' }}>
+              <span style={{ fontSize: 'var(--font-size-sm)', fontWeight: 700 }}>Next Monthly Deduction</span>
+              <span style={{
+                fontWeight: 900,
+                color: daysUntilTick <= 3 ? 'var(--color-danger)' : 'var(--color-primary)',
+              }}>
+                {lastMonthlyFinanceTick === 0 ? 'Soon' : daysUntilTick === 0 ? 'Today' : `${daysUntilTick}d`}
+              </span>
+            </div>
+            <div style={{ background: 'var(--bg-muted)', borderRadius: 6, height: 6, overflow: 'hidden' }}>
+              <div style={{
+                height: '100%',
+                width: `${Math.max(0, Math.min(100, 100 - (daysUntilTick / 30) * 100))}%`,
+                background: daysUntilTick <= 3 ? 'var(--color-danger)' : 'var(--color-primary)',
+                borderRadius: 6,
+                transition: 'width 0.3s',
+              }} />
+            </div>
+            <div style={{ fontSize: 'var(--font-size-xs)', color: 'var(--text-muted)', marginTop: 6 }}>
+              Wages, ops & facility costs deducted every 30 days
+            </div>
+          </div>
         </div>
       </div>
 
@@ -430,7 +497,7 @@ export default function FinancialReport() {
             </div>
             {sortedPlayers.map(p => {
               const ovr = calcPlayerOvr(p);
-              const wage = calcPlayerMonthlyWage(p);
+              const wage = (p.salary ?? 5) * 8;
               return (
                 <div key={p.id} style={{ display: 'grid', gridTemplateColumns: '1fr auto auto auto', gap: 'var(--space-2)', padding: 'var(--space-2) var(--space-3)', borderTop: '1px solid var(--border-color)', alignItems: 'center' }}>
                   <span style={{ fontWeight: 600, fontSize: 'var(--font-size-sm)' }}>{p.name}</span>
@@ -453,7 +520,7 @@ export default function FinancialReport() {
               <span>Staff Member</span><span>Role</span><span>Monthly Wage</span>
             </div>
             {sortedStaff.map(s => {
-              const wage = calcStaffMonthlyWage(s);
+              const wage = s.salary ?? 100;
               return (
                 <div key={s.id} style={{ display: 'grid', gridTemplateColumns: '1fr auto auto', gap: 'var(--space-2)', padding: 'var(--space-2) var(--space-3)', borderTop: '1px solid var(--border-color)', alignItems: 'center' }}>
                   <span style={{ fontWeight: 600, fontSize: 'var(--font-size-sm)' }}>{s.name}</span>

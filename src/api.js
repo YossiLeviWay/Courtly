@@ -76,6 +76,9 @@ function normalizeUserState(s) {
     fanWeeklyHistory:      s.fanWeeklyHistory       ?? [],
     lastInvestmentTimestamp: s.lastInvestmentTimestamp ?? 0,
     lastGameTopPerformers: s.lastGameTopPerformers ?? null,
+    lastMonthlyFinanceTick:      s.lastMonthlyFinanceTick      ?? 0,
+    consecutiveDebtSeasons:      s.consecutiveDebtSeasons      ?? 0,
+    consecutiveDebtSeasonLastCheck: s.consecutiveDebtSeasonLastCheck ?? 0,
     profileData:           s.profileData           ?? s.profile_data ?? {},
     updatedAt:           s.updatedAt           ?? s.updated_at,
   };
@@ -616,6 +619,9 @@ export async function apiSaveUserState(payload) {
       fanWeeklyHistory:      (payload.fanWeeklyHistory      ?? []).slice(0, 52),
       lastInvestmentTimestamp: payload.lastInvestmentTimestamp ?? 0,
       lastGameTopPerformers: payload.lastGameTopPerformers ?? null,
+      lastMonthlyFinanceTick:      payload.lastMonthlyFinanceTick      ?? 0,
+      consecutiveDebtSeasons:      payload.consecutiveDebtSeasons      ?? 0,
+      consecutiveDebtSeasonLastCheck: payload.consecutiveDebtSeasonLastCheck ?? 0,
       profileData:           payload.profileData            ?? {},
       updatedAt:           Date.now(),
     }, { merge: true });
@@ -662,16 +668,59 @@ export async function apiAdminResetAllUsers() {
         chemistryGauge:      50,
         momentumBar:         65,
         lastWeeklyFinanceTick: 0,
+        lastMonthlyFinanceTick: 0,
         lastTrainingApplied: 0,
         lastInvestmentTimestamp: 0,
         lastGameTopPerformers: null,
         trainingHighlights:  [],
+        consecutiveDebtSeasons: 0,
+        consecutiveDebtSeasonLastCheck: 0,
         updatedAt:           Date.now(),
       });
     });
     await batch.commit();
   }
   return snap.docs.length;
+}
+
+/**
+ * Full team reset for a single user (bankruptcy: 2 consecutive debt seasons).
+ * Clears players, facilities, budget, and all counters — same as a fresh registration.
+ */
+export async function apiResetTeamState(uid) {
+  const now = Date.now();
+  await setDoc(doc(db, 'user_team_state', uid), {
+    budget: 1500,
+    playersState: [],
+    facilities: {},
+    matchHistory: [],
+    financeLog: [{
+      timestamp: now,
+      type: 'bankruptcy_reset',
+      description: '⚠️ Team reset: 2 consecutive debt seasons. All assets liquidated.',
+      amount: 0,
+      balanceAfter: 1500,
+    }],
+    seasonRecord: { wins: 0, losses: 0 },
+    fanCount: 250,
+    fanEnthusiasm: 20,
+    fanWeeklyHistory: [],
+    lastWeekFanGrowth: null,
+    lastFanGrowthDate: 0,
+    weeksPlayed: 0,
+    motivationBar: 60,
+    chemistryGauge: 50,
+    momentumBar: 65,
+    lastWeeklyFinanceTick: 0,
+    lastMonthlyFinanceTick: 0,
+    lastTrainingApplied: 0,
+    lastInvestmentTimestamp: 0,
+    lastGameTopPerformers: null,
+    trainingHighlights: [],
+    consecutiveDebtSeasons: 0,
+    consecutiveDebtSeasonLastCheck: 0,
+    updatedAt: now,
+  }, { merge: true });
 }
 
 /** Batch-update the scheduledDate of a set of match documents (one round). */
