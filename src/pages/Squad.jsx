@@ -3,6 +3,7 @@ import { useNavigate } from 'react-router-dom';
 import { useGame } from '../context/GameContext.jsx';
 import { apiFreeAgentRelease } from '../api.js';
 import { calculateOverallRating } from '../engine/playerGenerator.js';
+import { getContractTier } from '../engine/contractEngine.js';
 import GaugeBar from '../components/ui/GaugeBar.jsx';
 import AttrBar from '../components/ui/AttrBar.jsx';
 import PlayerAvatar from '../components/ui/PlayerAvatar.jsx';
@@ -481,6 +482,60 @@ function CaptainDisplay({ players, onSetCaptain, onSetViceCaptain }) {
   );
 }
 
+// ── Contract Alerts ────────────────────────────────────────────
+
+function ContractAlerts({ players, onNavigate }) {
+  const expiring = players.filter(p => (p.contractYears ?? 2) <= 1);
+  if (expiring.length === 0) return null;
+
+  return (
+    <div style={{ marginBottom: 'var(--space-5)', border: '1.5px solid rgba(245,158,11,0.5)', borderRadius: 'var(--radius-lg)', overflow: 'hidden' }}>
+      <div style={{ padding: '10px 16px', background: 'rgba(245,158,11,0.08)', borderBottom: '1px solid rgba(245,158,11,0.3)', display: 'flex', alignItems: 'center', gap: 8 }}>
+        <span style={{ fontSize: '1rem' }}>⚠️</span>
+        <span style={{ fontWeight: 700, fontSize: 'var(--font-size-sm)', color: '#f59e0b' }}>Contract Alerts</span>
+        <span style={{ fontSize: 'var(--font-size-xs)', color: 'var(--text-muted)', marginLeft: 4 }}>{expiring.length} player{expiring.length !== 1 ? 's' : ''} expiring</span>
+      </div>
+      <div style={{ background: 'var(--bg-card)' }}>
+        {expiring.map((p, idx) => {
+          const years = p.contractYears ?? 0;
+          const salary = p.salary ?? 0;
+          const ovr = calcOvr(p);
+          const tier = getContractTier(ovr);
+          const badgeColor = years <= 0 ? 'var(--color-danger)' : '#f59e0b';
+          const badgeBg = years <= 0 ? 'rgba(239,68,68,0.1)' : 'rgba(245,158,11,0.1)';
+          return (
+            <div
+              key={p.id}
+              onClick={() => onNavigate(p.id)}
+              style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '10px 16px', borderBottom: idx < expiring.length - 1 ? '1px solid var(--border-color)' : 'none', cursor: 'pointer', transition: 'background 0.12s' }}
+              onMouseEnter={e => { e.currentTarget.style.background = 'var(--bg-muted)'; }}
+              onMouseLeave={e => { e.currentTarget.style.background = 'transparent'; }}
+            >
+              <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+                <div style={{ width: 28, height: 28, borderRadius: '50%', background: 'var(--color-primary)', color: 'white', fontWeight: 800, fontSize: '0.6rem', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
+                  {p.name?.split(' ').map(n => n[0]).join('').slice(0, 2)}
+                </div>
+                <div>
+                  <div style={{ fontWeight: 700, fontSize: 'var(--font-size-sm)' }}>{p.name}</div>
+                  <span style={{ fontSize: '0.6rem', fontWeight: 700, padding: '1px 6px', borderRadius: 'var(--radius-full)', background: tier.color + '22', color: tier.color, border: `1px solid ${tier.color}44` }}>{p.position}</span>
+                </div>
+              </div>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+                <div style={{ textAlign: 'right' }}>
+                  <div style={{ fontSize: 'var(--font-size-xs)', color: 'var(--text-muted)' }}>${salary}k/yr</div>
+                </div>
+                <div style={{ padding: '3px 10px', borderRadius: 'var(--radius-full)', background: badgeBg, color: badgeColor, fontWeight: 700, fontSize: '0.65rem', border: `1px solid ${badgeColor}44`, whiteSpace: 'nowrap' }}>
+                  {years <= 0 ? 'Expired' : `${years} yr left`}
+                </div>
+              </div>
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
 // ── Main Squad page ────────────────────────────────────────────
 
 export default function Squad() {
@@ -520,6 +575,8 @@ export default function Squad() {
     if (sortBy === 'rating') return calcOvr(b) - calcOvr(a);
     if (sortBy === 'fatigue') return (b.fatigue || 0) - (a.fatigue || 0);
     if (sortBy === 'form') return (b.lastFormRating || 0) - (a.lastFormRating || 0);
+    if (sortBy === 'salary') return (b.salary ?? 0) - (a.salary ?? 0);
+    if (sortBy === 'contract') return (a.contractYears ?? 2) - (b.contractYears ?? 2);
     return 0;
   });
 
@@ -570,6 +627,9 @@ export default function Squad() {
       {/* Squad summary */}
       <SquadSummary players={players} />
 
+      {/* Contract alerts */}
+      <ContractAlerts players={players} onNavigate={(id) => navigate(`/squad/${id}`)} />
+
       {/* Captain display */}
       <CaptainDisplay
         players={players}
@@ -603,6 +663,8 @@ export default function Squad() {
             <option value="rating">Rating</option>
             <option value="fatigue">Fatigue</option>
             <option value="form">Form</option>
+            <option value="salary">Salary</option>
+            <option value="contract">Contract Expiry</option>
           </select>
         </div>
       </div>
@@ -640,13 +702,14 @@ export default function Squad() {
                 </div>
                 <div className="card" style={{ padding: 0, overflow: 'hidden' }}>
                   {/* Table header */}
-                  <div style={{ display: 'grid', gridTemplateColumns: '1fr 52px 60px 60px 60px 56px', gap: 0, padding: '6px 14px', background: 'var(--bg-muted)', borderBottom: '1px solid var(--border-color)', fontSize: '0.6rem', fontWeight: 700, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: 0.5 }}>
+                  <div style={{ display: 'grid', gridTemplateColumns: '1fr 52px 60px 60px 80px 60px 52px', gap: 0, padding: '6px 14px', background: 'var(--bg-muted)', borderBottom: '1px solid var(--border-color)', fontSize: '0.6rem', fontWeight: 700, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: 0.5 }}>
                     <span>Player</span>
                     <span style={{ textAlign: 'center' }}>OVR</span>
                     <span style={{ textAlign: 'center' }}>Fatigue</span>
                     <span style={{ textAlign: 'center' }}>Form</span>
+                    <span style={{ textAlign: 'center' }}>Contract</span>
                     <span style={{ textAlign: 'center' }}>Status</span>
-                    <span style={{ textAlign: 'center' }}>Action</span>
+                    <span style={{ textAlign: 'center' }}>VS</span>
                   </div>
                   {posPlayers.map((player, idx) => {
                     const ovr = calcOvr(player);
@@ -654,11 +717,14 @@ export default function Squad() {
                     const fatigueColor = fatigue > 70 ? 'var(--color-danger)' : fatigue > 40 ? 'var(--color-warning)' : 'var(--color-success)';
                     const injuryStatus = player.injuryStatus || 'healthy';
                     const flag = NATIONALITY_FLAGS[player.nationality] || '🌐';
+                    const contractYears = player.contractYears ?? 2;
+                    const contractSalary = player.salary ?? (ovr >= 85 ? 24 : ovr >= 75 ? 14 : ovr >= 65 ? 7 : 4);
+                    const contractColor = contractYears >= 3 ? 'var(--color-success)' : contractYears === 2 ? '#f59e0b' : 'var(--color-danger)';
                     return (
                       <div key={player.id}
                         onClick={(e) => openPlayerProfile(player, e?.clientX, e?.clientY)}
                         style={{
-                          display: 'grid', gridTemplateColumns: '1fr 52px 60px 60px 60px 56px', gap: 0,
+                          display: 'grid', gridTemplateColumns: '1fr 52px 60px 60px 80px 60px 52px', gap: 0,
                           padding: '10px 14px', alignItems: 'center',
                           borderBottom: idx < posPlayers.length - 1 ? '1px solid var(--border-color)' : 'none',
                           cursor: 'pointer', transition: 'background 0.12s',
@@ -678,7 +744,7 @@ export default function Squad() {
                               {player.isCaptain && <span className="badge badge-orange" style={{ fontSize: '0.55rem', padding: '1px 4px' }}>C</span>}
                               {player.isViceCaptain && <span className="badge badge-yellow" style={{ fontSize: '0.55rem', padding: '1px 4px' }}>VC</span>}
                             </div>
-                            <div style={{ fontSize: '0.65rem', color: 'var(--text-muted)' }}>{flag} {player.nationality ?? ''} · Age {player.age ?? '?'} · ${player.salary ?? (ovr >= 85 ? 24 : ovr >= 75 ? 14 : ovr >= 65 ? 7 : 4)}k</div>
+                            <div style={{ fontSize: '0.65rem', color: 'var(--text-muted)' }}>{flag} {player.nationality ?? ''} · Age {player.age ?? '?'}</div>
                           </div>
                         </div>
                         {/* OVR */}
@@ -693,6 +759,15 @@ export default function Squad() {
                         {/* Form */}
                         <div style={{ textAlign: 'center', fontWeight: 700, fontSize: 'var(--font-size-xs)', color: (player.lastFormRating ?? 50) >= 75 ? 'var(--color-success)' : (player.lastFormRating ?? 50) >= 50 ? 'var(--text-primary)' : 'var(--color-danger)' }}>
                           {player.lastFormRating ?? '—'}
+                        </div>
+                        {/* Contract */}
+                        <div style={{ textAlign: 'center' }}>
+                          <div style={{ fontSize: '0.6rem', fontWeight: 700, color: contractColor, lineHeight: 1.3 }}>
+                            ${contractSalary}k
+                          </div>
+                          <div style={{ fontSize: '0.55rem', color: contractColor, fontWeight: 600 }}>
+                            {contractYears}yr
+                          </div>
                         </div>
                         {/* Status */}
                         <div style={{ textAlign: 'center' }}>
