@@ -4,6 +4,7 @@ import { useGame } from '../context/GameContext.jsx';
 import AttrBar from '../components/ui/AttrBar.jsx';
 import PlayerAvatar from '../components/ui/PlayerAvatar.jsx';
 import { apiGetMatchLog } from '../api.js';
+import { calculateOverallRating } from '../engine/playerGenerator.js';
 import { calculateWageDemand, evaluateOffer, counterOffer, getContractInsights, getContractTier } from '../engine/contractEngine.js';
 
 // ── Nationality flag map ───────────────────────────────────────
@@ -651,7 +652,9 @@ export default function PlayerProfile() {
   const specialLabel = ATTR_LABELS[player.specialAbility] || player.specialAbility;
 
   // Derived salary fallback (same logic as Squad.jsx)
-  const ovr = player.overallRating ?? 60;
+  const ovr = (player.attributes && Object.keys(player.attributes).length > 0)
+    ? (() => { try { return calculateOverallRating(player); } catch { return player.overallRating ?? 60; } })()
+    : (player.overallRating ?? 60);
   const salary = player.salary ?? (ovr >= 85 ? 24 : ovr >= 75 ? 14 : ovr >= 65 ? 7 : 4);
   const contractYears = player.contractYears ?? 2;
 
