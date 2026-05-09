@@ -98,8 +98,11 @@ function buildUserTeam(leagues, userState) {
     training:       profileData.training     ?? {},
     fanCount:       userState.fanCount       ?? 250,
     fanEnthusiasm:  userState.fanEnthusiasm  ?? 20,
-    ticketPrice:    userState.ticketPrice    ?? 20,
-    teamExposure:   userState.teamExposure   ?? 0,
+    ticketPrice:       userState.ticketPrice       ?? 20,
+    seasonTicketSeats: userState.seasonTicketSeats ?? 0,
+    seasonTicketPrice: userState.seasonTicketPrice ?? 15,
+    awayFanPct:        userState.awayFanPct        ?? 10,
+    teamExposure:      userState.teamExposure      ?? 0,
     chemistryGauge: userState.chemistryGauge ?? 50,
     momentumBar:    userState.momentumBar    ?? 65,
     motivationBar:  userState.motivationBar  ?? 60,
@@ -154,8 +157,11 @@ function extractUserState(state) {
     playersState:   t.players        ?? [],
     fanCount:       t.fanCount       ?? 250,
     fanEnthusiasm:  t.fanEnthusiasm  ?? 20,
-    ticketPrice:    t.ticketPrice    ?? 20,
-    teamExposure:   t.teamExposure   ?? 0,
+    ticketPrice:       t.ticketPrice       ?? 20,
+    seasonTicketSeats: t.seasonTicketSeats ?? 0,
+    seasonTicketPrice: t.seasonTicketPrice ?? 15,
+    awayFanPct:        t.awayFanPct        ?? 10,
+    teamExposure:      t.teamExposure      ?? 0,
     chemistryGauge: t.chemistryGauge ?? 50,
     momentumBar:    t.momentumBar    ?? 65,
     motivationBar:  t.motivationBar  ?? 60,
@@ -424,17 +430,35 @@ export function GameProvider({ children }) {
         // Build a Set of matchIds already logged to prevent duplicate entries on re-renders
         const loggedMatchIds = new Set(finLog.map(e => e.matchId).filter(Boolean));
 
+        // Pre-compute attendance multipliers (shared across all home matches this cycle)
+        const mdEnthusiamMult = 0.5 + (fanEnthusiasmForRevenue / 100);
+        const mdHistory = userStateRes.state.matchHistory ?? [];
+        const mdRecentWins = mdHistory.slice(0, 5).filter(m =>
+          m.result === 'W' || (m.teamScore ?? m.userScore ?? 0) > (m.oppScore ?? m.opponentScore ?? 0)
+        ).length;
+        const mdPerfMult = Math.max(0.6, Math.min(1.4, 1 + (mdRecentWins - 2) * 0.05));
+        const mdPriceSens = ticketPriceForRevenue <= 25 ? 1.15 : ticketPriceForRevenue <= 40 ? 1.00 : ticketPriceForRevenue <= 60 ? 0.85 : 0.65;
+        const mdRepMult = 0.8 + (userStateRes.state.reputation ?? 10) / 100;
+        const mdAwayFanPct = userStateRes.state.awayFanPct ?? 10;
+        const mdStSeats = userStateRes.state.seasonTicketSeats ?? 0;
+        const mdAwaySeats = Math.round(stadiumCapacity * (mdAwayFanPct / 100));
+        const mdHomeSeatsAvail = Math.max(0, stadiumCapacity - mdAwaySeats - mdStSeats);
+
         for (const md of homeMatchResults) {
           if (loggedMatchIds.has(md.matchId)) continue; // already logged this game
-          const attendancePct = 0.30 + (fanEnthusiasmForRevenue / 100) * 0.50; // 30–80%
-          const attendance = Math.round(Math.min(stadiumCapacity, fanCountForRevenue) * attendancePct);
-          const revenue = Math.round(attendance * ticketPriceForRevenue);
+          const potentialAttend = Math.round(fanCountForRevenue * mdEnthusiamMult * mdPerfMult * mdPriceSens * mdRepMult);
+          const regularAttend = Math.min(potentialAttend, mdHomeSeatsAvail);
+          const awayFanAttend = Math.round(mdAwaySeats * 0.7);
+          const regularRevenue = Math.round(regularAttend * ticketPriceForRevenue);
+          const awayRevenue = Math.round(awayFanAttend * ticketPriceForRevenue * 0.8);
+          const revenue = regularRevenue + awayRevenue;
           userStateRes.state.budget = (userStateRes.state.budget ?? 50) + revenue;
+          const totalAttend = regularAttend + awayFanAttend + Math.round(mdStSeats * 0.85);
           finLog.unshift({
             matchId: md.matchId,
             timestamp: now,
             type: 'match_day_revenue',
-            description: `Ticket Sales – Home vs ${md.awayTeamName}`,
+            description: `Ticket Sales – Home vs ${md.awayTeamName} (${totalAttend} fans)`,
             amount: revenue,
             balanceAfter: userStateRes.state.budget,
           });
@@ -557,19 +581,34 @@ export function GameProvider({ children }) {
         const mReputation = userStateRes.state.reputation ?? 10;
         const mFinLog = userStateRes.state.financeLog ?? [];
 
+        const mFanCount = userStateRes.state.fanCount ?? 250;
+        const mMediaLevel = getMFacLevel('media');
+        const mArenaCapacity = 600 + getMFacLevel('basketballHall') * 200;
+        const mStSeats = userStateRes.state.seasonTicketSeats ?? 0;
+        const mStPricePerGame = userStateRes.state.seasonTicketPrice ?? 15;
+        const HOME_GAMES_MONTH = 4;
+
         // Expenses
         const playerWages = mPlayers.reduce((sum, p) => sum + (p.salary ?? 5) * 8, 0);
         const staffWages = mStaff.reduce((sum, s) => sum + (s.salary ?? 100), 0);
-        const totalFacLevels = Object.values(mFacilities).reduce((sum, f) => {
-          return sum + (typeof f === 'number' ? f : (f?.level ?? 0));
-        }, 0);
-        const facMaintenance = totalFacLevels * 15;
-        const generalOps = 200;
+        const facMaintenance =
+          getMFacLevel('basketballHall') * 50 +
+          getMFacLevel('media')          * 30 +
+          getMFacLevel('merchandise')    * 25 +
+          getMFacLevel('trainingCourt')  * 40 +
+          getMFacLevel('gym')            * 35 +
+          getMFacLevel('youthAcademy')   * 45 +
+          getMFacLevel('medicalCenter')  * 30 +
+          getMFacLevel('scoutingOffice') * 25;
+        const generalOps = Math.round(200 + mArenaCapacity * 0.05 + mFanCount * 0.02);
         const totalExpenses = playerWages + staffWages + facMaintenance + generalOps;
 
         // Revenue
-        const tvRevenue = { A: 500, B: 250, C: 100 }[mLeagueTier] ?? 100;
-        const sponsorship = Math.round(mReputation * 10 + 100);
+        const baseTVByLeague = { A: 500, B: 250, C: 100 }[mLeagueTier] ?? 100;
+        const tvRevenue = baseTVByLeague + mReputation * 5 + mMediaLevel * 100;
+        const sponsorship = Math.round(100 + mFanCount * 0.2 + mReputation * 10 + mMediaLevel * 150);
+        const seasonTicketMonthly = mStSeats * mStPricePerGame * HOME_GAMES_MONTH;
+        const totalMonthlyNonGate = tvRevenue + sponsorship + seasonTicketMonthly;
 
         let mBudget = userStateRes.state.budget ?? 50;
 
@@ -577,17 +616,17 @@ export function GameProvider({ children }) {
         mFinLog.unshift({
           timestamp: now,
           type: 'monthly_expenses',
-          description: `Monthly Expenses — wages $${playerWages + staffWages}, ops $${generalOps + facMaintenance}`,
+          description: `Monthly Expenses — wages $${playerWages + staffWages}, facility $${facMaintenance}, ops $${generalOps}`,
           amount: -totalExpenses,
           balanceAfter: mBudget,
         });
 
-        mBudget += tvRevenue + sponsorship;
+        mBudget += totalMonthlyNonGate;
         mFinLog.unshift({
           timestamp: now,
           type: 'monthly_revenue',
-          description: `Monthly Revenue — TV $${tvRevenue}, sponsorship $${sponsorship}`,
-          amount: tvRevenue + sponsorship,
+          description: `Monthly Revenue — TV $${tvRevenue}, sponsorship $${sponsorship}${seasonTicketMonthly > 0 ? `, season tickets $${seasonTicketMonthly}` : ''}`,
+          amount: totalMonthlyNonGate,
           balanceAfter: mBudget,
         });
 

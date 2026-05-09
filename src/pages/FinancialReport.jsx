@@ -136,52 +136,97 @@ export default function FinancialReport() {
   const staff = Object.values(team.staff || {});
   const facilities = team.facilities || {};
 
-  // ── Revenue (matching actual game-economy tick values) ─────
+  // ── Facility level helper ─────────────────────────────────────
+  function getFacLevel(key) {
+    const f = facilities[key];
+    return typeof f === 'number' ? f : (f?.level ?? 0);
+  }
 
-  // Gate revenue — matchday ticket sales (4 home games/month estimate)
   const HOME_GAMES_MONTH = 4;
-  const basketballHallLevel = facilities.basketballHall?.level ?? 0;
-  const arenaCapacity = 600 + basketballHallLevel * 200;
+
+  // ── Arena & ticket variables ───────────────────────────────────
+  const basketballHallLevel = getFacLevel('basketballHall');
+  const mediaCenterLevel    = getFacLevel('media');
+  const merchandiseLevel    = getFacLevel('merchandise');
+  const arenaCapacity    = 600 + basketballHallLevel * 200;
+  const ticketPrice      = team.ticketPrice      ?? 20;
   const seasonTicketSeats = team.seasonTicketSeats ?? 0;
   const seasonTicketPrice = team.seasonTicketPrice ?? 15;
-  const ticketPrice = team.ticketPrice ?? 20;
-  const fanCount = team.fanCount ?? 250;
-  const fanEnthusiasm = team.fanEnthusiasm ?? 20;
-  const attendanceRate = 0.2 + (fanEnthusiasm / 100) * 0.6;
-  const regularSeats = arenaCapacity - seasonTicketSeats;
-  const monthlyGateRevenue = Math.round(regularSeats * Math.min(attendanceRate, 1) * ticketPrice * HOME_GAMES_MONTH);
-  const monthlySeasonTicketRevenue = Math.round(seasonTicketSeats * seasonTicketPrice * HOME_GAMES_MONTH);
+  const awayFanPct       = team.awayFanPct        ?? 10;
+  const fanCount         = team.fanCount          ?? 250;
+  const fanEnthusiasm    = team.fanEnthusiasm     ?? 20;
+  const leagueTier       = team.league            ?? 'C';
+  const reputation       = team.reputation        ?? 10;
 
-  // Merchandise — weekly passive income × 4
-  const merchandiseLevel = facilities.merchandise?.level ?? 0;
-  const monthlyMerchRevenue = merchandiseLevel > 0
-    ? Math.round(fanCount * 0.01 * (1 + merchandiseLevel * 0.2)) * 4
+  // ── Attendance formula (mirrors GameContext match-day logic) ───
+
+  // Enthusiasm × performance × price sensitivity × reputation
+  const enthusiasmMultiplier = 0.5 + (fanEnthusiasm / 100);
+  const recentMatches = (team.matchHistory ?? []).slice(0, 5);
+  const recentWins = recentMatches.filter(m =>
+    m.result === 'W' || (m.teamScore ?? m.userScore ?? 0) > (m.oppScore ?? m.opponentScore ?? 0)
+  ).length;
+  const performanceMultiplier = Math.max(0.6, Math.min(1.4, 1 + (recentWins - 2) * 0.05));
+  const priceSensitivity = ticketPrice <= 25 ? 1.15 : ticketPrice <= 40 ? 1.00 : ticketPrice <= 60 ? 0.85 : 0.65;
+  const reputationMultiplier = 0.8 + reputation / 100;
+
+  const awaySeatsAllocated  = Math.round(arenaCapacity * (awayFanPct / 100));
+  const homeSeatsAvailable  = Math.max(0, arenaCapacity - awaySeatsAllocated - seasonTicketSeats);
+
+  const potentialRegularAttend = Math.round(fanCount * enthusiasmMultiplier * performanceMultiplier * priceSensitivity * reputationMultiplier);
+  const actualRegularAttend    = Math.min(potentialRegularAttend, homeSeatsAvailable);
+  const seasonTicketAttendees  = Math.round(seasonTicketSeats * 0.85);
+  const awayFanAttendees       = Math.round(awaySeatsAllocated * 0.7);
+  const totalAttendancePerGame = actualRegularAttend + seasonTicketAttendees + awayFanAttendees;
+
+  // Seat utilisation %
+  const seatUtilisation = arenaCapacity > 0
+    ? Math.round((totalAttendancePerGame / arenaCapacity) * 100)
     : 0;
 
-  // TV + Sponsorship — from monthly finance tick (actual deducted amounts)
-  const leagueTier = team.league ?? 'C';
-  const reputation = team.reputation ?? 10;
-  const monthlyTVRevenue = { A: 500, B: 250, C: 100 }[leagueTier] ?? 100;
-  const monthlySponsorship = Math.round(reputation * 10 + 100);
+  // ── Revenue (mirrors monthly finance tick + match-day revenue) ─
+
+  // Gate — regular home tickets only (season ticket holders already paid)
+  const regularGatePerGame  = Math.round(actualRegularAttend * ticketPrice);
+  const awayGatePerGame     = Math.round(awayFanAttendees   * ticketPrice * 0.8);
+  const monthlyGateRevenue  = (regularGatePerGame + awayGatePerGame) * HOME_GAMES_MONTH;
+
+  // Season ticket revenue (monthly portion)
+  const monthlySeasonTicketRevenue = seasonTicketSeats * seasonTicketPrice * HOME_GAMES_MONTH;
+
+  // Merchandise — base + attendance-driven spend (active only when store > 0)
+  const fanSpendingRate  = 0.5 + (fanEnthusiasm / 200); // $0.50–$1.00 per fan per game
+  const baseMerchMonthly = (50 + merchandiseLevel * 30) * 4;
+  const attendMerch      = merchandiseLevel > 0 ? Math.round(totalAttendancePerGame * fanSpendingRate * HOME_GAMES_MONTH) : 0;
+  const monthlyMerchRevenue = baseMerchMonthly + attendMerch;
+
+  // TV Revenue (enhanced with media center)
+  const baseTVByLeague   = { A: 500, B: 250, C: 100 }[leagueTier] ?? 100;
+  const monthlyTVRevenue = baseTVByLeague + reputation * 5 + mediaCenterLevel * 100;
+
+  // Sponsorship (enhanced with fans + media)
+  const monthlySponsorship = Math.round(100 + fanCount * 0.2 + reputation * 10 + mediaCenterLevel * 150);
 
   const totalMonthlyRevenue = monthlyGateRevenue + monthlySeasonTicketRevenue + monthlyMerchRevenue + monthlyTVRevenue + monthlySponsorship;
 
-  // ── Expenses (matching actual monthly finance tick deductions) ─
+  // ── Expenses (mirrors monthly finance tick) ────────────────────
 
-  // Player wages: player.salary * 8 per month (salary field is in game units/year)
-  const monthlyPlayerWages = players.reduce((sum, p) => sum + (p.salary ?? 5) * 8, 0);
+  const monthlyPlayerWages  = players.reduce((sum, p) => sum + (p.salary ?? 5) * 8, 0);
+  const monthlyStaffWages   = staff.reduce((sum, s) => sum + (s.salary ?? 100), 0);
 
-  // Staff wages: staff.salary per month
-  const monthlyStaffWages = staff.reduce((sum, s) => sum + (s.salary ?? 100), 0);
+  // Per-facility maintenance (mirrors GameContext monthly tick)
+  const monthlyFacMaintenance =
+    getFacLevel('basketballHall') * 50 +
+    getFacLevel('media')          * 30 +
+    getFacLevel('merchandise')    * 25 +
+    getFacLevel('trainingCourt')  * 40 +
+    getFacLevel('gym')            * 35 +
+    getFacLevel('youthAcademy')   * 45 +
+    getFacLevel('medicalCenter')  * 30 +
+    getFacLevel('scoutingOffice') * 25;
 
-  // Facility maintenance: total facility levels × $15/level/month
-  const totalFacLevels = Object.values(facilities).reduce((sum, f) => {
-    return sum + (typeof f === 'number' ? f : (f?.level ?? 0));
-  }, 0);
-  const monthlyFacMaintenance = totalFacLevels * 15;
-
-  // General operational costs
-  const monthlyGeneralOps = 200;
+  // General ops (arena + fanbase overhead)
+  const monthlyGeneralOps = Math.round(200 + arenaCapacity * 0.05 + fanCount * 0.02);
 
   const totalMonthlyExpenses = monthlyPlayerWages + monthlyStaffWages + monthlyFacMaintenance + monthlyGeneralOps;
 
@@ -376,18 +421,19 @@ export default function FinancialReport() {
             </span>
           </div>
 
-          <SectionHeader label="Revenue" />
-          <RevenueRow label="Gate Revenue (regular seats)" monthly={monthlyGateRevenue * mult} />
-          <RevenueRow label="Season Ticket Revenue" monthly={monthlySeasonTicketRevenue * mult} highlight={seasonTicketSeats > 0} />
-          <RevenueRow label="Merchandise Sales" monthly={monthlyMerchRevenue * mult} />
-          <RevenueRow label={`TV Revenue (Liga ${leagueTier})`} monthly={monthlyTVRevenue * mult} />
+          <SectionHeader label="Matchday Revenue" />
+          <RevenueRow label={`Gate Revenue — regular tickets (${HOME_GAMES_MONTH} home games)`} monthly={monthlyGateRevenue * mult} />
+          <RevenueRow label={`Season Ticket Revenue (${seasonTicketSeats} holders)`} monthly={monthlySeasonTicketRevenue * mult} highlight={seasonTicketSeats > 0} />
+          <SectionHeader label="Passive Revenue" />
+          <RevenueRow label={`Merchandise Sales (Store Lv ${merchandiseLevel})`} monthly={monthlyMerchRevenue * mult} />
+          <RevenueRow label={`TV Revenue (Liga ${leagueTier}, Media Lv ${mediaCenterLevel})`} monthly={monthlyTVRevenue * mult} />
           <RevenueRow label="Sponsorship & Advertising" monthly={monthlySponsorship * mult} />
           <TotalRow label="Total Revenue" value={totalMonthlyRevenue * mult} positive={true} />
 
           <SectionHeader label="Expenses" />
           <ExpenseRow label={`Player Wages (${players.length} players)`} monthly={monthlyPlayerWages * mult} />
           <ExpenseRow label={`Staff Wages (${staff.length} staff)`} monthly={monthlyStaffWages * mult} />
-          <ExpenseRow label={`Facility Maintenance (${totalFacLevels} levels)`} monthly={monthlyFacMaintenance * mult} />
+          <ExpenseRow label="Facility Maintenance" monthly={monthlyFacMaintenance * mult} />
           <ExpenseRow label="General Operations" monthly={monthlyGeneralOps * mult} highlight />
           <TotalRow label="Total Expenses" value={totalMonthlyExpenses * mult} positive={false} />
 
@@ -435,7 +481,7 @@ export default function FinancialReport() {
             {[
               { icon: <Users size={18} />, label: 'Monthly Payroll', value: fmt(monthlyPlayerWages + monthlyStaffWages), color: 'var(--color-danger)' },
               { icon: <Building2 size={18} />, label: 'Arena Capacity', value: `${arenaCapacity.toLocaleString()} seats`, color: 'var(--color-primary)' },
-              { icon: <TrendingUp size={18} />, label: 'Est. Attendance', value: `${Math.round(attendanceRate * 100)}%`, color: 'var(--color-success)' },
+              { icon: <TrendingUp size={18} />, label: 'Est. Attendance / Game', value: `${totalAttendancePerGame.toLocaleString()} (${seatUtilisation}%)`, color: 'var(--color-success)' },
               { icon: <DollarSign size={18} />, label: 'Reputation', value: `${reputation}/100`, color: 'var(--color-warning)' },
             ].map(s => (
               <div key={s.label} className="card" style={{ padding: 'var(--space-4)', textAlign: 'center' }}>
@@ -444,6 +490,36 @@ export default function FinancialReport() {
                 <div style={{ fontSize: 'var(--font-size-xs)', color: 'var(--text-muted)' }}>{s.label}</div>
               </div>
             ))}
+          </div>
+
+          {/* Attendance breakdown card */}
+          <div className="card" style={{ padding: 'var(--space-4)' }}>
+            <div style={{ fontWeight: 800, fontSize: 'var(--font-size-sm)', marginBottom: 'var(--space-3)', display: 'flex', alignItems: 'center', gap: 6 }}>
+              🏟️ Attendance Breakdown <span style={{ fontWeight: 400, fontSize: 'var(--font-size-xs)', color: 'var(--text-muted)' }}>per home game</span>
+            </div>
+            {[
+              { label: 'Regular home fans', value: actualRegularAttend, color: 'var(--color-primary)', note: `of ${homeSeatsAvailable} available seats` },
+              { label: 'Season ticket holders', value: seasonTicketAttendees, color: 'var(--color-success)', note: `${seasonTicketSeats} holders × 85%` },
+              { label: 'Away fans', value: awayFanAttendees, color: 'var(--color-warning)', note: `${awayFanPct}% away allocation × 70%` },
+            ].map(row => (
+              <div key={row.label} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '6px 0', borderBottom: '1px solid var(--border-color)' }}>
+                <div>
+                  <div style={{ fontSize: 'var(--font-size-xs)', fontWeight: 600, color: row.color }}>{row.label}</div>
+                  <div style={{ fontSize: 'var(--font-size-xs)', color: 'var(--text-muted)' }}>{row.note}</div>
+                </div>
+                <div style={{ fontWeight: 800, fontSize: 'var(--font-size-sm)', color: row.color }}>{row.value.toLocaleString()}</div>
+              </div>
+            ))}
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', paddingTop: 8, fontWeight: 800 }}>
+              <span style={{ fontSize: 'var(--font-size-sm)' }}>Total Attendance</span>
+              <span style={{ color: 'var(--color-primary)', fontSize: 'var(--font-size-base)' }}>{totalAttendancePerGame.toLocaleString()} / {arenaCapacity.toLocaleString()}</span>
+            </div>
+            <div style={{ marginTop: 8, background: 'var(--bg-muted)', borderRadius: 4, height: 6, overflow: 'hidden' }}>
+              <div style={{ height: '100%', width: `${seatUtilisation}%`, background: seatUtilisation >= 80 ? 'var(--color-success)' : seatUtilisation >= 50 ? 'var(--color-primary)' : 'var(--color-warning)', borderRadius: 4 }} />
+            </div>
+            <div style={{ fontSize: 'var(--font-size-xs)', color: 'var(--text-muted)', marginTop: 4 }}>
+              Season ticket holders attend but do not generate regular gate revenue.
+            </div>
           </div>
 
           {/* Monthly finance tick countdown */}
@@ -472,6 +548,54 @@ export default function FinancialReport() {
           </div>
         </div>
       </div>
+
+      {/* ── Smart Insights ── */}
+      {(() => {
+        const insights = [];
+        if (ticketPrice > 60 && seatUtilisation < 60) {
+          insights.push({ icon: '🎟️', color: 'var(--color-warning)', text: 'Ticket price is high. Revenue per fan is strong, but attendance is below 60% — consider lowering prices to fill the arena.' });
+        }
+        if (seasonTicketSeats > 0) {
+          insights.push({ icon: '🎫', color: 'var(--color-success)', text: `Season tickets improved guaranteed cash flow, but reduced match-day gate revenue by ${fmt(seasonTicketSeats * ticketPrice * HOME_GAMES_MONTH)} vs. selling those seats individually.` });
+        }
+        if (awayFanPct > 20) {
+          insights.push({ icon: '✈️', color: 'var(--color-warning)', text: `Away allocation is ${awayFanPct}% — you\'re giving up ${awaySeatsAllocated} home seats which reduces home court advantage and home fan revenue.` });
+        }
+        if (mediaCenterLevel >= 2) {
+          insights.push({ icon: '📺', color: 'var(--color-success)', text: `Media Center Lv ${mediaCenterLevel} is boosting TV revenue by $${mediaCenterLevel * 100}/month and sponsorship by $${mediaCenterLevel * 150}/month.` });
+        }
+        if (actualRegularAttend >= homeSeatsAvailable * 0.95 && homeSeatsAvailable > 0) {
+          insights.push({ icon: '🏟️', color: 'var(--color-info)', text: 'Arena is nearly full! Upgrade the Basketball Hall to increase capacity and earn more gate revenue.' });
+        }
+        if (merchandiseLevel === 0) {
+          insights.push({ icon: '🛍️', color: 'var(--color-warning)', text: 'Merchandise Store is not built. High enthusiasm is not converting into passive income.' });
+        }
+        if (merchandiseLevel > 0 && fanEnthusiasm > 60) {
+          insights.push({ icon: '🛍️', color: 'var(--color-success)', text: `High fan enthusiasm (${fanEnthusiasm}) is boosting merchandise income — fans are buying more items per game.` });
+        }
+        if (cashReserves < 0) {
+          insights.push({ icon: '⚠️', color: 'var(--color-danger)', text: 'Debt is blocking facility upgrades. Improve cash flow through wins, reduce player wages, or sell underperforming players.' });
+        }
+        if (insights.length === 0) return null;
+        return (
+          <div className="card mb-6">
+            <div className="card-header">
+              <span className="card-title" style={{ display: 'flex', alignItems: 'center', gap: 'var(--space-2)' }}>
+                <TrendingUp size={16} style={{ color: 'var(--color-primary)' }} />
+                Financial Insights
+              </span>
+            </div>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-2)' }}>
+              {insights.map((ins, i) => (
+                <div key={i} style={{ display: 'flex', gap: 'var(--space-3)', padding: 'var(--space-3)', background: 'var(--bg-muted)', borderRadius: 'var(--radius-md)', borderLeft: `3px solid ${ins.color}` }}>
+                  <span style={{ fontSize: '1.1rem', flexShrink: 0, lineHeight: 1.4 }}>{ins.icon}</span>
+                  <span style={{ fontSize: 'var(--font-size-xs)', color: 'var(--text-secondary)', lineHeight: 1.6, fontWeight: 500 }}>{ins.text}</span>
+                </div>
+              ))}
+            </div>
+          </div>
+        );
+      })()}
 
       {/* ── Salary Breakdown ── */}
       <div className="card mb-6">
