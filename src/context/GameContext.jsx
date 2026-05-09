@@ -7,8 +7,10 @@ import {
   apiGetGameBrainConfig,
   apiGetWorldState, apiStampMarketSeedDate,
   apiSeedFreeAgents, apiSeedStaffMarket,
+  apiGetMatchLog, apiSaveMatchLog,
 } from '../api.js';
-import { processPendingMatches } from '../engine/gameScheduler.js';
+import { processPendingMatches, isMatchCurrentlyLive } from '../engine/gameScheduler.js';
+import { simulateMatch, GAME_DURATION_SEC } from '../engine/matchEngine.js';
 import { calculateOverallRating } from '../engine/playerGenerator.js';
 
 // ── Build game state from Firestore data ───────────────────────
@@ -409,6 +411,42 @@ export function GameProvider({ children }) {
         }));
       } catch (simErr) {
         console.warn('Match simulation error (non-fatal):', simErr);
+      }
+
+      // ── Pre-generate live match log ─────────────────────────────
+      // If the user's team has a match currently in its live window,
+      // simulate and persist the log to Firestore so the LiveMatch
+      // viewer can load it. The simulation is seeded by matchId and
+      // always produces the same result regardless of when it runs.
+      try {
+        const userTeamIdForLive = userStateRes.state?.teamId;
+        if (userTeamIdForLive) {
+          const allScheduleForLive = simulatedLeagues.flatMap(l => l.schedule || []);
+          const liveUserMatch = allScheduleForLive.find(m => isMatchCurrentlyLive(m) &&
+            (m.homeTeamId === userTeamIdForLive || m.awayTeamId === userTeamIdForLive)
+          );
+          if (liveUserMatch) {
+            apiGetMatchLog(liveUserMatch.id).then(existing => {
+              if (existing) return; // log already saved, nothing to do
+              const allTeamsForLive = simulatedLeagues.flatMap(l => l.teams || []);
+              const htForLive = allTeamsForLive.find(t => t.id === liveUserMatch.homeTeamId);
+              const atForLive = allTeamsForLive.find(t => t.id === liveUserMatch.awayTeamId);
+              if (!htForLive || !atForLive) return;
+              const liveResult = simulateMatch(htForLive, atForLive, liveUserMatch.scheduledDate, liveUserMatch.id);
+              apiSaveMatchLog(liveUserMatch.id, {
+                events:       liveResult.log,
+                playerStats:  liveResult.playerStats,
+                quarterScores: liveResult.quarterScores,
+                homeScore:    liveResult.homeScore,
+                awayScore:    liveResult.awayScore,
+                homeTeamName: liveUserMatch.homeTeamName,
+                awayTeamName: liveUserMatch.awayTeamName,
+              }).catch(() => {});
+            }).catch(() => {});
+          }
+        }
+      } catch (liveGenErr) {
+        console.warn('Live match pre-generation error (non-fatal):', liveGenErr);
       }
 
       // ── Match day revenue (home games) ──────────────────────────

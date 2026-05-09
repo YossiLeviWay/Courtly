@@ -5,10 +5,10 @@
 // ── Constants ─────────────────────────────────────────────────
 
 /**
- * Total real-time duration of a simulated game in seconds (~115 min).
- * Q1 0-1500s | Q2 1500-3000s | Halftime 3000-3900s | Q3 3900-5400s | Q4 5400-6900s
+ * Total real-time duration of a live game in seconds (90 min = 1.5 real hours).
+ * Q1 0-1200s | Q2 1200-2400s | Halftime 2400-3000s | Q3 3000-4200s | Q4 4200-5400s
  */
-export const GAME_DURATION_SEC = 6900;
+export const GAME_DURATION_SEC = 5400;
 
 /**
  * Convert a game-minute + quarter to real elapsed seconds from tip-off.
@@ -16,9 +16,10 @@ export const GAME_DURATION_SEC = 6900;
  */
 export function gameMinToRelSec(gameMin, quarter) {
   const q = Math.min(Math.max((quarter || 1) - 1, 0), 3);
-  const qRealStart = [0, 1500, 3900, 5400]; // real-second start of each quarter
+  // Each quarter maps to 1200 real seconds; halftime gap is 3000-2400=600s.
+  const qRealStart = [0, 1200, 3000, 4200];
   const minInQ = Math.max(0, Math.min(gameMin - q * 10, 10));
-  return Math.round(qRealStart[q] + (minInQ / 10) * 1500);
+  return Math.round(qRealStart[q] + (minInQ / 10) * 1200);
 }
 
 // ── Seeded RNG (deterministic per-match) ─────────────────────

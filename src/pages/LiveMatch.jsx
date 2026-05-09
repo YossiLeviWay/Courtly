@@ -3,8 +3,8 @@ import { useGame } from '../context/GameContext.jsx';
 import { useNavigate } from 'react-router-dom';
 import { Zap, Clock, ChevronRight, Play, Pause, SkipForward, RotateCcw } from 'lucide-react';
 import { getNextMatch, isMatchCurrentlyLive, formatMatchDate } from '../engine/gameScheduler.js';
-import { GAME_DURATION_SEC } from '../engine/matchEngine.js';
-import { apiGetMatchLog, apiRecordMatchResult } from '../api.js';
+import { GAME_DURATION_SEC, simulateMatch, updateTeamAfterMatch, updatePlayerAfterMatch } from '../engine/matchEngine.js';
+import { apiGetMatchLog, apiRecordMatchResult, apiSaveMatchLog } from '../api.js';
 
 // ── Constants ─────────────────────────────────────────────────
 
@@ -30,10 +30,10 @@ const EVENT_ICONS = {
 
 // Speed modes for the replay viewer
 const SPEEDS = [
-  { key: 'instant', label: 'Instant',   msPerMin: 0,      halftimeMs: 0      },
-  { key: 'fast',    label: 'Fast',      msPerMin: 300,    halftimeMs: 5000   },
-  { key: 'normal',  label: 'Normal',    msPerMin: 3000,   halftimeMs: 30000  },
-  { key: 'live',    label: 'Live (1h)', msPerMin: 90000,  halftimeMs: 900000 },
+  { key: 'instant', label: 'Instant',    msPerMin: 0,       halftimeMs: 0      },
+  { key: 'fast',    label: 'Fast',       msPerMin: 300,     halftimeMs: 5000   },
+  { key: 'normal',  label: 'Normal',     msPerMin: 3000,    halftimeMs: 30000  },
+  { key: 'live',    label: 'Live (90m)', msPerMin: 135000,  halftimeMs: 600000 },
 ];
 
 // ── Shared Scoreboard ─────────────────────────────────────────
@@ -588,16 +588,48 @@ export default function LiveMatch() {
   const [liveLogLoading, setLiveLogLoading] = useState(false);
   const resultRecordedRef = useRef(false);
 
-  // Load the pre-generated log when a match is live
+  // Keep a ref to leagues so the async log-loader can access it without a stale closure
+  const leaguesRef = useRef(state.leagues);
+  useEffect(() => { leaguesRef.current = state.leagues; }, [state.leagues]);
+
+  // Load the pre-generated log when a match is live.
+  // If it's not in Firestore yet (e.g. app just opened), generate it on the fly.
   useEffect(() => {
     if (!isLive || !nextMatch?.id) return;
     setLiveLogLoading(true);
+    resultRecordedRef.current = false;
+
     apiGetMatchLog(nextMatch.id).then(data => {
-      setLiveMatchLog(data);
+      if (data) {
+        setLiveMatchLog(data);
+        setLiveLogLoading(false);
+        return;
+      }
+      // Fallback: generate the log client-side (seeded by matchId → same result every time)
+      try {
+        const allTeams = (leaguesRef.current || []).flatMap(l => l.teams || []);
+        const homeTeamData = allTeams.find(t => t.id === nextMatch.homeTeamId);
+        const awayTeamData = allTeams.find(t => t.id === nextMatch.awayTeamId);
+        if (homeTeamData && awayTeamData) {
+          const result = simulateMatch(homeTeamData, awayTeamData, nextMatch.scheduledDate, nextMatch.id);
+          const logData = {
+            events:        result.log,
+            playerStats:   result.playerStats,
+            quarterScores: result.quarterScores,
+            homeScore:     result.homeScore,
+            awayScore:     result.awayScore,
+            homeTeamName:  nextMatch.homeTeamName,
+            awayTeamName:  nextMatch.awayTeamName,
+          };
+          apiSaveMatchLog(nextMatch.id, logData).catch(() => {});
+          setLiveMatchLog(logData);
+        }
+      } catch (e) {
+        console.warn('Live match fallback generation failed:', e);
+      }
       setLiveLogLoading(false);
     });
-    resultRecordedRef.current = false;
-  }, [isLive, nextMatch?.id]);
+  }, [isLive, nextMatch?.id]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Load remote log for the replay viewer when not in-memory
   const [remoteMatchData, setRemoteMatchData] = useState(null);
@@ -620,70 +652,141 @@ export default function LiveMatch() {
     };
   }, [latestMatch, remoteMatchData]);
 
-  // Called by LiveGameViewer when the game clock reaches GAME_DURATION_SEC
+  // Called by LiveGameViewer when the game clock reaches GAME_DURATION_SEC.
+  // Applies the full post-match update: team records, player stats, revenue, top performers.
   const handleGameEnd = useCallback((matchLog) => {
     if (resultRecordedRef.current) return;
     resultRecordedRef.current = true;
 
-    if (!nextMatch || !matchLog) return;
+    if (!nextMatch || !matchLog || !team) return;
     const { homeScore, awayScore } = matchLog;
 
-    // Persist result to Firestore (non-blocking, errors are non-fatal)
+    // Persist result to Firestore (non-blocking)
     apiRecordMatchResult({
-      matchId:      nextMatch.id,
-      leagueId:     nextMatch.leagueId,
-      homeTeamId:   nextMatch.homeTeamId,
-      awayTeamId:   nextMatch.awayTeamId,
-      homeTeamName: nextMatch.homeTeamName,
-      awayTeamName: nextMatch.awayTeamName,
+      matchId:       nextMatch.id,
+      leagueId:      nextMatch.leagueId,
+      homeTeamId:    nextMatch.homeTeamId,
+      awayTeamId:    nextMatch.awayTeamId,
+      homeTeamName:  nextMatch.homeTeamName,
+      awayTeamName:  nextMatch.awayTeamName,
       homeScore,
       awayScore,
-      log:          matchLog.events        || [],
-      playerStats:  matchLog.playerStats   || {},
+      log:           matchLog.events        || [],
+      playerStats:   matchLog.playerStats   || {},
       quarterScores: matchLog.quarterScores || [],
     }).catch(err => console.warn('Record match result error (non-fatal):', err));
 
-    // Update in-memory state: mark match as played + add to matchHistory
-    if (!team) return;
-    const isHome  = nextMatch.homeTeamId === team.id;
-    const won     = isHome ? homeScore > awayScore : awayScore > homeScore;
-    const myScore = isHome ? homeScore : awayScore;
+    const isHome   = nextMatch.homeTeamId === team.id;
+    const myScore  = isHome ? homeScore : awayScore;
     const oppScore = isHome ? awayScore : homeScore;
+    const won      = myScore > oppScore;
+    const opponent = isHome ? nextMatch.awayTeamName : nextMatch.homeTeamName;
 
-    const historyEntry = {
-      matchId:    nextMatch.id,
-      date:       nextMatch.scheduledDate,
-      opponent:   isHome ? nextMatch.awayTeamName : nextMatch.homeTeamName,
-      result:     won ? 'Win' : 'Loss',
+    // Build the result object expected by updateTeamAfterMatch
+    const matchResult = {
+      matchId:       nextMatch.id,
       homeScore,
       awayScore,
-      homeTeam:   nextMatch.homeTeamName,
-      awayTeam:   nextMatch.awayTeamName,
+      homeTeamId:    nextMatch.homeTeamId,
+      awayTeamId:    nextMatch.awayTeamId,
+      homeTeamName:  nextMatch.homeTeamName,
+      awayTeamName:  nextMatch.awayTeamName,
+      quarterScores: matchLog.quarterScores || [],
+      matchDate:     nextMatch.scheduledDate,
+      log:           matchLog.events || [],
+      playerStats:   matchLog.playerStats || {},
     };
 
-    const updatedSeasonRecord = {
-      wins:   (team.wins   || 0) + (won ? 1 : 0),
-      losses: (team.losses || 0) + (won ? 0 : 1),
-    };
+    // Full team update: motivation, chemistry, fanCount, momentum, records, history
+    let updatedTeam = updateTeamAfterMatch(
+      { ...team, players: team.players.map(p => ({ ...p })) },
+      matchResult,
+      isHome,
+    );
 
-    const updatedSeasonMatches = (team.seasonMatches || []).map(m =>
+    // Update individual player season stats, fatigue, and form
+    if (matchLog.playerStats) {
+      updatedTeam.players = updatedTeam.players.map(p => {
+        const stats = matchLog.playerStats[p.id];
+        return stats ? updatePlayerAfterMatch({ ...p }, stats) : p;
+      });
+    }
+
+    // Mark this match as played in the season schedule
+    updatedTeam.seasonMatches = (team.seasonMatches || []).map(m =>
       m.id === nextMatch.id
         ? { ...m, played: true, result: { homeScore, awayScore } }
         : m
     );
 
-    const updatedTeam = {
-      ...team,
-      seasonMatches: updatedSeasonMatches,
-      matchHistory:  [historyEntry, ...(team.matchHistory || [])],
-      wins:          updatedSeasonRecord.wins,
-      losses:        updatedSeasonRecord.losses,
-      seasonRecord:  updatedSeasonRecord,
-    };
+    // Gate revenue for home games
+    if (isHome) {
+      const facilities = team.facilities ?? {};
+      const getFacLevel = (key) => {
+        const f = facilities[key];
+        return typeof f === 'number' ? f : (f?.level ?? 0);
+      };
+      const stadiumCapacity = 600 + getFacLevel('basketballHall') * 200;
+      const tp          = team.ticketPrice ?? 20;
+      const enthusiasm  = team.fanEnthusiasm ?? 20;
+      const fans        = team.fanCount ?? 250;
+      const rep         = team.reputation ?? 10;
+      const awayFanPct  = team.awayFanPct ?? 10;
+      const stSeats     = team.seasonTicketSeats ?? 0;
+
+      const recentWins = (team.matchHistory || []).slice(0, 5).filter(m =>
+        m.result === 'W' || (m.teamScore ?? 0) > (m.oppScore ?? 0)
+      ).length;
+      const enthMult    = 0.5 + enthusiasm / 100;
+      const perfMult    = Math.max(0.6, Math.min(1.4, 1 + (recentWins - 2) * 0.05));
+      const priceSens   = tp <= 25 ? 1.15 : tp <= 40 ? 1.00 : tp <= 60 ? 0.85 : 0.65;
+      const repMult     = 0.8 + rep / 100;
+      const awaySeats   = Math.round(stadiumCapacity * (awayFanPct / 100));
+      const homeAvail   = Math.max(0, stadiumCapacity - awaySeats - stSeats);
+      const potential   = Math.round(fans * enthMult * perfMult * priceSens * repMult);
+      const regularAtt  = Math.min(potential, homeAvail);
+      const awayFanAtt  = Math.round(awaySeats * 0.7);
+      const revenue     = Math.round(regularAtt * tp) + Math.round(awayFanAtt * tp * 0.8);
+      const totalAtt    = regularAtt + awayFanAtt + Math.round(stSeats * 0.85);
+
+      updatedTeam.budget = (updatedTeam.budget ?? 0) + revenue;
+      const finLog = [...(updatedTeam.financeLog ?? [])];
+      finLog.unshift({
+        matchId:      nextMatch.id,
+        timestamp:    Date.now(),
+        type:         'match_day_revenue',
+        description:  `Ticket Sales – Home vs ${opponent} (${totalAtt} fans)`,
+        amount:       revenue,
+        balanceAfter: updatedTeam.budget,
+      });
+      updatedTeam.financeLog = finLog.slice(0, 50);
+    }
+
+    // Top performers (shown on Dashboard)
+    const userPlayerIds = new Set((team.players || []).map(p => p.id));
+    const userStats = Object.entries(matchLog.playerStats || {})
+      .filter(([pid]) => userPlayerIds.has(pid))
+      .map(([pid, s]) => ({
+        playerId: pid,
+        name: (team.players || []).find(p => p.id === pid)?.name || pid,
+        pts: s.points  || 0,
+        reb: s.rebounds || 0,
+        ast: s.assists  || 0,
+      }));
+    if (userStats.length > 0) {
+      updatedTeam.lastGameTopPerformers = {
+        matchId:      nextMatch.id,
+        opponent,
+        date:         nextMatch.scheduledDate,
+        topScorer:    { ...userStats.slice().sort((a, b) => b.pts - a.pts)[0] },
+        topRebounder: { ...userStats.slice().sort((a, b) => b.reb - a.reb)[0] },
+        topAssister:  { ...userStats.slice().sort((a, b) => b.ast - a.ast)[0] },
+      };
+    }
 
     dispatch({ type: 'UPDATE_TEAM', payload: updatedTeam });
     addNotification(
-      `Game over! ${won ? '🏆 Victory' : '💔 Defeat'} — ${myScore}–${oppScore} vs ${historyEntry.opponent}`,
+      `Game over! ${won ? '🏆 Victory' : '💔 Defeat'} — ${myScore}–${oppScore} vs ${opponent}`,
       won ? 'success' : 'info',
     );
   }, [nextMatch, team, dispatch, addNotification]);

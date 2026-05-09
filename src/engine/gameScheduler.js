@@ -86,12 +86,13 @@ export function getNextMatch(teamId, schedule) {
 }
 
 /**
- * Get matches that should have been played by now but haven't been
+ * Get matches whose entire live window has passed and that haven't been recorded yet.
+ * Matches still inside their live window are excluded — the LiveMatch viewer handles those.
  */
 export function getPendingMatches(schedule) {
   const now = Date.now();
   return schedule
-    .filter(m => !m.played && m.scheduledDate <= now)
+    .filter(m => !m.played && m.scheduledDate + GAME_DURATION_SEC * 1000 <= now)
     .sort((a, b) => a.scheduledDate - b.scheduledDate);
 }
 
