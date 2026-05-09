@@ -1,67 +1,493 @@
-import { useState, useMemo } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { useGame } from '../context/GameContext.jsx';
-import { Star, Users, Calendar, CheckCircle, Eye } from 'lucide-react';
+import {
+  Award,
+  BarChart3,
+  Calendar,
+  CheckCircle,
+  Clock,
+  DollarSign,
+  History,
+  Lock,
+  Send,
+  ShieldCheck,
+  Sparkles,
+  Star,
+  TrendingUp,
+  UserMinus,
+  Users,
+  XCircle,
+} from 'lucide-react';
 
 // ── Seeded random ──────────────────────────────────────────────
 
 function mulberry32(a) {
   return function () {
     a |= 0; a = a + 0x6D2B79F5 | 0;
-    var t = Math.imul(a ^ a >>> 15, 1 | a);
+    let t = Math.imul(a ^ a >>> 15, 1 | a);
     t = t + Math.imul(t ^ t >>> 7, 61 | t) ^ t;
     return ((t ^ t >>> 14) >>> 0) / 4294967296;
   };
 }
 
-// ── Draft prospect generation ──────────────────────────────────
+function hashString(value) {
+  return String(value).split('').reduce((sum, char) => sum + char.charCodeAt(0), 0);
+}
 
-function generateDraftProspect(facilityLevel, teamReputation, seed) {
-  const rng = mulberry32(seed);
-  const baseQuality = 40 + facilityLevel * 3 + Math.floor(teamReputation / 10);
-  const age = 19 + Math.floor(rng() * 5);
-  const positions = ['PG', 'SG', 'SF', 'PF', 'C'];
-  const position = positions[Math.floor(rng() * positions.length)];
+function randomBetween(rng, min, max) {
+  return Math.floor(rng() * (max - min + 1)) + min;
+}
 
-  const ATTR_KEYS = [
-    'courtVision', 'perimeterDefense', 'interiorDefense', 'offBallMovement', 'rebounding',
-    'freeThrowShooting', 'clutchPerformance', 'staminaEndurance', 'leadershipCommunication',
-    'postMoves', 'threePtShooting', 'midRangeScoring', 'ballHandlingDribbling', 'passingAccuracy',
-    'basketballIQ', 'aggressivenessOffensive', 'helpDefense', 'onBallScreenNavigation',
-    'conditioningFitness', 'patienceOffense', 'disciplineFouling', 'handlePressureMental',
-    'verticalLeapingAbility', 'agilityLateralSpeed', 'settingScreens', 'finishingAtTheRim',
-    'consistencyPerformance', 'workEthicOutOfGame', 'teamFirstAttitude', 'bodyControl',
-  ];
+function randomFrom(rng, arr) {
+  return arr[Math.floor(rng() * arr.length)];
+}
 
-  const attributes = {};
-  ATTR_KEYS.forEach(k => {
-    const base = baseQuality - 15 + Math.floor(rng() * 30);
-    attributes[k] = Math.max(30, Math.min(95, base));
+function clamp(value, min, max) {
+  return Math.max(min, Math.min(max, Math.round(value)));
+}
+
+function getWeekKey(date = new Date()) {
+  const d = new Date(date);
+  d.setHours(0, 0, 0, 0);
+  d.setDate(d.getDate() - d.getDay());
+  const yearStart = new Date(d.getFullYear(), 0, 1);
+  const week = Math.floor((d - yearStart) / (7 * 24 * 60 * 60 * 1000)) + 1;
+  return `${d.getFullYear()}-${String(week).padStart(2, '0')}`;
+}
+
+function getNextSunday(date = new Date(), alreadyGenerated = false) {
+  const d = new Date(date);
+  d.setHours(0, 0, 0, 0);
+  const daysUntilSunday = (7 - d.getDay()) % 7;
+  d.setDate(d.getDate() + daysUntilSunday + (alreadyGenerated ? 7 : 0));
+  return d;
+}
+
+function formatDate(date) {
+  return date.toLocaleDateString('en-US', { weekday: 'long', month: 'short', day: 'numeric' });
+}
+
+// ── Youth data pools ───────────────────────────────────────────
+
+const POSITIONS = ['PG', 'SG', 'SF', 'PF', 'C'];
+
+const NATIONALITY_POOLS = {
+  Israeli: ['Noam Cohen', 'Amit Levi', 'Eitan Mizrahi', 'Ori Ben David', 'Yair Katz', 'Ido Malka'],
+  American: ['Jayden Brooks', 'Marcus Reed', 'Tyler Johnson', 'Caleb Parker', 'Darius Hill', 'Isaiah Carter'],
+  Serbian: ['Luka Petrovic', 'Nikola Jovanovic', 'Milan Ilic', 'Stefan Markovic', 'Bogdan Simic'],
+  Croatian: ['Mateo Kovac', 'Ivan Horvat', 'Luka Babic', 'Dario Marin', 'Toni Vukovic'],
+  Greek: ['Nikos Papadopoulos', 'Giorgos Antetis', 'Alexis Stavros', 'Dimitris Karras'],
+  Spanish: ['Pablo Garcia', 'Sergio Navarro', 'Diego Martinez', 'Hugo Fernandez', 'Iker Romero'],
+  French: ['Theo Laurent', 'Lucas Moreau', 'Mathis Dubois', 'Enzo Bernard', 'Noah Lefevre'],
+  Lithuanian: ['Matas Kazlauskas', 'Tomas Petrauskas', 'Jonas Butkus', 'Rokas Jankauskas'],
+  Turkish: ['Emir Yilmaz', 'Kerem Demir', 'Mert Kaya', 'Can Arslan', 'Efe Aydin'],
+  Nigerian: ['Chidi Okafor', 'Tunde Adeyemi', 'Ike Nwosu', 'Kelechi Obi', 'Femi Balogun'],
+  Brazilian: ['Rafael Silva', 'Lucas Santos', 'Mateus Costa', 'Joao Almeida', 'Bruno Rocha'],
+  Argentinian: ['Mateo Fernandez', 'Nicolas Alvarez', 'Tomas Romero', 'Santiago Molina'],
+  German: ['Lukas Schneider', 'Jonas Weber', 'Felix Wagner', 'Leon Becker', 'Noah Hoffmann'],
+  Italian: ['Marco Ricci', 'Luca Romano', 'Andrea Conti', 'Matteo Greco', 'Davide Ferrari'],
+};
+
+const PERSONALITIES = [
+  { name: 'Hard Worker', developmentSpeed: 8, moraleChange: 1, contractDemand: 0, bigGamePerformance: 0, injuryRisk: 0, potential: 2 },
+  { name: 'Natural Talent', developmentSpeed: 2, moraleChange: 0, contractDemand: 1, bigGamePerformance: 1, injuryRisk: 0, potential: 6 },
+  { name: 'Leader', developmentSpeed: 3, moraleChange: 4, contractDemand: 1, bigGamePerformance: 2, injuryRisk: 0, potential: 2 },
+  { name: 'Quiet Professional', developmentSpeed: 4, moraleChange: 1, contractDemand: -1, bigGamePerformance: 0, injuryRisk: -1, potential: 1 },
+  { name: 'Ambitious', developmentSpeed: 3, moraleChange: -1, contractDemand: 5, bigGamePerformance: 1, injuryRisk: 0, potential: 3 },
+  { name: 'Loyal', developmentSpeed: 2, moraleChange: 2, contractDemand: -4, bigGamePerformance: 0, injuryRisk: 0, potential: 1 },
+  { name: 'Lazy', developmentSpeed: -7, moraleChange: -2, contractDemand: -1, bigGamePerformance: -1, injuryRisk: 1, potential: -3 },
+  { name: 'Injury Prone', developmentSpeed: -2, moraleChange: 0, contractDemand: -1, bigGamePerformance: 0, injuryRisk: 6, potential: 0 },
+  { name: 'Big Game Player', developmentSpeed: 2, moraleChange: 1, contractDemand: 2, bigGamePerformance: 7, injuryRisk: 0, potential: 2 },
+  { name: 'Nervous', developmentSpeed: 0, moraleChange: -3, contractDemand: -2, bigGamePerformance: -6, injuryRisk: 0, potential: 1 },
+];
+
+const ATTRIBUTE_KEYS = [
+  'courtVision', 'perimeterDefense', 'interiorDefense', 'offBallMovement', 'rebounding',
+  'freeThrowShooting', 'clutchPerformance', 'staminaEndurance', 'leadershipCommunication',
+  'postMoves', 'threePtShooting', 'midRangeScoring', 'ballHandlingDribbling', 'passingAccuracy',
+  'basketballIQ', 'aggressivenessOffensive', 'helpDefense', 'onBallScreenNavigation',
+  'conditioningFitness', 'patienceOffense', 'disciplineFouling', 'handlePressureMental',
+  'verticalLeapingAbility', 'agilityLateralSpeed', 'settingScreens', 'finishingAtTheRim',
+  'consistencyPerformance', 'workEthicOutOfGame', 'teamFirstAttitude', 'bodyControl',
+];
+
+const POSITION_WEIGHTS = {
+  PG: { courtVision: 1.25, passingAccuracy: 1.22, ballHandlingDribbling: 1.24, basketballIQ: 1.16, agilityLateralSpeed: 1.12, rebounding: 0.78, interiorDefense: 0.74, postMoves: 0.72 },
+  SG: { threePtShooting: 1.25, midRangeScoring: 1.18, freeThrowShooting: 1.12, offBallMovement: 1.14, agilityLateralSpeed: 1.1, rebounding: 0.86, postMoves: 0.78 },
+  SF: { midRangeScoring: 1.1, threePtShooting: 1.08, perimeterDefense: 1.1, rebounding: 1.08, finishingAtTheRim: 1.12, bodyControl: 1.12 },
+  PF: { rebounding: 1.24, interiorDefense: 1.18, postMoves: 1.16, settingScreens: 1.14, finishingAtTheRim: 1.12, threePtShooting: 0.84, ballHandlingDribbling: 0.82 },
+  C: { rebounding: 1.32, blocks: 1.22, interiorDefense: 1.28, postMoves: 1.2, settingScreens: 1.18, finishingAtTheRim: 1.16, threePtShooting: 0.62, ballHandlingDribbling: 0.68, agilityLateralSpeed: 0.78 },
+};
+
+const POSITION_PRIMARY_STATS = {
+  PG: ['courtVision', 'passingAccuracy', 'ballHandlingDribbling', 'basketballIQ', 'agilityLateralSpeed'],
+  SG: ['threePtShooting', 'midRangeScoring', 'freeThrowShooting', 'offBallMovement', 'finishingAtTheRim'],
+  SF: ['midRangeScoring', 'perimeterDefense', 'rebounding', 'finishingAtTheRim', 'bodyControl'],
+  PF: ['rebounding', 'interiorDefense', 'postMoves', 'settingScreens', 'helpDefense'],
+  C: ['rebounding', 'interiorDefense', 'postMoves', 'settingScreens', 'finishingAtTheRim'],
+};
+
+function getFacilityLevel(facilityData) {
+  if (typeof facilityData === 'number') return facilityData;
+  return facilityData?.level ?? 0;
+}
+
+function getAcademyDescription(level) {
+  if (level <= 0) return 'Very weak, mostly emergency prospects';
+  if (level <= 2) return 'Low level prospects';
+  if (level <= 4) return 'Below average, but sometimes useful';
+  if (level <= 6) return 'Solid youth prospects';
+  if (level <= 8) return 'Strong prospects with good potential';
+  if (level === 9) return 'Very strong prospects';
+  return 'Elite academy, rare future stars possible';
+}
+
+function getTeamAverageOverall(players = []) {
+  if (!players.length) return 50;
+  return Math.round(players.reduce((sum, p) => sum + (p.overallRating ?? p.overall ?? 50), 0) / players.length);
+}
+
+function getTeamForm(team) {
+  const history = team?.matchHistory ?? [];
+  const recent = history.slice(0, 5);
+  if (recent.length > 0) {
+    const wins = recent.filter(m =>
+      m.result === 'W' || (m.teamScore ?? m.userScore ?? 0) > (m.oppScore ?? m.opponentScore ?? 0)
+    ).length;
+    return clamp(35 + (wins / recent.length) * 65, 0, 100);
+  }
+  return team?.momentumBar ?? 50;
+}
+
+function getSuccessMultiplier(form) {
+  if (form >= 80) return 1.08;
+  if (form >= 60) return 1.03;
+  if (form >= 40) return 1;
+  return 0.95;
+}
+
+function getTalentTier(adjustedTalentRoll) {
+  if (adjustedTalentRoll >= 99) return { label: 'Rare gem', bonus: [17, 22], potentialBoost: 14, message: 'Rare talent discovered. Consider promoting him carefully.' };
+  if (adjustedTalentRoll >= 94) return { label: 'Wonderkid', bonus: [11, 16], potentialBoost: 10, message: 'Wonderkid found. His ceiling is far above normal academy level.' };
+  if (adjustedTalentRoll >= 81) return { label: 'Very good prospect', bonus: [7, 10], potentialBoost: 6, message: 'This prospect is above the normal academy expectation.' };
+  if (adjustedTalentRoll >= 56) return { label: 'Good prospect', bonus: [3, 6], potentialBoost: 3, message: 'This prospect is close to your squad level and could be useful soon.' };
+  return { label: 'Normal prospect', bonus: [0, 0], potentialBoost: 0, message: 'This is a normal academy prospect for your current club level.' };
+}
+
+function choosePosition(rng, players = [], history = []) {
+  const counts = POSITIONS.reduce((acc, pos) => ({ ...acc, [pos]: 0 }), {});
+  players.forEach(p => {
+    if (counts[p.position] !== undefined) counts[p.position] += 1;
   });
 
-  const overallRating = Math.round(Object.values(attributes).reduce((a, b) => a + b, 0) / ATTR_KEYS.length);
-  const potential = Math.min(99, overallRating + 5 + Math.floor(rng() * 20));
+  const total = Math.max(1, players.length);
+  let weighted = POSITIONS.map(pos => {
+    const idealShare = 1 / POSITIONS.length;
+    const currentShare = counts[pos] / total;
+    const needBonus = currentShare < idealShare ? 12 : -4;
+    return { pos, weight: Math.max(4, 20 + needBonus - counts[pos] * 2) };
+  });
 
-  const firstNames = ['Marcus', 'Jake', 'Tyler', 'Jordan', 'Chris', 'Darius', 'Devon', 'Isaiah', 'Malik', 'Andre'];
-  const lastNames = ['Johnson', 'Williams', 'Davis', 'Brown', 'Thompson', 'Garcia', 'Martinez', 'Young', 'Hall', 'King'];
-  const name = firstNames[Math.floor(rng() * firstNames.length)] + ' ' + lastNames[Math.floor(rng() * lastNames.length)];
+  const recentPositions = history.slice(0, 2).map(p => p.position);
+  if (recentPositions.length === 2 && recentPositions[0] === recentPositions[1]) {
+    weighted = weighted.map(item => item.pos === recentPositions[0] ? { ...item, weight: 1 } : item);
+  }
 
+  const totalWeight = weighted.reduce((sum, item) => sum + item.weight, 0);
+  let roll = rng() * totalWeight;
+  for (const item of weighted) {
+    roll -= item.weight;
+    if (roll <= 0) return item.pos;
+  }
+  return randomFrom(rng, POSITIONS);
+}
+
+function generateAttributes(rng, position, overall) {
+  const weights = POSITION_WEIGHTS[position] ?? {};
+  return ATTRIBUTE_KEYS.reduce((attrs, key) => {
+    const weightedCentre = overall * (weights[key] ?? 1);
+    attrs[key] = clamp(weightedCentre + randomBetween(rng, -10, 10), 25, 99);
+    return attrs;
+  }, {});
+}
+
+function generateName(rng, history = []) {
+  const nationalities = Object.keys(NATIONALITY_POOLS);
+  let nationality = randomFrom(rng, nationalities);
+  let name = randomFrom(rng, NATIONALITY_POOLS[nationality]);
+  const usedNames = new Set(history.map(p => p.name));
+
+  for (let attempt = 0; attempt < 20 && usedNames.has(name); attempt += 1) {
+    nationality = randomFrom(rng, nationalities);
+    name = randomFrom(rng, NATIONALITY_POOLS[nationality]);
+  }
+
+  return { name, nationality };
+}
+
+function getHeightAndWeight(rng, position) {
+  const ranges = {
+    PG: { cm: [175, 195], kg: [75, 90] },
+    SG: { cm: [185, 200], kg: [85, 100] },
+    SF: { cm: [195, 208], kg: [95, 110] },
+    PF: { cm: [203, 213], kg: [105, 120] },
+    C: { cm: [208, 220], kg: [110, 130] },
+  };
+  const range = ranges[position] ?? ranges.SF;
+  const cm = randomBetween(rng, range.cm[0], range.cm[1]);
+  const totalInches = Math.round(cm / 2.54);
+  const kg = randomBetween(rng, range.kg[0], range.kg[1]);
   return {
-    id: `draft-${seed}`,
-    name,
-    position,
-    age,
+    height: { cm, ft: Math.floor(totalInches / 12), inches: totalInches % 12 },
+    weight: { kg, lbs: Math.round(kg * 2.2046) },
+  };
+}
+
+function calculateMarketValue({ overallRating, potential, age, position, personalityImpact, academyLevel, reputation, talentTier }) {
+  const positionBonus = position === 'C' || position === 'PG' ? 350 : 200;
+  const ageBonus = Math.max(0, (20 - age) * 450);
+  const personalityBonus = Math.max(-500, (personalityImpact.developmentSpeed + personalityImpact.bigGamePerformance - personalityImpact.injuryRisk) * 90);
+  const rareMultiplier = talentTier === 'Rare gem' ? 2.2 : talentTier === 'Wonderkid' ? 1.7 : talentTier === 'Very good prospect' ? 1.3 : 1;
+  return Math.round((overallRating * 100 + potential * 150 + academyLevel * 200 + reputation * 25 + ageBonus + positionBonus + personalityBonus) * rareMultiplier);
+}
+
+function buildStats(position, attributes) {
+  const keys = POSITION_PRIMARY_STATS[position] ?? POSITION_PRIMARY_STATS.SF;
+  return keys.reduce((stats, key) => ({ ...stats, [key]: attributes[key] }), {});
+}
+
+function generateYouthProspect({ team, academyLevel, weekKey }) {
+  const players = team?.players ?? [];
+  const youthDraft = team?.youthDraft ?? {};
+  const history = youthDraft.generatedProspectHistory ?? [];
+  const teamHash = hashString(team?.id ?? team?.name ?? 'team');
+  const seed = hashString(`${weekKey}-${teamHash}-${history.length}`);
+  const rng = mulberry32(seed);
+
+  const teamAverageOverall = getTeamAverageOverall(players);
+  const teamReputation = team?.reputation ?? 10;
+  const teamForm = getTeamForm(team);
+  const academyQualityBonus = academyLevel * 1.5;
+  const reputationBonus = teamReputation / 20;
+  const formBonus = teamForm / 25;
+  const successMultiplier = getSuccessMultiplier(teamForm);
+  const randomVariance = randomBetween(rng, -6, 6);
+  const rawTalentRoll = randomBetween(rng, 0, 100);
+  const adjustedTalentRoll = clamp(rawTalentRoll + academyLevel * 2, 0, 100);
+  const talentTier = getTalentTier(adjustedTalentRoll);
+  const talentBonus = randomBetween(rng, talentTier.bonus[0], talentTier.bonus[1]);
+
+  const baseYouthOverall = (
+    teamAverageOverall
+    - 5
+    + academyQualityBonus
+    + reputationBonus
+    + formBonus
+    + randomVariance
+    + talentBonus
+  ) * successMultiplier;
+
+  const overallRating = clamp(baseYouthOverall, 25, 85);
+  const personality = randomFrom(rng, PERSONALITIES);
+  const potential = clamp(overallRating + randomBetween(rng, 5, 25) + academyLevel * 2 + talentTier.potentialBoost + personality.potential, overallRating, 99);
+  const position = choosePosition(rng, players, history);
+  const attributes = generateAttributes(rng, position, overallRating);
+  const { name, nationality } = generateName(rng, history);
+  const age = randomBetween(rng, 16, 19);
+  const { height, weight } = getHeightAndWeight(rng, position);
+  const monthlyWage = Math.round(20 + overallRating * 1.5 + potential * 0.5 + Math.max(0, personality.contractDemand * 3));
+  const marketValue = calculateMarketValue({
     overallRating,
     potential,
+    age,
+    position,
+    personalityImpact: personality,
+    academyLevel,
+    reputation: teamReputation,
+    talentTier: talentTier.label,
+  });
+
+  const summaryMessage = potential - overallRating >= 20
+    ? 'This player has low current ability but high potential. Keep him in the academy.'
+    : talentTier.message;
+
+  return {
+    id: `youth-${weekKey}-${teamHash}-${Date.now()}`,
+    name,
+    age,
+    nationality,
+    position,
+    overallRating,
+    overall: overallRating,
+    potential,
+    form: randomBetween(rng, 45, 75),
+    morale: randomBetween(rng, 50, 85),
+    personality: personality.name,
+    personalityImpact: {
+      developmentSpeed: personality.developmentSpeed,
+      moraleChange: personality.moraleChange,
+      contractDemand: personality.contractDemand,
+      bigGamePerformance: personality.bigGamePerformance,
+      injuryRisk: personality.injuryRisk,
+    },
+    height,
+    weight,
+    dominantHand: rng() > 0.82 ? 'Left' : 'Right',
     attributes,
-    salary: 20 + Math.floor(rng() * 30),
-    contractYears: 2 + Math.floor(rng() * 3),
-    yearsInClub: 0,
+    stats: buildStats(position, attributes),
+    contract: {
+      monthlyWage,
+      monthsRemaining: randomBetween(rng, 18, 36),
+      contractType: 'Youth Contract',
+      demandLevel: 'Low',
+    },
+    salary: Math.max(1, Math.round(monthlyWage * 12 / 1000)),
+    contractYears: 2,
+    marketValue,
+    academyStatus: 'Pending',
+    createdAt: Date.now(),
+    generatedWeek: weekKey,
     fatigue: 10,
+    motivation: randomBetween(rng, 58, 82),
     injuryStatus: 'healthy',
-    lastFormRating: 60,
+    injuryDaysRemaining: 0,
+    lastFormRating: randomBetween(rng, 50, 75),
     seasonStats: { gamesPlayed: 0, points: 0, rebounds: 0, assists: 0, steals: 0, blocks: 0, fgMade: 0, fgAttempts: 0 },
+    careerStats: { gamesPlayed: 0, points: 0, rebounds: 0, assists: 0, steals: 0, blocks: 0, fgMade: 0, fgAttempts: 0 },
     isYouthAcademy: true,
+    report: {
+      teamAverageOverall,
+      academyLevel,
+      teamReputation,
+      teamForm,
+      randomVariance,
+      rawTalentRoll,
+      adjustedTalentRoll,
+      talentResult: talentTier.label,
+      successMultiplier,
+      summaryMessage,
+      finalResult: overallRating >= teamAverageOverall + 8
+        ? 'Well above team level'
+        : overallRating >= teamAverageOverall - 2
+        ? 'Close to team level'
+        : 'Development project',
+    },
   };
+}
+
+function compactHistory(player, status) {
+  return {
+    id: player.id,
+    name: player.name,
+    nationality: player.nationality,
+    position: player.position,
+    generatedWeek: player.generatedWeek,
+    overall: player.overallRating,
+    potential: player.potential,
+    personality: player.personality,
+    status,
+    marketValue: player.marketValue,
+    timestamp: Date.now(),
+  };
+}
+
+function getPlayerAdvice(player, academyLevel) {
+  if (!player) return `Upgrade the Youth Academy facility to improve future prospects.`;
+  if (academyLevel <= 2) return 'Your academy level is low, so most prospects will be limited.';
+  if (player.report?.talentResult === 'Rare gem' || player.report?.talentResult === 'Wonderkid') return 'Rare talent discovered. Consider promoting him carefully.';
+  if (player.potential - player.overallRating >= 18) return 'This player has low overall but high potential. Keep him in the academy.';
+  if (player.overallRating >= player.report?.teamAverageOverall - 2) return 'This prospect is close to your squad level and could be useful soon.';
+  return 'Upgrade the Youth Academy facility to improve future prospects.';
+}
+
+function EmptyState({ icon: Icon, title, body }) {
+  return (
+    <div className="card" style={{ textAlign: 'center', padding: '36px 24px' }}>
+      <Icon size={36} style={{ color: 'var(--text-muted)', marginBottom: 12 }} />
+      <div style={{ fontWeight: 800, fontSize: 'var(--font-size-lg)', marginBottom: 6 }}>{title}</div>
+      <div style={{ color: 'var(--text-muted)', fontSize: 'var(--font-size-sm)' }}>{body}</div>
+    </div>
+  );
+}
+
+function Metric({ label, value, icon: Icon, accent = 'var(--color-primary)' }) {
+  return (
+    <div className="stat-card" style={{ textAlign: 'left' }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 8, color: 'var(--text-muted)', fontSize: 'var(--font-size-xs)', fontWeight: 800, textTransform: 'uppercase', letterSpacing: 0.5 }}>
+        <Icon size={15} /> {label}
+      </div>
+      <div style={{ marginTop: 8, fontSize: 'var(--font-size-xl)', fontWeight: 900, color: accent }}>{value}</div>
+    </div>
+  );
+}
+
+function ProspectCard({ player, compact = false, actions }) {
+  const starCount = player.potential >= 90 ? 5 : player.potential >= 82 ? 4 : player.potential >= 72 ? 3 : player.potential >= 62 ? 2 : 1;
+  const ovrColor = player.overallRating >= 72 ? 'var(--color-success)' : player.overallRating >= 58 ? 'var(--color-primary)' : 'var(--text-secondary)';
+
+  return (
+    <div className="card" style={{ padding: compact ? 16 : 22 }}>
+      <div style={{ display: 'flex', alignItems: 'flex-start', gap: 14, marginBottom: 14 }}>
+        <div style={{
+          width: compact ? 46 : 58,
+          height: compact ? 46 : 58,
+          borderRadius: '50%',
+          background: 'var(--bg-muted)',
+          border: '1px solid var(--border-card)',
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'center',
+          fontWeight: 900,
+          color: 'var(--color-primary)',
+        }}>
+          {player.position}
+        </div>
+        <div style={{ minWidth: 0, flex: 1 }}>
+          <div style={{ fontWeight: 900, fontSize: compact ? 'var(--font-size-base)' : 'var(--font-size-lg)' }}>{player.name}</div>
+          <div style={{ color: 'var(--text-muted)', fontSize: 'var(--font-size-xs)' }}>
+            {player.age} · {player.nationality} · {player.height?.cm}cm · {player.dominantHand} hand
+          </div>
+          <div style={{ marginTop: 4, color: player.potential >= 85 ? '#f59e0b' : 'var(--color-primary)', letterSpacing: 1 }}>
+            {'★'.repeat(starCount)}{'☆'.repeat(5 - starCount)}
+          </div>
+        </div>
+        <div style={{ textAlign: 'right' }}>
+          <div style={{ fontSize: compact ? 'var(--font-size-xl)' : '2.4rem', fontWeight: 900, lineHeight: 1, color: ovrColor }}>{player.overallRating}</div>
+          <div style={{ fontSize: '0.65rem', color: 'var(--text-muted)', fontWeight: 800 }}>OVR</div>
+        </div>
+      </div>
+
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 8, marginBottom: 14 }}>
+        <div style={{ background: 'var(--bg-muted)', borderRadius: 8, padding: 10, textAlign: 'center' }}>
+          <div style={{ fontWeight: 900 }}>{player.potential}</div>
+          <div style={{ fontSize: '0.65rem', color: 'var(--text-muted)' }}>Potential</div>
+        </div>
+        <div style={{ background: 'var(--bg-muted)', borderRadius: 8, padding: 10, textAlign: 'center' }}>
+          <div style={{ fontWeight: 900 }}>${player.marketValue?.toLocaleString()}k</div>
+          <div style={{ fontSize: '0.65rem', color: 'var(--text-muted)' }}>Value</div>
+        </div>
+        <div style={{ background: 'var(--bg-muted)', borderRadius: 8, padding: 10, textAlign: 'center' }}>
+          <div style={{ fontWeight: 900 }}>${player.contract?.monthlyWage}k</div>
+          <div style={{ fontSize: '0.65rem', color: 'var(--text-muted)' }}>Monthly</div>
+        </div>
+      </div>
+
+      <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', marginBottom: compact ? 0 : 14 }}>
+        <span className="badge badge-orange">{player.personality}</span>
+        <span className="badge badge-gray">{player.contract?.contractType ?? 'Youth Contract'}</span>
+        <span className={player.academyStatus === 'Academy' ? 'badge badge-blue' : 'badge badge-gray'}>{player.academyStatus}</span>
+      </div>
+
+      {!compact && (
+        <>
+          <div style={{ color: 'var(--text-muted)', fontSize: 'var(--font-size-sm)', lineHeight: 1.5, marginBottom: 14 }}>
+            {player.report?.summaryMessage ?? getPlayerAdvice(player, 0)}
+          </div>
+          {actions}
+        </>
+      )}
+    </div>
+  );
 }
 
 // ── Main Page ──────────────────────────────────────────────────
@@ -69,270 +495,384 @@ function generateDraftProspect(facilityLevel, teamReputation, seed) {
 export default function YouthAcademy() {
   const { state, dispatch, addNotification } = useGame();
   const userTeam = state.userTeam;
+  const [activeTab, setActiveTab] = useState('overview');
 
   const now = new Date();
-  // Draft is available every Sunday
-  const dayOfWeek = now.getDay(); // 0 = Sunday
-  const isSunday = dayOfWeek === 0;
-  const lastDraftedAt = userTeam?.youthDraft?.lastDraftedAt ?? 0;
-  const lastDraftDate = new Date(lastDraftedAt);
-  // Already drafted this week if lastDraftedAt is in the current week (Mon–Sun cycle ending this Sunday)
-  const thisWeekSunday = (() => {
-    const d = new Date(now);
-    d.setHours(23, 59, 59, 999);
-    d.setDate(d.getDate() + (7 - d.getDay()) % 7); // next Sunday (or today if Sunday)
-    return d.getTime();
-  })();
-  const lastWeekSunday = thisWeekSunday - 7 * 24 * 60 * 60 * 1000;
-  const alreadyDrafted = lastDraftedAt > lastWeekSunday;
-  const nextSunday = new Date(thisWeekSunday + (alreadyDrafted ? 7 * 24 * 60 * 60 * 1000 : 0));
-  nextSunday.setHours(0, 0, 0, 0);
-  const daysLeft = Math.ceil((nextSunday.getTime() - now.getTime()) / (24 * 60 * 60 * 1000));
-  const nextAvailable = nextSunday.toLocaleDateString('en-US', { weekday: 'long', month: 'short', day: 'numeric' });
-  const draftOpen = isSunday && !alreadyDrafted;
+  const currentWeek = getWeekKey(now);
+  const isSunday = now.getDay() === 0;
+  const youthDraft = userTeam?.youthDraft ?? {};
+  const academyLevel = getFacilityLevel(userTeam?.facilities?.youthAcademy);
+  const academyPlayers = youthDraft.academyPlayers ?? [];
+  const generatedHistory = youthDraft.generatedProspectHistory ?? [];
+  const currentProspect = youthDraft.currentProspect ?? null;
+  const lastGeneratedWeek = youthDraft.lastGeneratedWeek ?? null;
+  const weeklyDraftAvailable = isSunday && lastGeneratedWeek !== currentWeek && !currentProspect;
+  const nextDraftDate = getNextSunday(now, isSunday && lastGeneratedWeek === currentWeek);
+  const teamAverageOverall = getTeamAverageOverall(userTeam?.players ?? []);
+  const teamForm = getTeamForm(userTeam);
+  const prospectsDrafted = youthDraft.prospectsDrafted ?? generatedHistory.length ?? 0;
+  const developmentChance = clamp(academyLevel * 3 + 10, 5, 65);
 
-  const youthLevel = userTeam?.facilities?.youthAcademy;
-  const facilityLevel = typeof youthLevel === 'object' ? (youthLevel?.level ?? 0) : (youthLevel ?? 0);
-  const reputation = userTeam?.reputation ?? 10;
+  const smartMessage = useMemo(() => {
+    if (currentProspect) return getPlayerAdvice(currentProspect, academyLevel);
+    if (isSunday && lastGeneratedWeek === currentWeek) return 'You have already drafted a youth prospect this week. Come back next Sunday.';
+    if (weeklyDraftAvailable) return 'Sunday draft is available. Generate one youth prospect for this week.';
+    return 'New prospects arrive every Sunday. Upgrade the Youth Academy facility to improve future prospects.';
+  }, [academyLevel, currentProspect, isSunday, lastGeneratedWeek, currentWeek, weeklyDraftAvailable]);
 
-  // Generate 3 prospects deterministically for this week (unique per team + week)
-  const draftedProspectIds = userTeam?.youthDraft?.draftedProspectIds ?? [];
-  const prospects = useMemo(() => {
-    // Week number since Unix epoch
-    const weekNumber = Math.floor(Date.now() / (7 * 24 * 60 * 60 * 1000));
-    // Team-specific hash so different teams get different prospects
-    const teamHash = (userTeam?.id ?? 'team').split('').reduce((a, c) => a + c.charCodeAt(0), 0);
-    const weekSeed = weekNumber * 1000 + (teamHash % 1000);
-    return [0, 1, 2]
-      .map(i => generateDraftProspect(facilityLevel, reputation, weekSeed * 3 + i))
-      .filter(p => !draftedProspectIds.includes(p.id));
-  }, [facilityLevel, reputation, userTeam?.id, draftedProspectIds]);
+  useEffect(() => {
+    if (!userTeam || !isSunday) return;
+    if (youthDraft.lastDevelopmentWeek === currentWeek) return;
+    if (!academyPlayers.length) return;
 
-  const [selected, setSelected] = useState(null);
-  const [revealedIds, setRevealedIds] = useState(new Set());
+    const trainingLevel = getFacilityLevel(userTeam.facilities?.trainingCourt);
+    const updatedAcademyPlayers = academyPlayers.map((player, index) => {
+      const rng = mulberry32(hashString(`${currentWeek}-${player.id}-${index}`));
+      const chance = academyLevel * 3 + trainingLevel * 2 + (player.personalityImpact?.developmentSpeed ?? 0) + 8;
+      if (rng() * 100 > chance) return player;
+      const overallGain = rng() > 0.72 ? 1 : 0;
+      const potentialGain = rng() > 0.96 ? 1 : 0;
+      return {
+        ...player,
+        overallRating: clamp((player.overallRating ?? 45) + overallGain, 25, 99),
+        overall: clamp((player.overallRating ?? 45) + overallGain, 25, 99),
+        potential: clamp((player.potential ?? 60) + potentialGain, player.overallRating ?? 45, 99),
+        form: clamp((player.form ?? 60) + randomBetween(rng, 0, 2), 25, 99),
+        developmentLog: [
+          {
+            week: currentWeek,
+            text: overallGain ? '+1 overall from academy training' : '+2 form from weekly academy work',
+            timestamp: Date.now(),
+          },
+          ...(player.developmentLog ?? []),
+        ].slice(0, 10),
+      };
+    });
 
-  function revealProspect(id) {
-    setRevealedIds(prev => new Set([...prev, id]));
+    dispatch({
+      type: 'UPDATE_TEAM',
+      payload: {
+        ...userTeam,
+        youthDraft: {
+          ...youthDraft,
+          academyPlayers: updatedAcademyPlayers,
+          lastDevelopmentWeek: currentWeek,
+          developmentNotes: [
+            { week: currentWeek, text: `Weekly academy development processed for ${academyPlayers.length} prospect${academyPlayers.length === 1 ? '' : 's'}.`, timestamp: Date.now() },
+            ...(youthDraft.developmentNotes ?? []),
+          ].slice(0, 20),
+        },
+      },
+    });
+  }, [academyLevel, academyPlayers, currentWeek, dispatch, isSunday, userTeam, youthDraft]);
+
+  function updateYouthDraft(nextDraft, teamPatch = {}) {
+    dispatch({
+      type: 'UPDATE_TEAM',
+      payload: {
+        ...userTeam,
+        ...teamPatch,
+        youthDraft: nextDraft,
+      },
+    });
   }
 
-  const handleDraft = () => {
-    if (!selected || alreadyDrafted) return;
-    const newPlayer = { ...selected, id: `youth-${Date.now()}`, isYouthAcademy: true };
-    const updatedPlayers = [...(userTeam.players || []), newPlayer];
+  function handleGenerateProspect() {
+    if (!weeklyDraftAvailable) {
+      addNotification('You have already drafted a youth prospect this week. Come back next Sunday.', 'warning');
+      return;
+    }
 
-    // Fan buzz: higher-rated prospects generate more excitement
-    const ovr = newPlayer.overallRating || 60;
-    const enthusiasmBoost = ovr >= 80 ? 8 : ovr >= 70 ? 5 : ovr >= 60 ? 3 : 1;
-    const buzzMsg = ovr >= 80
-      ? `${newPlayer.name} is a highly-rated prospect — fans are buzzing about his potential!`
-      : ovr >= 70
-      ? `${newPlayer.name} joins from the academy. Supporters are optimistic about his future.`
-      : `${newPlayer.name} has been drafted. The academy continues to develop young talent.`;
-
-    const updatedDraftedIds = [...draftedProspectIds, selected.id];
-    dispatch({
-      type: 'UPDATE_TEAM', payload: {
-        ...userTeam,
-        players: updatedPlayers,
-        fanEnthusiasm: Math.min(100, (userTeam.fanEnthusiasm ?? 20) + enthusiasmBoost),
-        youthDraft: {
-          lastDraftedAt: Date.now(),
-          lastDraftedPlayer: newPlayer.name,
-          draftedProspectIds: updatedDraftedIds,
-        }
-      }
+    const prospect = generateYouthProspect({ team: userTeam, academyLevel, weekKey: currentWeek });
+    updateYouthDraft({
+      ...youthDraft,
+      academyLevel,
+      lastGeneratedWeek: currentWeek,
+      nextDraftDate: getNextSunday(now, true).getTime(),
+      prospectsDrafted: prospectsDrafted + 1,
+      weeklyDraftAvailable: false,
+      currentProspect: prospect,
+      lastDraftedAt: Date.now(),
+      lastDraftedPlayer: prospect.name,
+      generatedProspectHistory: [
+        compactHistory(prospect, 'Generated'),
+        ...generatedHistory,
+      ].slice(0, 80),
     });
-    addNotification(`${newPlayer.name} drafted and added to the squad! ${enthusiasmBoost > 3 ? '🔥 Fans are excited!' : ''}`, 'success');
-    addNotification(buzzMsg, 'info');
-  };
+    setActiveTab('draft');
+    addNotification(`${prospect.name} generated from the Youth Academy. Choose his next step.`, 'success');
+  }
+
+  function handleProspectAction(action, player) {
+    const active = player ?? currentProspect;
+    if (!active) return;
+
+    let players = userTeam.players ?? [];
+    let budget = userTeam.budget ?? 0;
+    let fanEnthusiasm = userTeam.fanEnthusiasm ?? 20;
+    let academyList = academyPlayers.filter(p => p.id !== active.id);
+    let status = 'Academy';
+    let message = `${active.name} will continue developing in the academy.`;
+    const financeLog = [...(userTeam.financeLog ?? [])];
+
+    if (action === 'promote') {
+      const promoted = { ...active, academyStatus: 'Promoted', isYouthAcademy: false };
+      players = [...players, promoted];
+      status = 'Promoted';
+      fanEnthusiasm = Math.min(100, fanEnthusiasm + (promoted.potential >= 85 ? 5 : 2));
+      message = `${active.name} promoted to the senior squad.`;
+    } else if (action === 'keep') {
+      academyList = [{ ...active, academyStatus: 'Academy' }, ...academyList];
+      status = 'Academy';
+    } else if (action === 'sell') {
+      const fee = active.marketValue ?? 0;
+      budget += fee;
+      status = 'Sold';
+      message = `${active.name} sold for $${fee.toLocaleString()}k.`;
+      financeLog.unshift({ timestamp: Date.now(), type: 'academy_sale', description: `Youth academy sale: ${active.name}`, amount: fee, balanceAfter: budget });
+    } else if (action === 'release') {
+      const terminationFee = active.contract?.monthlyWage ?? 0;
+      budget -= terminationFee;
+      status = 'Released';
+      message = `${active.name}'s youth contract was terminated for $${terminationFee}k.`;
+      financeLog.unshift({ timestamp: Date.now(), type: 'academy_release', description: `Youth contract termination: ${active.name}`, amount: -terminationFee, balanceAfter: budget });
+    }
+
+    updateYouthDraft({
+      ...youthDraft,
+      currentProspect: currentProspect?.id === active.id ? null : currentProspect,
+      academyPlayers: academyList,
+      generatedProspectHistory: [
+        compactHistory(active, status),
+        ...generatedHistory,
+      ].slice(0, 80),
+    }, {
+      players,
+      budget,
+      fanEnthusiasm,
+      financeLog: financeLog.slice(0, 50),
+    });
+
+    addNotification(message, action === 'release' ? 'warning' : 'success');
+  }
+
+  const tabs = [
+    { key: 'overview', label: 'Overview', icon: BarChart3 },
+    { key: 'draft', label: 'Draft', icon: Sparkles },
+    { key: 'prospects', label: 'Prospects', icon: Users },
+    { key: 'development', label: 'Development', icon: TrendingUp },
+    { key: 'history', label: 'History', icon: History },
+  ];
+
+  if (!userTeam) {
+    return <EmptyState icon={Lock} title="No team loaded" body="Choose a club before using the Youth Academy." />;
+  }
 
   return (
     <div className="animate-fade-in">
-      {/* Hero header */}
       <div style={{
-        background: 'linear-gradient(135deg, #1a1a2e 0%, #16213e 50%, #0f3460 100%)',
-        borderRadius: 'var(--radius-xl)', padding: '32px 24px', marginBottom: 24,
-        position: 'relative', overflow: 'hidden',
+        background: 'linear-gradient(135deg, #18223a 0%, #1f3f56 54%, #24523f 100%)',
+        borderRadius: 'var(--radius-xl)',
+        padding: '30px 24px',
+        marginBottom: 22,
+        color: 'white',
       }}>
-        <div style={{ position: 'absolute', top: 0, right: 0, bottom: 0, left: 0, backgroundImage: 'radial-gradient(circle at 80% 50%, rgba(232,98,26,0.15) 0%, transparent 60%)', pointerEvents: 'none' }} />
-        <div style={{ position: 'relative', zIndex: 1 }}>
-          <div style={{ display: 'flex', alignItems: 'center', gap: 16, marginBottom: 12 }}>
-            <div style={{ fontSize: '3rem' }}>🌱</div>
-            <div>
-              <h1 style={{ color: 'white', margin: 0, fontSize: 'var(--font-size-2xl)', fontWeight: 900 }}>Youth Academy</h1>
-              <p style={{ color: 'rgba(255,255,255,0.7)', margin: 0, fontSize: 'var(--font-size-sm)' }}>Level {facilityLevel}/10 · New prospects every Sunday</p>
-            </div>
-            <div style={{ marginLeft: 'auto', textAlign: 'right' }}>
-              <div style={{ fontSize: 'var(--font-size-xs)', color: 'rgba(255,255,255,0.5)', textTransform: 'uppercase', letterSpacing: 1 }}>Prospects Drafted</div>
-              <div style={{ fontSize: 'var(--font-size-2xl)', fontWeight: 900, color: 'var(--color-primary)' }}>
-                {(userTeam?.youthDraft?.draftedProspectIds ?? []).length}
-              </div>
-            </div>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 16, flexWrap: 'wrap' }}>
+          <div style={{ width: 58, height: 58, borderRadius: 12, background: 'rgba(255,255,255,0.12)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+            <ShieldCheck size={32} />
           </div>
+          <div style={{ flex: 1, minWidth: 220 }}>
+            <h1 style={{ margin: 0, fontSize: 'var(--font-size-2xl)', fontWeight: 900 }}>Youth Academy</h1>
+            <p style={{ margin: '4px 0 0', color: 'rgba(255,255,255,0.72)', fontSize: 'var(--font-size-sm)' }}>
+              Level {academyLevel}/10 · One random young player every Sunday · {getAcademyDescription(academyLevel)}
+            </p>
+          </div>
+          <div style={{ textAlign: 'right' }}>
+            <div style={{ fontSize: 'var(--font-size-xs)', color: 'rgba(255,255,255,0.62)', textTransform: 'uppercase', fontWeight: 800 }}>Prospects Drafted</div>
+            <div style={{ fontSize: 'var(--font-size-2xl)', fontWeight: 900, color: '#fbbf24' }}>{prospectsDrafted}</div>
+          </div>
+        </div>
 
-          {/* Draft status banner */}
-          {draftOpen ? (
-            <div style={{ background: 'rgba(232,98,26,0.2)', border: '2px solid var(--color-primary)', borderRadius: 'var(--radius-lg)', padding: '12px 16px', display: 'flex', alignItems: 'center', gap: 12 }}>
-              <div style={{ fontSize: '1.5rem', animation: 'pulse 1.5s infinite' }}>🏀</div>
-              <div>
-                <div style={{ color: 'white', fontWeight: 800, fontSize: 'var(--font-size-base)' }}>Draft Day is Open!</div>
-                <div style={{ color: 'rgba(255,255,255,0.7)', fontSize: 'var(--font-size-sm)' }}>Scout the prospects, reveal their report, and draft your favourite.</div>
-              </div>
-            </div>
-          ) : !isSunday ? (
-            <div style={{ background: 'rgba(255,255,255,0.05)', border: '1px solid rgba(255,255,255,0.1)', borderRadius: 'var(--radius-lg)', padding: '12px 16px', display: 'flex', alignItems: 'center', gap: 12 }}>
-              <div style={{ fontSize: '1.5rem' }}>📅</div>
-              <div>
-                <div style={{ color: 'rgba(255,255,255,0.9)', fontWeight: 700 }}>Next Draft: {nextAvailable}</div>
-                <div style={{ color: 'rgba(255,255,255,0.5)', fontSize: 'var(--font-size-sm)' }}>{daysLeft} day{daysLeft !== 1 ? 's' : ''} until Sunday Draft Day</div>
-              </div>
-            </div>
-          ) : (
-            <div style={{ background: 'rgba(34,197,94,0.1)', border: '1px solid rgba(34,197,94,0.3)', borderRadius: 'var(--radius-lg)', padding: '12px 16px', display: 'flex', alignItems: 'center', gap: 12 }}>
-              <div style={{ fontSize: '1.5rem' }}>✅</div>
-              <div>
-                <div style={{ color: 'rgba(255,255,255,0.9)', fontWeight: 700 }}>Drafted this week: {userTeam?.youthDraft?.lastDraftedPlayer}</div>
-                <div style={{ color: 'rgba(255,255,255,0.5)', fontSize: 'var(--font-size-sm)' }}>Next draft available {nextAvailable}</div>
-              </div>
-            </div>
-          )}
+        <div style={{ marginTop: 18, background: weeklyDraftAvailable ? 'rgba(251,191,36,0.15)' : 'rgba(255,255,255,0.08)', border: weeklyDraftAvailable ? '1px solid rgba(251,191,36,0.6)' : '1px solid rgba(255,255,255,0.14)', borderRadius: 10, padding: '12px 14px', display: 'flex', alignItems: 'center', gap: 10 }}>
+          {weeklyDraftAvailable ? <CheckCircle size={20} color="#fbbf24" /> : <Calendar size={20} color="rgba(255,255,255,0.72)" />}
+          <div>
+            <div style={{ fontWeight: 900 }}>{weeklyDraftAvailable ? 'Weekly draft available' : `Next draft: ${formatDate(nextDraftDate)}`}</div>
+            <div style={{ color: 'rgba(255,255,255,0.66)', fontSize: 'var(--font-size-xs)' }}>{smartMessage}</div>
+          </div>
         </div>
       </div>
 
-      {/* Prospects section */}
-      {!isSunday && !alreadyDrafted ? (
-        /* Not Sunday yet */
-        <div className="card" style={{ textAlign: 'center', padding: '48px 32px' }}>
-          <div style={{ fontSize: '4rem', marginBottom: 16 }}>🔮</div>
-          <div style={{ fontWeight: 800, fontSize: 'var(--font-size-xl)', marginBottom: 8 }}>Come Back on Sunday</div>
-          <div style={{ color: 'var(--text-muted)', fontSize: 'var(--font-size-sm)', maxWidth: 360, margin: '0 auto', marginBottom: 24 }}>
-            The Youth Academy runs a weekly scouting event every Sunday. New prospects will be revealed then — who will emerge?
-          </div>
-          <div style={{ display: 'flex', gap: 24, justifyContent: 'center', flexWrap: 'wrap' }}>
-            {[1, 2, 3].map(i => (
-              <div key={i} style={{ padding: '20px 24px', background: 'var(--bg-muted)', borderRadius: 'var(--radius-lg)', border: '2px dashed var(--border-color)', minWidth: 140, textAlign: 'center' }}>
-                <div style={{ fontSize: '2.5rem', marginBottom: 8, filter: 'grayscale(1)', opacity: 0.4 }}>🏃</div>
-                <div style={{ fontWeight: 700, color: 'var(--text-muted)' }}>Prospect {i}</div>
-                <div style={{ fontSize: 'var(--font-size-xs)', color: 'var(--text-muted)' }}>Reveals Sunday</div>
-              </div>
-            ))}
-          </div>
-        </div>
-      ) : prospects.length === 0 ? (
-        <div className="card" style={{ textAlign: 'center', padding: 40 }}>
-          <div style={{ fontSize: '3rem', marginBottom: 8 }}>🎓</div>
-          <div style={{ fontWeight: 700, marginBottom: 4, fontSize: 'var(--font-size-lg)' }}>All prospects drafted!</div>
-          <div style={{ fontSize: 'var(--font-size-sm)', color: 'var(--text-muted)' }}>New prospects arrive next Sunday.</div>
-        </div>
-      ) : (
+      <div className="tabs" style={{ overflowX: 'auto' }}>
+        {tabs.map(tab => {
+          const Icon = tab.icon;
+          return (
+            <button key={tab.key} className={`tab ${activeTab === tab.key ? 'active' : ''}`} onClick={() => setActiveTab(tab.key)} style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6, whiteSpace: 'nowrap' }}>
+              <Icon size={15} /> {tab.label}
+            </button>
+          );
+        })}
+      </div>
+
+      {activeTab === 'overview' && (
         <>
-          <div style={{ fontWeight: 700, fontSize: 'var(--font-size-lg)', marginBottom: 16 }}>
-            {draftOpen ? '🏀 This Week\'s Prospects — Choose Wisely' : '👁 This Week\'s Prospects (Preview)'}
-          </div>
-          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(300px, 1fr))', gap: 20, marginBottom: 28 }}>
-            {prospects.map((p, idx) => {
-              const isRevealed = revealedIds.has(p.id);
-              const isSelected = selected?.id === p.id;
-              const starCount = p.potential >= 85 ? 5 : p.potential >= 75 ? 4 : p.potential >= 65 ? 3 : p.potential >= 55 ? 2 : 1;
-              const starColor = starCount >= 4 ? '#f59e0b' : starCount >= 3 ? '#f97316' : 'var(--text-muted)';
-              const isElite = p.overallRating >= 75;
-              return (
-                <div key={p.id} style={{
-                  borderRadius: 'var(--radius-xl)', overflow: 'hidden',
-                  border: isSelected ? '3px solid var(--color-primary)' : isElite && isRevealed ? '2px solid #f59e0b' : '2px solid var(--border-card)',
-                  background: isSelected ? 'var(--color-primary-100)' : 'var(--bg-card)',
-                  boxShadow: isSelected ? '0 0 24px rgba(232,98,26,0.25)' : 'none',
-                  transition: 'all 0.2s',
-                  opacity: alreadyDrafted ? 0.65 : 1,
-                }}>
-                  {/* Card banner */}
-                  <div style={{
-                    height: 6,
-                    background: isElite && isRevealed ? 'linear-gradient(90deg, #f59e0b, #f97316)' : starCount >= 3 ? 'var(--color-primary)' : 'var(--bg-muted)',
-                  }} />
-
-                  {!isRevealed ? (
-                    /* Mystery card */
-                    <div style={{ padding: 24, textAlign: 'center' }}>
-                      <div style={{ position: 'relative', display: 'inline-block', marginBottom: 16 }}>
-                        <div style={{ width: 80, height: 80, borderRadius: '50%', background: 'var(--bg-muted)', border: '3px dashed var(--border-color)', display: 'flex', alignItems: 'center', justifyContent: 'center', margin: '0 auto 12px', fontSize: '2rem', color: 'var(--text-muted)' }}>?</div>
-                      </div>
-                      <div style={{ fontWeight: 800, fontSize: 'var(--font-size-base)', letterSpacing: 1, marginBottom: 4, color: 'var(--text-secondary)' }}>
-                        UNKNOWN · {p.position}
-                      </div>
-                      <div style={{ marginBottom: 12, fontSize: '1.3rem', color: starColor, letterSpacing: 2 }}>
-                        {'★'.repeat(starCount)}{'☆'.repeat(5 - starCount)}
-                      </div>
-                      <div style={{ fontSize: 'var(--font-size-xs)', color: 'var(--text-muted)', marginBottom: 16 }}>
-                        {starCount >= 5 ? '⚡ Exceptional prospect' : starCount >= 4 ? '🔥 High potential' : starCount >= 3 ? 'Solid prospect' : 'Development player'}
-                      </div>
-                      <button className="btn btn-primary btn-sm" onClick={() => revealProspect(p.id)} style={{ width: '100%' }}>
-                        <Eye size={14} /> Reveal Scout Report
-                      </button>
-                    </div>
-                  ) : (
-                    /* Revealed card */
-                    <div onClick={() => draftOpen && setSelected(isSelected ? null : p)}
-                      style={{ padding: 20, cursor: draftOpen ? 'pointer' : 'default' }}>
-                      {/* Header */}
-                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 12 }}>
-                        <div>
-                          <div style={{ fontWeight: 800, fontSize: 'var(--font-size-base)' }}>{p.name}</div>
-                          <div style={{ fontSize: 'var(--font-size-xs)', color: 'var(--text-muted)' }}>{p.position} · Age {p.age}</div>
-                          <div style={{ fontSize: '1rem', color: starColor, marginTop: 2 }}>{'★'.repeat(starCount)}{'☆'.repeat(5 - starCount)}</div>
-                        </div>
-                        <div style={{ textAlign: 'right' }}>
-                          <div style={{ fontSize: '2.2rem', fontWeight: 900, color: p.overallRating >= 75 ? '#22c55e' : p.overallRating >= 60 ? 'var(--color-primary)' : 'var(--text-secondary)', lineHeight: 1 }}>{p.overallRating}</div>
-                          <div style={{ fontSize: '0.6rem', color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: 0.5 }}>OVR</div>
-                          {isElite && <div style={{ fontSize: '0.65rem', fontWeight: 800, color: '#f59e0b' }}>⭐ ELITE</div>}
-                        </div>
-                      </div>
-                      {/* Potential bar */}
-                      <div style={{ marginBottom: 12 }}>
-                        <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 4 }}>
-                          <span style={{ fontSize: 'var(--font-size-xs)', color: 'var(--text-muted)', fontWeight: 600 }}>Potential</span>
-                          <span style={{ fontSize: 'var(--font-size-xs)', fontWeight: 800, color: p.potential >= 85 ? '#f59e0b' : 'var(--text-primary)' }}>{p.potential}</span>
-                        </div>
-                        <div style={{ height: 6, background: 'var(--bg-muted)', borderRadius: 3, overflow: 'hidden' }}>
-                          <div style={{ width: `${p.potential}%`, height: '100%', background: p.potential >= 85 ? 'linear-gradient(90deg,#f59e0b,#f97316)' : 'var(--color-primary)', borderRadius: 3, transition: 'width 0.4s' }} />
-                        </div>
-                      </div>
-                      {/* Info badges */}
-                      <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', marginBottom: 10 }}>
-                        <span className="badge" style={{ background: 'var(--bg-muted)' }}>💰 ${p.salary}k/yr</span>
-                        <span className="badge" style={{ background: 'var(--bg-muted)' }}>📋 {p.contractYears} seasons</span>
-                        <span className={`badge ${p.potential >= 80 ? 'badge-yellow' : 'badge-gray'}`}>POT {p.potential}</span>
-                      </div>
-                      {isSelected && draftOpen && (
-                        <div style={{ padding: '8px 12px', background: 'rgba(232,98,26,0.12)', borderRadius: 'var(--radius-md)', border: '1px solid var(--color-primary)', fontSize: 'var(--font-size-xs)', color: 'var(--color-primary)', fontWeight: 700 }}>
-                          ✓ Selected — press "Draft Player" to confirm
-                        </div>
-                      )}
-                    </div>
-                  )}
-                </div>
-              );
-            })}
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(170px, 1fr))', gap: 14, marginBottom: 18 }}>
+            <Metric icon={Award} label="Academy Level" value={`${academyLevel}/10`} />
+            <Metric icon={Users} label="Team Average" value={teamAverageOverall} accent="var(--text-primary)" />
+            <Metric icon={Star} label="Reputation" value={`${userTeam.reputation ?? 10}/100`} accent="#f59e0b" />
+            <Metric icon={TrendingUp} label="Recent Form" value={`${teamForm}/100`} accent="var(--color-success)" />
           </div>
 
-          {draftOpen && (
-            <div style={{ position: 'sticky', bottom: 20, zIndex: 50 }}>
-              <button
-                className="btn btn-primary btn-lg"
-                disabled={!selected}
-                onClick={handleDraft}
-                style={{ width: '100%', maxWidth: 480, margin: '0 auto', display: 'flex', justifyContent: 'center', boxShadow: selected ? '0 8px 32px rgba(232,98,26,0.4)' : 'none', transition: 'box-shadow 0.2s' }}>
-                <Star size={18} />
-                {selected ? `Draft ${selected.name} (OVR ${selected.overallRating})` : 'Reveal & Select a Prospect'}
-              </button>
+          <div className="card" style={{ padding: 22, marginBottom: 18 }}>
+            <div className="card-title" style={{ marginBottom: 8 }}>Academy Quality</div>
+            <div style={{ color: 'var(--text-muted)', lineHeight: 1.6, marginBottom: 14 }}>
+              {getAcademyDescription(academyLevel)}. Each academy level adds current ability and gives a larger boost to potential, while team reputation and recent form influence the quality of players who want to join.
             </div>
-          )}
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))', gap: 10 }}>
+              <div className="badge badge-gray">Quality bonus: +{(academyLevel * 1.5).toFixed(1)} OVR</div>
+              <div className="badge badge-gray">Potential bonus: +{academyLevel * 2}</div>
+              <div className="badge badge-gray">Development chance: {developmentChance}%</div>
+            </div>
+          </div>
         </>
       )}
 
-      <style>{`
-        @keyframes pulse { 0%,100%{opacity:1} 50%{opacity:0.6} }
-      `}</style>
+      {activeTab === 'draft' && (
+        <div style={{ display: 'grid', gridTemplateColumns: currentProspect ? 'repeat(auto-fit, minmax(280px, 1fr))' : '1fr', gap: 18 }}>
+          {!currentProspect ? (
+            <div className="card" style={{ textAlign: 'center', padding: '46px 28px' }}>
+              {weeklyDraftAvailable ? <Sparkles size={44} style={{ color: 'var(--color-primary)', marginBottom: 14 }} /> : <Lock size={44} style={{ color: 'var(--text-muted)', marginBottom: 14 }} />}
+              <div style={{ fontWeight: 900, fontSize: 'var(--font-size-xl)', marginBottom: 8 }}>
+                {weeklyDraftAvailable ? 'Generate This Week\'s Prospect' : 'Draft Locked'}
+              </div>
+              <div style={{ color: 'var(--text-muted)', maxWidth: 520, margin: '0 auto 20px', lineHeight: 1.6 }}>
+                {weeklyDraftAvailable
+                  ? 'Your academy can generate one young player this Sunday. The prospect will be shaped by academy level, squad level, reputation, form, talent probability, position need, nationality, personality, and potential.'
+                  : smartMessage}
+              </div>
+              <button className="btn btn-primary btn-lg" disabled={!weeklyDraftAvailable} onClick={handleGenerateProspect} style={{ margin: '0 auto' }}>
+                <Sparkles size={18} /> Generate Youth Prospect
+              </button>
+            </div>
+          ) : (
+            <>
+              <ProspectCard
+                player={currentProspect}
+                actions={(
+                  <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(150px, 1fr))', gap: 10 }}>
+                    <button className="btn btn-primary" onClick={() => handleProspectAction('promote', currentProspect)}><Send size={16} /> Promote</button>
+                    <button className="btn btn-secondary" onClick={() => handleProspectAction('keep', currentProspect)}><ShieldCheck size={16} /> Keep</button>
+                    <button className="btn btn-secondary" onClick={() => handleProspectAction('sell', currentProspect)}><DollarSign size={16} /> Sell</button>
+                    <button className="btn btn-danger" onClick={() => handleProspectAction('release', currentProspect)}><UserMinus size={16} /> Terminate</button>
+                  </div>
+                )}
+              />
+
+              <div className="card" style={{ padding: 20 }}>
+                <div className="card-title" style={{ marginBottom: 12 }}>Why This Level?</div>
+                {[
+                  ['Team average overall', currentProspect.report.teamAverageOverall],
+                  ['Youth Academy level', `${currentProspect.report.academyLevel}/10`],
+                  ['Team reputation', `${currentProspect.report.teamReputation}/100`],
+                  ['Recent form', `${currentProspect.report.teamForm}/100`],
+                  ['Talent roll', `${currentProspect.report.talentResult} (${currentProspect.report.adjustedTalentRoll}/100)`],
+                  ['Final result', currentProspect.report.finalResult],
+                ].map(([label, value]) => (
+                  <div key={label} style={{ display: 'flex', justifyContent: 'space-between', gap: 12, padding: '9px 0', borderBottom: '1px solid var(--border-card)' }}>
+                    <span style={{ color: 'var(--text-muted)', fontSize: 'var(--font-size-sm)' }}>{label}</span>
+                    <strong style={{ textAlign: 'right' }}>{value}</strong>
+                  </div>
+                ))}
+              </div>
+            </>
+          )}
+        </div>
+      )}
+
+      {activeTab === 'prospects' && (
+        academyPlayers.length ? (
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(280px, 1fr))', gap: 16 }}>
+            {academyPlayers.map(player => (
+              <ProspectCard
+                key={player.id}
+                player={player}
+                actions={(
+                  <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 8 }}>
+                    <button className="btn btn-primary btn-sm" onClick={() => handleProspectAction('promote', player)}><Send size={14} /> Promote</button>
+                    <button className="btn btn-secondary btn-sm" onClick={() => handleProspectAction('sell', player)}><DollarSign size={14} /> Sell</button>
+                    <button className="btn btn-danger btn-sm" onClick={() => handleProspectAction('release', player)}><XCircle size={14} /> Release</button>
+                  </div>
+                )}
+              />
+            ))}
+          </div>
+        ) : (
+          <EmptyState icon={Users} title="No Academy Prospects" body="Keep a generated player in the academy to develop him over time." />
+        )
+      )}
+
+      {activeTab === 'development' && (
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(280px, 1fr))', gap: 18 }}>
+          <div className="card" style={{ padding: 22 }}>
+            <div className="card-title" style={{ marginBottom: 8 }}>Weekly Development</div>
+            <div style={{ color: 'var(--text-muted)', lineHeight: 1.6, marginBottom: 16 }}>
+              Academy prospects improve once per Sunday. Their chance is based on Youth Academy level, Training Court level, and personality. Outcomes can include form gains, overall gains, rare potential gains, or no visible progress.
+            </div>
+            <div style={{ height: 10, background: 'var(--bg-muted)', borderRadius: 999, overflow: 'hidden', marginBottom: 8 }}>
+              <div style={{ width: `${developmentChance}%`, height: '100%', background: 'var(--color-primary)' }} />
+            </div>
+            <div style={{ fontSize: 'var(--font-size-xs)', color: 'var(--text-muted)' }}>Estimated base improvement chance: {developmentChance}%</div>
+          </div>
+
+          <div className="card" style={{ padding: 22 }}>
+            <div className="card-title" style={{ marginBottom: 12 }}>Training Notes</div>
+            {(youthDraft.developmentNotes ?? []).length ? (
+              (youthDraft.developmentNotes ?? []).slice(0, 6).map(note => (
+                <div key={`${note.week}-${note.timestamp}`} style={{ padding: '9px 0', borderBottom: '1px solid var(--border-card)', fontSize: 'var(--font-size-sm)' }}>
+                  <strong>{note.week}</strong>
+                  <div style={{ color: 'var(--text-muted)' }}>{note.text}</div>
+                </div>
+              ))
+            ) : (
+              <div style={{ color: 'var(--text-muted)', fontSize: 'var(--font-size-sm)' }}>No weekly development notes yet.</div>
+            )}
+          </div>
+        </div>
+      )}
+
+      {activeTab === 'history' && (
+        generatedHistory.length ? (
+          <div className="table-container">
+            <table>
+              <thead>
+                <tr>
+                  <th>Name</th>
+                  <th>Nation</th>
+                  <th>Pos</th>
+                  <th>OVR</th>
+                  <th>POT</th>
+                  <th>Status</th>
+                  <th>Week</th>
+                </tr>
+              </thead>
+              <tbody>
+                {generatedHistory.map((item, idx) => (
+                  <tr key={`${item.id}-${item.status}-${idx}`}>
+                    <td style={{ fontWeight: 800 }}>{item.name}</td>
+                    <td>{item.nationality}</td>
+                    <td>{item.position}</td>
+                    <td>{item.overall}</td>
+                    <td>{item.potential}</td>
+                    <td><span className="badge badge-gray">{item.status}</span></td>
+                    <td>{item.generatedWeek}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        ) : (
+          <EmptyState icon={Clock} title="No History Yet" body="Generated, promoted, sold, and released academy players will appear here." />
+        )
+      )}
     </div>
   );
 }
