@@ -15,6 +15,7 @@ import {
   AlertCircle,
   Newspaper,
 } from 'lucide-react';
+import { calculateFinanceProjection, summarizeFinanceLog } from '../engine/financeEngine.js';
 
 // ── Helpers ───────────────────────────────────────────────────
 
@@ -160,6 +161,11 @@ export default function Dashboard() {
   const [showFanHistory, setShowFanHistory] = useState(false);
 
   const { seasonRecord, motivationBar, momentumBar, chemistryGauge, budget, fanCount, matchHistory, seasonMatches, players, financeLog, fanWeeklyHistory, lastGameTopPerformers } = userTeam;
+  const userLeagueForFinance = state.leagues?.find(lg => lg.teams?.some(t => t.id === userTeam.id));
+  const financeProjection = calculateFinanceProjection(userTeam, {
+    leagueTier: userLeagueForFinance?.tier ?? userLeagueForFinance?.id?.slice(-1) ?? userTeam.league ?? 'C',
+  });
+  const actualFinance30 = summarizeFinanceLog(financeLog ?? []);
 
   // ── Next match (earliest unplayed, sorted by date) ───────
   const upcomingMatch = seasonMatches
@@ -287,7 +293,7 @@ export default function Dashboard() {
           icon={<DollarSign size={18} />}
           label="Balance"
           value={`$${budget?.toLocaleString?.() ?? budget}`}
-          sub="Available funds"
+          sub={`${financeProjection.projectedNetMonthly >= 0 ? '+' : ''}${fmtMoney(financeProjection.projectedNetMonthly)} projected / month`}
         />
         <div
           className="stat-card"
@@ -354,6 +360,29 @@ export default function Dashboard() {
           </div>
         );
       })()}
+
+      <div className="card mb-6">
+        <div className="card-header">
+          <span className="card-title" style={{ display: 'flex', alignItems: 'center', gap: 'var(--space-2)' }}>
+            <DollarSign size={16} style={{ color: 'var(--color-primary)' }} />
+            Finance Pulse
+          </span>
+          <span className="badge badge-gray">Synced with Financial Report</span>
+        </div>
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(170px, 1fr))', gap: 'var(--space-3)' }}>
+          {[
+            { label: 'Projected Monthly Net', value: fmtMoney(financeProjection.projectedNetMonthly), color: financeProjection.projectedNetMonthly >= 0 ? 'var(--color-success)' : 'var(--color-danger)' },
+            { label: 'Actual Last 30 Days', value: fmtMoney(actualFinance30.net), color: actualFinance30.net >= 0 ? 'var(--color-success)' : 'var(--color-danger)' },
+            { label: 'Monthly Revenue', value: fmtMoney(financeProjection.totalMonthlyRevenue), color: 'var(--color-success)' },
+            { label: 'Monthly Expenses', value: fmtMoney(financeProjection.totalMonthlyExpenses), color: 'var(--color-danger)' },
+          ].map(item => (
+            <div key={item.label} style={{ background: 'var(--bg-muted)', borderRadius: 'var(--radius-md)', padding: 'var(--space-3)' }}>
+              <div style={{ fontSize: 'var(--font-size-xs)', color: 'var(--text-muted)', fontWeight: 800, textTransform: 'uppercase', letterSpacing: 0.5 }}>{item.label}</div>
+              <div style={{ marginTop: 4, fontWeight: 900, fontSize: 'var(--font-size-lg)', color: item.color }}>{item.value}</div>
+            </div>
+          ))}
+        </div>
+      </div>
 
       {/* Team gauges + Next match */}
       <div className="grid-2 mb-6">

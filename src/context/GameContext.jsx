@@ -12,6 +12,7 @@ import {
 import { processPendingMatches, isMatchCurrentlyLive } from '../engine/gameScheduler.js';
 import { simulateMatch, GAME_DURATION_SEC } from '../engine/matchEngine.js';
 import { calculateOverallRating } from '../engine/playerGenerator.js';
+import { THIRTY_DAYS, applyMonthlyFinanceTick } from '../engine/financeEngine.js';
 
 // ── Build game state from Firestore data ───────────────────────
 
@@ -125,6 +126,7 @@ function buildUserTeam(leagues, userState) {
     lastInvestmentTimestamp: userState.lastInvestmentTimestamp ?? 0,
     lastGameTopPerformers:   userState.lastGameTopPerformers   ?? null,
     lastMonthlyFinanceTick:  userState.lastMonthlyFinanceTick  ?? 0,
+    lastMonthlyFinanceSnapshot: userState.lastMonthlyFinanceSnapshot ?? null,
     consecutiveDebtSeasons:  userState.consecutiveDebtSeasons  ?? 0,
     consecutiveDebtSeasonLastCheck: userState.consecutiveDebtSeasonLastCheck ?? 0,
     wins:         derivedRecord.wins,
@@ -184,6 +186,7 @@ function extractUserState(state) {
     lastInvestmentTimestamp: t.lastInvestmentTimestamp ?? 0,
     lastGameTopPerformers:   t.lastGameTopPerformers   ?? null,
     lastMonthlyFinanceTick:  t.lastMonthlyFinanceTick  ?? 0,
+    lastMonthlyFinanceSnapshot: t.lastMonthlyFinanceSnapshot ?? null,
     consecutiveDebtSeasons:  t.consecutiveDebtSeasons  ?? 0,
     consecutiveDebtSeasonLastCheck: t.consecutiveDebtSeasonLastCheck ?? 0,
     seasonRecord:   { wins: t.wins ?? 0, losses: t.losses ?? 0 },
@@ -555,32 +558,11 @@ export function GameProvider({ children }) {
         fanGrowthApplied = true;
       }
 
-      // ── Weekly finance tick (passive income + interest) ─────────
-      // Once per week (Sunday): merchandise passive income and deficit interest.
+      // ── Weekly finance tick (deficit interest) ──────────────────
+      // Monthly income is handled by the monthly finance tick. Debt interest remains weekly.
       const lastWeeklyFinanceTick = userStateRes.state?.lastWeeklyFinanceTick ?? 0;
       if (userStateRes.state && lastWeeklyFinanceTick < thisWeekSunday) {
-        const facilities = userStateRes.state.facilities ?? {};
-        const getFacLevel = (key) => {
-          const f = facilities[key];
-          return typeof f === 'number' ? f : (f?.level ?? 0);
-        };
-        const merchLevel = getFacLevel('merchandise');
         const finLog = userStateRes.state.financeLog ?? [];
-
-        // Passive income from Merchandise Store (level > 0 required)
-        if (merchLevel > 0) {
-          const passiveIncome = Math.round(
-            (userStateRes.state.fanCount ?? 250) * 0.01 * (1 + merchLevel * 0.2)
-          );
-          userStateRes.state.budget = (userStateRes.state.budget ?? 50) + passiveIncome;
-          finLog.unshift({
-            timestamp: now,
-            type: 'passive_income',
-            description: `Merchandise Store Income (Lv ${merchLevel})`,
-            amount: passiveIncome,
-            balanceAfter: userStateRes.state.budget,
-          });
-        }
 
         // 5% interest penalty on deficit
         const currentBudget = userStateRes.state.budget ?? 50;
@@ -601,76 +583,19 @@ export function GameProvider({ children }) {
         fanGrowthApplied = true; // ensure save happens
       }
 
-      // ── Monthly finance tick (wages, TV/sponsorship revenue) ──────
-      // Once per 30 days: deduct player/staff wages, facility maintenance, ops; add TV + sponsorship.
-      const THIRTY_DAYS = 30 * 24 * 60 * 60 * 1000;
+      // ── Monthly finance tick ────────────────────────────────────
+      // Once per 30 days: apply recurring income and operating expenses.
       const lastMonthlyFinanceTick = userStateRes.state?.lastMonthlyFinanceTick ?? 0;
       if (userStateRes.state && lastMonthlyFinanceTick + THIRTY_DAYS <= now) {
-        const mFacilities = userStateRes.state.facilities ?? {};
-        const getMFacLevel = (key) => {
-          const f = mFacilities[key];
-          return typeof f === 'number' ? f : (f?.level ?? 0);
-        };
-        const mPlayers = userStateRes.state.playersState ?? [];
-        const mStaff = Object.values(userStateRes.state.staff ?? {});
         const mLeagueTier = (() => {
           const mLeague = simulatedLeagues.find(l => l.teams?.some(t => t.id === userStateRes.state.teamId));
           return mLeague?.tier ?? mLeague?.id?.slice(-1) ?? 'C';
         })();
-        const mReputation = userStateRes.state.reputation ?? 10;
-        const mFinLog = userStateRes.state.financeLog ?? [];
+        const monthlyResult = applyMonthlyFinanceTick(userStateRes.state, { now, leagueTier: mLeagueTier });
 
-        const mFanCount = userStateRes.state.fanCount ?? 250;
-        const mMediaLevel = getMFacLevel('media');
-        const mArenaCapacity = 600 + getMFacLevel('basketballHall') * 200;
-        const mStSeats = userStateRes.state.seasonTicketSeats ?? 0;
-        const mStPricePerGame = userStateRes.state.seasonTicketPrice ?? 15;
-        const HOME_GAMES_MONTH = 4;
-
-        // Expenses
-        const playerWages = mPlayers.reduce((sum, p) => sum + (p.salary ?? 5) * 8, 0);
-        const staffWages = mStaff.reduce((sum, s) => sum + (s.salary ?? 100), 0);
-        const facMaintenance =
-          getMFacLevel('basketballHall') * 50 +
-          getMFacLevel('media')          * 30 +
-          getMFacLevel('merchandise')    * 25 +
-          getMFacLevel('trainingCourt')  * 40 +
-          getMFacLevel('gym')            * 35 +
-          getMFacLevel('youthAcademy')   * 45 +
-          getMFacLevel('medicalCenter')  * 30 +
-          getMFacLevel('scoutingOffice') * 25;
-        const generalOps = Math.round(200 + mArenaCapacity * 0.05 + mFanCount * 0.02);
-        const totalExpenses = playerWages + staffWages + facMaintenance + generalOps;
-
-        // Revenue
-        const baseTVByLeague = { A: 500, B: 250, C: 100 }[mLeagueTier] ?? 100;
-        const tvRevenue = baseTVByLeague + mReputation * 5 + mMediaLevel * 100;
-        const sponsorship = Math.round(100 + mFanCount * 0.2 + mReputation * 10 + mMediaLevel * 150);
-        const seasonTicketMonthly = mStSeats * mStPricePerGame * HOME_GAMES_MONTH;
-        const totalMonthlyNonGate = tvRevenue + sponsorship + seasonTicketMonthly;
-
-        let mBudget = userStateRes.state.budget ?? 50;
-
-        mBudget -= totalExpenses;
-        mFinLog.unshift({
-          timestamp: now,
-          type: 'monthly_expenses',
-          description: `Monthly Expenses — wages $${playerWages + staffWages}, facility $${facMaintenance}, ops $${generalOps}`,
-          amount: -totalExpenses,
-          balanceAfter: mBudget,
-        });
-
-        mBudget += totalMonthlyNonGate;
-        mFinLog.unshift({
-          timestamp: now,
-          type: 'monthly_revenue',
-          description: `Monthly Revenue — TV $${tvRevenue}, sponsorship $${sponsorship}${seasonTicketMonthly > 0 ? `, season tickets $${seasonTicketMonthly}` : ''}`,
-          amount: totalMonthlyNonGate,
-          balanceAfter: mBudget,
-        });
-
-        userStateRes.state.budget = mBudget;
-        userStateRes.state.financeLog = mFinLog.slice(0, 50);
+        userStateRes.state.budget = monthlyResult.budget;
+        userStateRes.state.financeLog = monthlyResult.financeLog;
+        userStateRes.state.lastMonthlyFinanceSnapshot = monthlyResult.snapshot;
         userStateRes.state.lastMonthlyFinanceTick = now;
         fanGrowthApplied = true;
       }
@@ -849,6 +774,7 @@ export function GameProvider({ children }) {
               userStateRes.state.momentumBar = 65;
               userStateRes.state.lastWeeklyFinanceTick = 0;
               userStateRes.state.lastMonthlyFinanceTick = 0;
+              userStateRes.state.lastMonthlyFinanceSnapshot = null;
               userStateRes.state.lastTrainingApplied = 0;
               userStateRes.state.lastInvestmentTimestamp = 0;
               userStateRes.state.lastGameTopPerformers = null;
@@ -884,6 +810,7 @@ export function GameProvider({ children }) {
         userTeam.financeLog = userStateRes.state.financeLog ?? userTeam.financeLog ?? [];
         userTeam.lastWeeklyFinanceTick = userStateRes.state.lastWeeklyFinanceTick ?? 0;
         userTeam.lastMonthlyFinanceTick = userStateRes.state.lastMonthlyFinanceTick ?? 0;
+        userTeam.lastMonthlyFinanceSnapshot = userStateRes.state.lastMonthlyFinanceSnapshot ?? null;
         userTeam.consecutiveDebtSeasons = userStateRes.state.consecutiveDebtSeasons ?? 0;
         userTeam.consecutiveDebtSeasonLastCheck = userStateRes.state.consecutiveDebtSeasonLastCheck ?? 0;
         if (userStateRes.state.lastGameTopPerformers) {

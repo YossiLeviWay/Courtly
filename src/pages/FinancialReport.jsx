@@ -1,26 +1,19 @@
 import { useState } from 'react';
 import { useGame } from '../context/GameContext.jsx';
 import { TrendingUp, TrendingDown, DollarSign, BarChart2, Users, Building2 } from 'lucide-react';
+import {
+  HOME_GAMES_MONTH,
+  SEASON_MONTHS,
+  THIRTY_DAYS,
+  calcPlayerMonthlyWage,
+  calcPlayerOvr,
+  calcStaffMonthlyWage,
+  calculateFinanceProjection,
+  getFacilityLevel,
+  summarizeFinanceLog,
+} from '../engine/financeEngine.js';
 
-// ── Salary Helpers ─────────────────────────────────────────────
-
-function calcPlayerOvr(player) {
-  const attrs = player.attributes || {};
-  const vals = Object.values(attrs);
-  if (vals.length === 0) return player.overallRating || 50;
-  return Math.round(vals.reduce((a, b) => a + b, 0) / vals.length);
-}
-
-export function calcPlayerMonthlyWage(player) {
-  return 1000 + calcPlayerOvr(player) * 50;
-}
-
-export function calcStaffMonthlyWage(staff) {
-  const abilities = staff.abilities || {};
-  const vals = Object.values(abilities);
-  const avg = vals.length > 0 ? Math.round(vals.reduce((a, b) => a + b, 0) / vals.length) : 50;
-  return 200 + avg * 30;
-}
+export { calcPlayerMonthlyWage, calcStaffMonthlyWage };
 
 // ── Format helpers ─────────────────────────────────────────────
 
@@ -136,104 +129,44 @@ export default function FinancialReport() {
   const staff = Object.values(team.staff || {});
   const facilities = team.facilities || {};
 
-  // ── Facility level helper ─────────────────────────────────────
-  function getFacLevel(key) {
-    const f = facilities[key];
-    return typeof f === 'number' ? f : (f?.level ?? 0);
-  }
+  const userLeague = state.leagues?.find(lg => lg.teams?.some(t => t.id === team.id));
+  const finance = calculateFinanceProjection(team, { leagueTier: userLeague?.tier ?? userLeague?.id?.slice(-1) ?? team.league ?? 'C' });
+  const actualLast30 = summarizeFinanceLog(team.financeLog ?? []);
+  const {
+    mediaCenterLevel,
+    merchandiseLevel,
+    arenaCapacity,
+    ticketPrice,
+    seasonTicketSeats,
+    awayFanPct,
+    fanEnthusiasm,
+    leagueTier,
+    reputation,
+    homeSeatsAvailable,
+    actualRegularAttend,
+    seasonTicketAttendees,
+    awayFanAttendees,
+    totalAttendancePerGame,
+    seatUtilisation,
+    monthlyGateRevenue,
+    monthlySeasonTicketRevenue,
+    monthlyMerchRevenue,
+    monthlyTVRevenue,
+    monthlySponsorship,
+    totalMonthlyRevenue,
+    recurringMonthlyRevenue,
+    monthlyPlayerWages,
+    monthlyStaffWages,
+    monthlyFacMaintenance,
+    monthlyGeneralOps,
+    totalMonthlyExpenses,
+    projectedNetMonthly,
+    recurringNetMonthly,
+  } = finance;
 
-  const HOME_GAMES_MONTH = 4;
+  const netMonthly = projectedNetMonthly;
 
-  // ── Arena & ticket variables ───────────────────────────────────
-  const basketballHallLevel = getFacLevel('basketballHall');
-  const mediaCenterLevel    = getFacLevel('media');
-  const merchandiseLevel    = getFacLevel('merchandise');
-  const arenaCapacity    = 600 + basketballHallLevel * 200;
-  const ticketPrice      = team.ticketPrice      ?? 20;
-  const seasonTicketSeats = team.seasonTicketSeats ?? 0;
-  const seasonTicketPrice = team.seasonTicketPrice ?? 15;
-  const awayFanPct       = team.awayFanPct        ?? 10;
-  const fanCount         = team.fanCount          ?? 250;
-  const fanEnthusiasm    = team.fanEnthusiasm     ?? 20;
-  const leagueTier       = team.league            ?? 'C';
-  const reputation       = team.reputation        ?? 10;
-
-  // ── Attendance formula (mirrors GameContext match-day logic) ───
-
-  // Enthusiasm × performance × price sensitivity × reputation
-  const enthusiasmMultiplier = 0.5 + (fanEnthusiasm / 100);
-  const recentMatches = (team.matchHistory ?? []).slice(0, 5);
-  const recentWins = recentMatches.filter(m =>
-    m.result === 'W' || (m.teamScore ?? m.userScore ?? 0) > (m.oppScore ?? m.opponentScore ?? 0)
-  ).length;
-  const performanceMultiplier = Math.max(0.6, Math.min(1.4, 1 + (recentWins - 2) * 0.05));
-  const priceSensitivity = ticketPrice <= 25 ? 1.15 : ticketPrice <= 40 ? 1.00 : ticketPrice <= 60 ? 0.85 : 0.65;
-  const reputationMultiplier = 0.8 + reputation / 100;
-
-  const awaySeatsAllocated  = Math.round(arenaCapacity * (awayFanPct / 100));
-  const homeSeatsAvailable  = Math.max(0, arenaCapacity - awaySeatsAllocated - seasonTicketSeats);
-
-  const potentialRegularAttend = Math.round(fanCount * enthusiasmMultiplier * performanceMultiplier * priceSensitivity * reputationMultiplier);
-  const actualRegularAttend    = Math.min(potentialRegularAttend, homeSeatsAvailable);
-  const seasonTicketAttendees  = Math.round(seasonTicketSeats * 0.85);
-  const awayFanAttendees       = Math.round(awaySeatsAllocated * 0.7);
-  const totalAttendancePerGame = actualRegularAttend + seasonTicketAttendees + awayFanAttendees;
-
-  // Seat utilisation %
-  const seatUtilisation = arenaCapacity > 0
-    ? Math.round((totalAttendancePerGame / arenaCapacity) * 100)
-    : 0;
-
-  // ── Revenue (mirrors monthly finance tick + match-day revenue) ─
-
-  // Gate — regular home tickets only (season ticket holders already paid)
-  const regularGatePerGame  = Math.round(actualRegularAttend * ticketPrice);
-  const awayGatePerGame     = Math.round(awayFanAttendees   * ticketPrice * 0.8);
-  const monthlyGateRevenue  = (regularGatePerGame + awayGatePerGame) * HOME_GAMES_MONTH;
-
-  // Season ticket revenue (monthly portion)
-  const monthlySeasonTicketRevenue = seasonTicketSeats * seasonTicketPrice * HOME_GAMES_MONTH;
-
-  // Merchandise — base + attendance-driven spend (active only when store > 0)
-  const fanSpendingRate  = 0.5 + (fanEnthusiasm / 200); // $0.50–$1.00 per fan per game
-  const baseMerchMonthly = (50 + merchandiseLevel * 30) * 4;
-  const attendMerch      = merchandiseLevel > 0 ? Math.round(totalAttendancePerGame * fanSpendingRate * HOME_GAMES_MONTH) : 0;
-  const monthlyMerchRevenue = baseMerchMonthly + attendMerch;
-
-  // TV Revenue (enhanced with media center)
-  const baseTVByLeague   = { A: 500, B: 250, C: 100 }[leagueTier] ?? 100;
-  const monthlyTVRevenue = baseTVByLeague + reputation * 5 + mediaCenterLevel * 100;
-
-  // Sponsorship (enhanced with fans + media)
-  const monthlySponsorship = Math.round(100 + fanCount * 0.2 + reputation * 10 + mediaCenterLevel * 150);
-
-  const totalMonthlyRevenue = monthlyGateRevenue + monthlySeasonTicketRevenue + monthlyMerchRevenue + monthlyTVRevenue + monthlySponsorship;
-
-  // ── Expenses (mirrors monthly finance tick) ────────────────────
-
-  const monthlyPlayerWages  = players.reduce((sum, p) => sum + (p.salary ?? 5) * 8, 0);
-  const monthlyStaffWages   = staff.reduce((sum, s) => sum + (s.salary ?? 100), 0);
-
-  // Per-facility maintenance (mirrors GameContext monthly tick)
-  const monthlyFacMaintenance =
-    getFacLevel('basketballHall') * 50 +
-    getFacLevel('media')          * 30 +
-    getFacLevel('merchandise')    * 25 +
-    getFacLevel('trainingCourt')  * 40 +
-    getFacLevel('gym')            * 35 +
-    getFacLevel('youthAcademy')   * 45 +
-    getFacLevel('medicalCenter')  * 30 +
-    getFacLevel('scoutingOffice') * 25;
-
-  // General ops (arena + fanbase overhead)
-  const monthlyGeneralOps = Math.round(200 + arenaCapacity * 0.05 + fanCount * 0.02);
-
-  const totalMonthlyExpenses = monthlyPlayerWages + monthlyStaffWages + monthlyFacMaintenance + monthlyGeneralOps;
-
-  const netMonthly = totalMonthlyRevenue - totalMonthlyExpenses;
-
-  // ── Seasonal values (x9 months) ───────────────────────────
-  const SEASON_MONTHS = 9;
+  // ── Seasonal values ───────────────────────────────────────
   const mult = period === 'season' ? SEASON_MONTHS : 1;
 
   // ── Balance Sheet ──────────────────────────────────────────
@@ -243,7 +176,7 @@ export default function FinancialReport() {
   // Facility assets — sum of upgrade costs invested
   const facilityInvestment = Object.entries(facilities).reduce((sum, [, fac]) => {
     let cost = 0;
-    for (let lvl = 0; lvl < (fac.level ?? 0); lvl++) {
+    for (let lvl = 0; lvl < getFacilityLevel(fac); lvl++) {
       cost += Math.round(100 * Math.pow(1.5, lvl));
     }
     return sum + cost;
@@ -262,7 +195,6 @@ export default function FinancialReport() {
   // ── Debt season status ─────────────────────────────────────
   const consecutiveDebtSeasons = team.consecutiveDebtSeasons ?? 0;
   const lastMonthlyFinanceTick = team.lastMonthlyFinanceTick ?? 0;
-  const THIRTY_DAYS = 30 * 24 * 60 * 60 * 1000;
   const nextMonthlyTick = lastMonthlyFinanceTick + THIRTY_DAYS;
   const msUntilTick = nextMonthlyTick - Date.now();
   const daysUntilTick = Math.max(0, Math.ceil(msUntilTick / (24 * 60 * 60 * 1000)));
@@ -313,6 +245,42 @@ export default function FinancialReport() {
           <div style={{ textAlign: 'center' }}>
             <div style={{ fontSize: 'var(--font-size-xs)', color: 'var(--text-muted)', marginBottom: 2 }}>Expenses</div>
             <div style={{ fontWeight: 800, color: 'var(--color-danger)' }}>{fmt(totalMonthlyExpenses * mult)}</div>
+          </div>
+        </div>
+      </div>
+
+      <div className="mb-6" style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(190px, 1fr))', gap: 'var(--space-4)' }}>
+        <div className="card" style={{ padding: 'var(--space-4)' }}>
+          <div style={{ fontSize: 'var(--font-size-xs)', fontWeight: 800, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: 0.5, marginBottom: 6 }}>
+            Actual Last 30 Days
+          </div>
+          <div style={{ fontSize: 'var(--font-size-2xl)', fontWeight: 900, color: actualLast30.net >= 0 ? 'var(--color-success)' : 'var(--color-danger)' }}>
+            {fmtSigned(actualLast30.net)}
+          </div>
+          <div style={{ fontSize: 'var(--font-size-xs)', color: 'var(--text-muted)' }}>
+            {actualLast30.entries.length} posted transaction{actualLast30.entries.length !== 1 ? 's' : ''}
+          </div>
+        </div>
+        <div className="card" style={{ padding: 'var(--space-4)' }}>
+          <div style={{ fontSize: 'var(--font-size-xs)', fontWeight: 800, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: 0.5, marginBottom: 6 }}>
+            Monthly Tick Net
+          </div>
+          <div style={{ fontSize: 'var(--font-size-2xl)', fontWeight: 900, color: recurringNetMonthly >= 0 ? 'var(--color-success)' : 'var(--color-danger)' }}>
+            {fmtSigned(recurringNetMonthly)}
+          </div>
+          <div style={{ fontSize: 'var(--font-size-xs)', color: 'var(--text-muted)' }}>
+            Recurring income minus monthly expenses
+          </div>
+        </div>
+        <div className="card" style={{ padding: 'var(--space-4)' }}>
+          <div style={{ fontSize: 'var(--font-size-xs)', fontWeight: 800, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: 0.5, marginBottom: 6 }}>
+            Projected Matchday
+          </div>
+          <div style={{ fontSize: 'var(--font-size-2xl)', fontWeight: 900, color: 'var(--color-primary)' }}>
+            {fmt(monthlyGateRevenue)}
+          </div>
+          <div style={{ fontSize: 'var(--font-size-xs)', color: 'var(--text-muted)' }}>
+            Added when home games are actually played
           </div>
         </div>
       </div>
@@ -429,6 +397,9 @@ export default function FinancialReport() {
           <RevenueRow label={`TV Revenue (Liga ${leagueTier}, Media Lv ${mediaCenterLevel})`} monthly={monthlyTVRevenue * mult} />
           <RevenueRow label="Sponsorship & Advertising" monthly={monthlySponsorship * mult} />
           <TotalRow label="Total Revenue" value={totalMonthlyRevenue * mult} positive={true} />
+          <div style={{ padding: '0 var(--space-3) var(--space-2)', fontSize: 'var(--font-size-xs)', color: 'var(--text-muted)' }}>
+            Monthly tick applies {fmt(recurringMonthlyRevenue * mult)} recurring revenue. Gate revenue is posted when home games are played.
+          </div>
 
           <SectionHeader label="Expenses" />
           <ExpenseRow label={`Player Wages (${players.length} players)`} monthly={monthlyPlayerWages * mult} />
@@ -543,7 +514,7 @@ export default function FinancialReport() {
               }} />
             </div>
             <div style={{ fontSize: 'var(--font-size-xs)', color: 'var(--text-muted)', marginTop: 6 }}>
-              Wages, ops & facility costs deducted every 30 days
+              Recurring income and operating costs are posted every 30 days
             </div>
           </div>
         </div>
