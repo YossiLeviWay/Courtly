@@ -9,7 +9,7 @@ import {
   apiGetFeedback, apiMarkFeedbackRead,
   apiSeedFreeAgents, apiSeedStaffMarket,
   apiGetGameBrainConfig, apiSaveGameBrainConfig,
-  apiAdminSetBudget, apiAdminSetTeamState, apiAdminResetAllUsers,
+  apiAdminSetBudget, apiAdminSetTeamState, apiAdminResetAllUsers, apiAdminResetSingleUser,
 } from '../api.js';
 import { buildRoundRobinRounds } from '../engine/gameScheduler.js';
 
@@ -666,16 +666,247 @@ function ResetZone({ onReset }) {
   );
 }
 
+// ── Reset Dashboard ───────────────────────────────────────────
+
+function ResetDashboard({ leagues }) {
+  const [users, setUsers]     = useState([]);
+  const [loadingUsers, setLoadingUsers] = useState(true);
+  const [msg, setMsg]         = useState('');
+
+  // Match / standings reset state
+  const [resettingMatches, setResettingMatches] = useState(false);
+
+  // All-user reset state
+  const [resettingAll, setResettingAll] = useState(false);
+  const [confirmStep, setConfirmStep]   = useState(0);
+
+  // Per-user reset state: { [userId]: 'idle' | 'confirm' | 'resetting' | 'done' | 'error' }
+  const [perUserState, setPerUserState] = useState({});
+
+  useEffect(() => {
+    apiGetAllUserStates()
+      .then(data => { setUsers(data.filter(u => u.user)); setLoadingUsers(false); })
+      .catch(() => setLoadingUsers(false));
+  }, []);
+
+  const showMsg = (text) => { setMsg(text); setTimeout(() => setMsg(''), 6000); };
+
+  async function handleResetMatches() {
+    if (!window.confirm('Reset ALL matches to unplayed and clear all standings? This cannot be undone.')) return;
+    setResettingMatches(true);
+    try {
+      await apiResetAllMatches('matches');
+      await apiResetStandings();
+      showMsg('✓ All matches reset to unplayed. All standings cleared.');
+    } catch (err) {
+      showMsg('✗ Error: ' + err.message);
+    }
+    setResettingMatches(false);
+  }
+
+  async function handleResetAllUsers() {
+    setResettingAll(true);
+    try {
+      const count = await apiAdminResetAllUsers();
+      showMsg(`✓ Reset ${count} user account${count !== 1 ? 's' : ''} to fresh state.`);
+      setConfirmStep(0);
+      // Re-fetch users
+      setLoadingUsers(true);
+      apiGetAllUserStates().then(data => { setUsers(data.filter(u => u.user)); setLoadingUsers(false); });
+    } catch (err) {
+      showMsg('✗ Error: ' + err.message);
+      setConfirmStep(0);
+    }
+    setResettingAll(false);
+  }
+
+  async function handleResetSingleUser(userId) {
+    setPerUserState(s => ({ ...s, [userId]: 'resetting' }));
+    try {
+      await apiAdminResetSingleUser(userId);
+      setPerUserState(s => ({ ...s, [userId]: 'done' }));
+      setTimeout(() => setPerUserState(s => ({ ...s, [userId]: 'idle' })), 2000);
+    } catch (err) {
+      setPerUserState(s => ({ ...s, [userId]: 'error' }));
+      showMsg('✗ Error resetting user: ' + err.message);
+      setTimeout(() => setPerUserState(s => ({ ...s, [userId]: 'idle' })), 3000);
+    }
+  }
+
+  const sectionStyle = {
+    marginBottom: 24,
+    padding: '16px 20px',
+    border: '1px solid var(--border-color)',
+    borderRadius: 'var(--radius-lg)',
+    background: 'var(--bg-card)',
+  };
+  const sectionTitleStyle = {
+    fontWeight: 700,
+    fontSize: 'var(--font-size-base)',
+    marginBottom: 6,
+    display: 'flex',
+    alignItems: 'center',
+    gap: 8,
+  };
+  const descStyle = {
+    fontSize: 'var(--font-size-sm)',
+    color: 'var(--text-muted)',
+    marginBottom: 12,
+  };
+
+  return (
+    <div>
+      {msg && (
+        <div style={{ marginBottom: 16, padding: '10px 14px', borderRadius: 'var(--radius-md)', background: msg.startsWith('✓') ? 'rgba(22,163,74,0.1)' : 'rgba(239,68,68,0.1)', color: msg.startsWith('✓') ? '#16a34a' : '#dc2626', fontWeight: 600, fontSize: 'var(--font-size-sm)' }}>
+          {msg}
+        </div>
+      )}
+
+      {/* Section 1: Match & Season Data */}
+      <div style={sectionStyle}>
+        <div style={sectionTitleStyle}>📅 Match &amp; Season Data</div>
+        <p style={descStyle}>Reset all match results to unplayed and clear all standings back to 0–0. Use this when starting a season fresh.</p>
+        <button
+          className="btn btn-sm"
+          style={{ background: '#dc2626', color: '#fff', border: 'none' }}
+          disabled={resettingMatches}
+          onClick={handleResetMatches}
+        >
+          {resettingMatches ? <><RefreshCw size={13} style={{ animation: 'spin 1s linear infinite' }} /> Resetting…</> : '🔄 Reset All Matches & Standings'}
+        </button>
+      </div>
+
+      {/* Section 2: Full Game Reset - Nuclear */}
+      <div style={{ ...sectionStyle, border: '1px solid rgba(239,68,68,0.4)', background: 'rgba(239,68,68,0.03)' }}>
+        <div style={{ ...sectionTitleStyle, color: '#dc2626' }}>💣 Full Game Reset — Nuclear (All Users)</div>
+        <p style={descStyle}>Reset EVERYTHING for all users: budget $500, fans 300, no stats, no history. Player rosters and facilities are kept.</p>
+        {confirmStep === 0 && (
+          <button className="btn btn-sm" style={{ background: '#7f1d1d', color: '#fff', border: 'none' }}
+            onClick={() => setConfirmStep(1)}>
+            💣 Full Game Reset for Everyone
+          </button>
+        )}
+        {confirmStep === 1 && (
+          <div style={{ padding: '10px 14px', background: 'rgba(239,68,68,0.1)', border: '1px solid rgba(239,68,68,0.35)', borderRadius: 'var(--radius-md)' }}>
+            <div style={{ fontWeight: 700, color: '#dc2626', fontSize: 'var(--font-size-sm)', marginBottom: 8 }}>
+              ⚠️ Are you sure? This will erase all users' match history, budgets, fans, morale and season stats.
+            </div>
+            <div style={{ display: 'flex', gap: 8 }}>
+              <button className="btn btn-sm" style={{ background: '#dc2626', color: '#fff', border: 'none' }}
+                onClick={() => setConfirmStep(2)}>Yes, continue</button>
+              <button className="btn btn-ghost btn-sm" onClick={() => setConfirmStep(0)}>Cancel</button>
+            </div>
+          </div>
+        )}
+        {confirmStep === 2 && (
+          <div style={{ padding: '10px 14px', background: 'rgba(239,68,68,0.15)', border: '2px solid rgba(239,68,68,0.6)', borderRadius: 'var(--radius-md)' }}>
+            <div style={{ fontWeight: 800, color: '#dc2626', fontSize: 'var(--font-size-sm)', marginBottom: 8 }}>
+              🚨 FINAL WARNING — This cannot be undone. All user stats will be wiped.
+            </div>
+            <div style={{ display: 'flex', gap: 8 }}>
+              <button
+                className="btn btn-sm"
+                style={{ background: '#991b1b', color: '#fff', border: 'none' }}
+                disabled={resettingAll}
+                onClick={handleResetAllUsers}
+              >
+                {resettingAll ? <><RefreshCw size={13} style={{ animation: 'spin 1s linear infinite' }} /> Wiping…</> : '💣 YES, WIPE EVERYTHING'}
+              </button>
+              <button className="btn btn-ghost btn-sm" onClick={() => setConfirmStep(0)}>Cancel</button>
+            </div>
+          </div>
+        )}
+      </div>
+
+      {/* Section 3: Per-Team Reset */}
+      <div style={sectionStyle}>
+        <div style={sectionTitleStyle}>👤 Per-Team Reset</div>
+        <p style={descStyle}>Reset an individual user's season data: budget $500, fans 300, clear history and stats. Player roster is kept.</p>
+        {loadingUsers ? (
+          <div style={{ padding: 20, textAlign: 'center', color: 'var(--text-muted)', fontSize: 'var(--font-size-sm)' }}>
+            <RefreshCw size={16} style={{ animation: 'spin 1s linear infinite', marginRight: 8 }} />
+            Loading users…
+          </div>
+        ) : (
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+            {users.map(({ user, state: uState }) => {
+              const pState = perUserState[user.id] ?? 'idle';
+              return (
+                <div key={user.id} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '8px 12px', background: 'var(--bg-muted)', borderRadius: 'var(--radius-md)', flexWrap: 'wrap', gap: 8 }}>
+                  <div>
+                    <div style={{ fontWeight: 600, fontSize: 'var(--font-size-sm)' }}>{user.username || user.email}</div>
+                    <div style={{ fontSize: 'var(--font-size-xs)', color: 'var(--text-muted)' }}>
+                      ${uState?.budget ?? '?'}k · {uState?.seasonRecord?.wins || 0}W–{uState?.seasonRecord?.losses || 0}L · {(uState?.fanCount ?? 0).toLocaleString()} fans
+                    </div>
+                  </div>
+                  <div style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
+                    {pState === 'idle' && (
+                      <button className="btn btn-sm" style={{ background: 'rgba(239,68,68,0.15)', color: '#dc2626', border: '1px solid rgba(239,68,68,0.35)', fontSize: '0.7rem' }}
+                        onClick={() => setPerUserState(s => ({ ...s, [user.id]: 'confirm' }))}>
+                        🔄 Reset This Team
+                      </button>
+                    )}
+                    {pState === 'confirm' && (
+                      <>
+                        <span style={{ fontSize: '0.7rem', color: '#dc2626', fontWeight: 600 }}>Sure?</span>
+                        <button className="btn btn-sm" style={{ background: '#dc2626', color: '#fff', border: 'none', fontSize: '0.7rem' }}
+                          onClick={() => handleResetSingleUser(user.id)}>
+                          Yes, Reset
+                        </button>
+                        <button className="btn btn-ghost btn-sm" style={{ fontSize: '0.7rem' }}
+                          onClick={() => setPerUserState(s => ({ ...s, [user.id]: 'idle' }))}>
+                          Cancel
+                        </button>
+                      </>
+                    )}
+                    {pState === 'resetting' && (
+                      <span style={{ fontSize: '0.7rem', color: 'var(--text-muted)' }}>
+                        <RefreshCw size={12} style={{ animation: 'spin 1s linear infinite', marginRight: 4 }} />
+                        Resetting…
+                      </span>
+                    )}
+                    {pState === 'done' && (
+                      <span style={{ fontSize: '0.7rem', color: '#16a34a', fontWeight: 600 }}>✓ Done</span>
+                    )}
+                    {pState === 'error' && (
+                      <span style={{ fontSize: '0.7rem', color: '#dc2626', fontWeight: 600 }}>✗ Error</span>
+                    )}
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        )}
+      </div>
+      <style>{`@keyframes spin{from{transform:rotate(0deg)}to{transform:rotate(360deg)}}`}</style>
+    </div>
+  );
+}
+
 // ── Teams Overview ────────────────────────────────────────────
 
 function TeamsView({ leagues }) {
   const [expanded, setExpanded] = useState(null);
   const [users, setUsers]       = useState([]);
   const [editingUser, setEditingUser] = useState(null);
+  // Per-team reset state: { [userId]: 'idle' | 'confirm' | 'resetting' | 'done' | 'error' }
+  const [resetState, setResetState] = useState({});
 
   useEffect(() => {
     apiGetAllUserStates().then(data => setUsers(data.filter(u => u.user)));
   }, []);
+
+  async function handleTeamReset(userId) {
+    setResetState(s => ({ ...s, [userId]: 'resetting' }));
+    try {
+      await apiAdminResetSingleUser(userId);
+      setResetState(s => ({ ...s, [userId]: 'done' }));
+      setTimeout(() => setResetState(s => ({ ...s, [userId]: 'idle' })), 2000);
+    } catch (err) {
+      setResetState(s => ({ ...s, [userId]: 'error' }));
+      setTimeout(() => setResetState(s => ({ ...s, [userId]: 'idle' })), 3000);
+    }
+  }
 
   return (
     <div>
@@ -721,6 +952,35 @@ function TeamsView({ leagues }) {
                             <Edit2 size={11} /> Edit Team
                           </button>
                         )}
+                        {teamOwner && (() => {
+                          const uid = teamOwner.user?.id;
+                          const rs = resetState[uid] ?? 'idle';
+                          return (
+                            <>
+                              {rs === 'idle' && (
+                                <button className="btn btn-ghost btn-sm" style={{ fontSize: '0.65rem', padding: '2px 8px', color: '#dc2626' }}
+                                  onClick={e => { e.stopPropagation(); setResetState(s => ({ ...s, [uid]: 'confirm' })); }}>
+                                  🔄 Reset Team
+                                </button>
+                              )}
+                              {rs === 'confirm' && (
+                                <>
+                                  <button className="btn btn-sm" style={{ fontSize: '0.65rem', padding: '2px 8px', background: '#dc2626', color: '#fff', border: 'none' }}
+                                    onClick={e => { e.stopPropagation(); handleTeamReset(uid); }}>
+                                    Confirm Reset
+                                  </button>
+                                  <button className="btn btn-ghost btn-sm" style={{ fontSize: '0.65rem', padding: '2px 8px' }}
+                                    onClick={e => { e.stopPropagation(); setResetState(s => ({ ...s, [uid]: 'idle' })); }}>
+                                    Cancel
+                                  </button>
+                                </>
+                              )}
+                              {rs === 'resetting' && <span style={{ fontSize: '0.65rem', color: 'var(--text-muted)' }}>Resetting…</span>}
+                              {rs === 'done' && <span style={{ fontSize: '0.65rem', color: '#16a34a', fontWeight: 700 }}>✓ Done</span>}
+                              {rs === 'error' && <span style={{ fontSize: '0.65rem', color: '#dc2626', fontWeight: 700 }}>✗ Error</span>}
+                            </>
+                          );
+                        })()}
                       </div>
                       {isExp ? <ChevronDown size={16} /> : <ChevronRight size={16} />}
                     </div>
@@ -1313,6 +1573,7 @@ export default function Admin() {
           ['gamebrain', '🧠 Game Brain'],
           ['market',    '🛒 Market'],
           ['feedback',  '💬 Feedback'],
+          ['reset',     '🔄 Reset'],
         ].map(([k, l]) => (
           <button key={k} className={`tab${tab === k ? ' active' : ''}`} onClick={() => setTab(k)}>{l}</button>
         ))}
@@ -1331,6 +1592,7 @@ export default function Admin() {
       {tab === 'gamebrain' && <GameBrainPanel leagues={leagues} allTeams={state.allTeams || []} />}
       {tab === 'market'    && <MarketSeedPanel />}
       {tab === 'feedback'  && <FeedbackInbox />}
+      {tab === 'reset'     && <ResetDashboard leagues={leagues} />}
     </div>
   );
 }

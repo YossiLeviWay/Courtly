@@ -9,6 +9,7 @@ import {
   apiSeedFreeAgents, apiSeedStaffMarket,
 } from '../api.js';
 import { processPendingMatches } from '../engine/gameScheduler.js';
+import { calculateOverallRating } from '../engine/playerGenerator.js';
 
 // ── Build game state from Firestore data ───────────────────────
 
@@ -692,9 +693,10 @@ export function GameProvider({ children }) {
             trainingHighlights.push(`${p.name} had a standout focus session this week!`);
           }
 
+          const updatedPlayer = { ...p, attributes: newAttrs };
           return {
-            ...p,
-            attributes:       newAttrs,
+            ...updatedPlayer,
+            overallRating:    calculateOverallRating(updatedPlayer),
             trainingStreak:   newStreak,
             trainingStreakKey: newStreakKey,
           };

@@ -103,7 +103,8 @@ service cloud.firestore {
     }
 
     // Users may only read/write their own state.
-    // Admin can read/write any user's state (e.g. to reset seasonRecord).
+    // Admin can list + write all user states for game resets.
+    // Uses setDoc+merge (not batch.update) to avoid quota issues.
     match /user_team_state/{userId} {
       allow read, write: if request.auth != null
                          && (request.auth.uid == userId || isAdmin());

@@ -649,44 +649,87 @@ export async function apiAdminSetTeamState(userId, fields) {
 }
 
 /**
+ * Admin: reset a single user's personal state to a fresh slate.
+ * Clears matchHistory, financeLog, seasonRecord, fans, morale gauges, budget,
+ * and season stats from players. Retains facilities, staff, and profile data.
+ */
+export async function apiAdminResetSingleUser(userId) {
+  const docRef = doc(db, 'user_team_state', userId);
+  const snap = await getDoc(docRef);
+  const existing = snap.exists() ? snap.data() : {};
+  const now = Date.now();
+  // Clear seasonStats from players
+  const clearedPlayers = (existing.playersState ?? []).map(p => ({ ...p, seasonStats: {} }));
+  await setDoc(docRef, {
+    budget: 500,
+    fanCount: 300,
+    fanEnthusiasm: 40,
+    motivationBar: 50,
+    chemistryGauge: 50,
+    momentumBar: 50,
+    matchHistory: [],
+    financeLog: [],
+    seasonRecord: { wins: 0, losses: 0 },
+    fanWeeklyHistory: [],
+    lastWeekFanGrowth: null,
+    lastFanGrowthDate: 0,
+    weeksPlayed: 0,
+    lastWeeklyFinanceTick: 0,
+    lastMonthlyFinanceTick: 0,
+    lastTrainingApplied: 0,
+    lastInvestmentTimestamp: 0,
+    lastGameTopPerformers: null,
+    trainingHighlights: [],
+    consecutiveDebtSeasons: 0,
+    consecutiveDebtSeasonLastCheck: 0,
+    playersState: clearedPlayers,
+    updatedAt: now,
+  }, { merge: true });
+}
+
+/**
  * Admin: reset every user's personal state to a fresh slate.
- * Clears matchHistory, financeLog, seasonRecord, fans, morale gauges, and budget.
- * Retains facilities, players, staff, and profile data.
+ * Clears matchHistory, financeLog, seasonRecord, fans, morale gauges, budget,
+ * and season stats from players. Retains facilities, staff, and profile data.
+ * Uses setDoc+merge (not batch.update) to avoid quota issues.
  */
 export async function apiAdminResetAllUsers() {
   const snap = await getDocs(collection(db, 'user_team_state'));
-  const CHUNK = 400;
-  for (let i = 0; i < snap.docs.length; i += CHUNK) {
-    const batch = writeBatch(db);
-    snap.docs.slice(i, i + CHUNK).forEach(d => {
-      batch.update(d.ref, {
-        budget:              1500,
-        matchHistory:        [],
-        financeLog:          [],
-        seasonRecord:        { wins: 0, losses: 0 },
-        fanCount:            250,
-        fanEnthusiasm:       20,
-        fanWeeklyHistory:    [],
-        lastWeekFanGrowth:   null,
-        lastFanGrowthDate:   0,
-        weeksPlayed:         0,
-        motivationBar:       60,
-        chemistryGauge:      50,
-        momentumBar:         65,
+  const docs = snap.docs;
+  const now = Date.now();
+  const CHUNK = 10;
+  for (let i = 0; i < docs.length; i += CHUNK) {
+    await Promise.all(docs.slice(i, i + CHUNK).map(async d => {
+      const existing = d.data();
+      const clearedPlayers = (existing.playersState ?? []).map(p => ({ ...p, seasonStats: {} }));
+      return setDoc(d.ref, {
+        budget: 500,
+        fanCount: 300,
+        fanEnthusiasm: 40,
+        motivationBar: 50,
+        chemistryGauge: 50,
+        momentumBar: 50,
+        matchHistory: [],
+        financeLog: [],
+        seasonRecord: { wins: 0, losses: 0 },
+        fanWeeklyHistory: [],
+        lastWeekFanGrowth: null,
+        lastFanGrowthDate: 0,
+        weeksPlayed: 0,
         lastWeeklyFinanceTick: 0,
         lastMonthlyFinanceTick: 0,
         lastTrainingApplied: 0,
         lastInvestmentTimestamp: 0,
         lastGameTopPerformers: null,
-        trainingHighlights:  [],
+        trainingHighlights: [],
         consecutiveDebtSeasons: 0,
         consecutiveDebtSeasonLastCheck: 0,
-        updatedAt:           Date.now(),
-      });
-    });
-    await batch.commit();
+        playersState: clearedPlayers,
+        updatedAt: now,
+      }, { merge: true });
+    }));
   }
-  return snap.docs.length;
+  return docs.length;
 }
 
 /**

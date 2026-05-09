@@ -8,10 +8,12 @@ import AttrBar from '../components/ui/AttrBar.jsx';
 import PlayerAvatar from '../components/ui/PlayerAvatar.jsx';
 import SquadCompare from '../components/SquadCompare.jsx';
 
-// Compute OVR from attributes when not stored directly
+// Compute OVR from attributes first (live), fall back to stored value
 function calcOvr(player) {
-  if (player.overallRating) return player.overallRating;
-  try { return calculateOverallRating(player); } catch { return 50; }
+  if (player.attributes && Object.keys(player.attributes).length > 0) {
+    try { return calculateOverallRating(player); } catch { /* fall through */ }
+  }
+  return player.overallRating || 50;
 }
 
 // ── Nationality flag emoji map ─────────────────────────────────
